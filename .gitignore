@@ -1,0 +1,82 @@
+# =========================
+# Environment & Secrets
+# =========================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.jwk
+
+# =========================
+# Databases
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# TLSNotary Proofs
+# =========================
+solver/proofs/
+*.tlsn
+*.presentation.tlsn
+
+# =========================
+# Build Artifacts
+# =========================
+# Contracts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Solver
+solver/dist/
+
+# Frontend
+frontend/.next/
+frontend/out/
+
+# Rust
+attestation-service/target/
+tlsn/target/
+**/target/
+
+# =========================
+# Dependencies
+# =========================
+node_modules/
+.pnp
+.pnp.js
+
+# =========================
+# IDE & Editor
+# =========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Testing
+# =========================
+coverage/
+.nyc_output/
+
+# =========================
+# Misc
+# =========================
+.vercel
+*.tsbuildinfo
+next-env.d.ts
