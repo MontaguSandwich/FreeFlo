@@ -1,0 +1,127 @@
+version: '3.8'
+
+# ============================================
+# ZKP2P Off-Ramp Docker Compose
+# ============================================
+# 
+# Quick start:
+#   1. cp env.production.example .env
+#   2. Edit .env with your values
+#   3. docker compose up -d
+#
+# Services:
+#   - solver: Main solver service (quoting, fulfillment orchestration)
+#   - attestation-service: TLSNotary proof verification & EIP-712 signing
+#   - nginx: Reverse proxy with SSL termination
+
+services:
+  # ============================================
+  # Attestation Service (Rust)
+  # ============================================
+  # Verifies TLSNotary proofs and signs EIP-712 attestations
+  attestation-service:
+    build:
+      context: .
+      dockerfile: attestation-service/Dockerfile
+    container_name: zkp2p-attestation
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    environment:
+      - ATTESTATION_PORT=${ATTESTATION_PORT:-4001}
+      - WITNESS_PRIVATE_KEY=${WITNESS_PRIVATE_KEY}
+      - DOMAIN_NAME=${DOMAIN_NAME:-zkp2p-offramp}
+      - DOMAIN_VERSION=${DOMAIN_VERSION:-1}
+      - CHAIN_ID=${CHAIN_ID:-84532}
+      - VERIFYING_CONTRACT=${PAYMENT_VERIFIER_ADDRESS}
+      - RUST_LOG=${RUST_LOG:-info}
+    networks:
+      - zkp2p-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ============================================
+  # Solver Service (Node.js)
+  # ============================================
+  # Handles quoting, fiat transfers, and on-chain fulfillment
+  solver:
+    build:
+      context: ./solver
+      dockerfile: Dockerfile
+    container_name: zkp2p-solver
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Health check
+      - "8081:8081"  # Quote API
+    environment:
+      # Chain
+      - RPC_URL=${RPC_URL}
+      - CHAIN_ID=${CHAIN_ID:-84532}
+      - OFFRAMP_V3_ADDRESS=${OFFRAMP_V3_ADDRESS}
+      - PAYMENT_VERIFIER_ADDRESS=${PAYMENT_VERIFIER_ADDRESS}
+      - SOLVER_PRIVATE_KEY=${SOLVER_PRIVATE_KEY}
+      
+      # Qonto
+      - QONTO_ENABLED=${QONTO_ENABLED:-true}
+      - QONTO_AUTH_METHOD=${QONTO_AUTH_METHOD:-oauth}
+      - QONTO_ACCESS_TOKEN=${QONTO_ACCESS_TOKEN}
+      - QONTO_REFRESH_TOKEN=${QONTO_REFRESH_TOKEN}
+      - QONTO_CLIENT_ID=${QONTO_CLIENT_ID}
+      - QONTO_CLIENT_SECRET=${QONTO_CLIENT_SECRET}
+      - QONTO_BANK_ACCOUNT_ID=${QONTO_BANK_ACCOUNT_ID}
+      - QONTO_FEE_BPS=${QONTO_FEE_BPS:-50}
+      
+      # Attestation (internal service)
+      - ATTESTATION_SERVICE_URL=http://attestation-service:4001
+      
+      # Prover (disabled in Docker - proofs generated externally)
+      - PROVER_ENABLED=false
+      
+      # Database
+      - DB_PATH=/app/data/solver.db
+      
+      # Ports
+      - HEALTH_PORT=8080
+      - QUOTE_API_PORT=8081
+    volumes:
+      - solver-data:/app/data
+    depends_on:
+      attestation-service:
+        condition: service_healthy
+    networks:
+      - zkp2p-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ============================================
+  # Nginx Reverse Proxy
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: zkp2p-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - solver
+    networks:
+      - zkp2p-network
+
+volumes:
+  solver-data:
+
+networks:
+  zkp2p-network:
+    driver: bridge
