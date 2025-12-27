@@ -1,8 +1,8 @@
 # Attestation Service Dockerfile
 # Multi-stage build for optimized image size
 
-# Stage 1: Build
-FROM rust:1.83-bookworm AS builder
+# Stage 1: Build using Rust nightly (required for edition2024)
+FROM rustlang/rust:nightly-bookworm AS builder
 
 WORKDIR /build
 
@@ -22,7 +22,7 @@ COPY attestation-service/src ./attestation-service/src
 
 # Build the attestation service
 WORKDIR /build/attestation-service
-RUN cargo build --release
+RUN cargo +nightly build --release
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
