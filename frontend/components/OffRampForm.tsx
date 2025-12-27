@@ -325,14 +325,15 @@ export function OffRampV2() {
 
       try {
         const result = await refetchIntent();
-        const intent = result.data as { status: number } | undefined;
+        const intent = result.data as { status: number | bigint } | undefined;
         
-        // IntentStatus.FULFILLED = 3
-        if (intent && intent.status === IntentStatus.FULFILLED) {
+        // IntentStatus.FULFILLED = 3 (compare as Number since Viem may return bigint)
+        if (intent && Number(intent.status) === IntentStatus.FULFILLED) {
           console.log("Intent fulfilled detected via polling!");
           setStep("success");
           return;
         }
+        console.log("Polling intent status:", intent?.status, "looking for:", IntentStatus.FULFILLED);
       } catch (err) {
         console.error("Error polling for fulfillment:", err);
       }
