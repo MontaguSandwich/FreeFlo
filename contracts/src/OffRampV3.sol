@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {PaymentVerifier} from "./PaymentVerifier.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { PaymentVerifier } from "./PaymentVerifier.sol";
 
 /// @title OffRampV3
 /// @notice Permissionless off-ramp contract with zkTLS payment verification
@@ -18,35 +18,35 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
 
     /// @notice Supported fiat currencies
     enum Currency {
-        EUR,    // Euro
-        GBP,    // British Pound
-        USD,    // US Dollar
-        BRL,    // Brazilian Real
-        INR     // Indian Rupee
+        EUR, // Euro
+        GBP, // British Pound
+        USD, // US Dollar
+        BRL, // Brazilian Real
+        INR // Indian Rupee
     }
 
     /// @notice Supported Real-Time Payment Networks
     enum RTPN {
-        SEPA_INSTANT,   // EUR - Europe (~10 seconds)
-        SEPA_STANDARD,  // EUR - Europe (~1 day)
-        FPS,            // GBP - UK Faster Payments (~seconds)
-        BACS,           // GBP - UK (~3 days)
-        PIX,            // BRL - Brazil (~seconds)
-        TED,            // BRL - Brazil (~same day)
-        UPI,            // INR - India (~seconds)
-        IMPS,           // INR - India (~seconds)
-        FEDNOW,         // USD - US (~seconds)
-        ACH             // USD - US (~1-3 days)
+        SEPA_INSTANT, // EUR - Europe (~10 seconds)
+        SEPA_STANDARD, // EUR - Europe (~1 day)
+        FPS, // GBP - UK Faster Payments (~seconds)
+        BACS, // GBP - UK (~3 days)
+        PIX, // BRL - Brazil (~seconds)
+        TED, // BRL - Brazil (~same day)
+        UPI, // INR - India (~seconds)
+        IMPS, // INR - India (~seconds)
+        FEDNOW, // USD - US (~seconds)
+        ACH // USD - US (~1-3 days)
     }
 
     /// @notice Intent lifecycle states
     enum IntentStatus {
-        NONE,           // Default/non-existent
-        PENDING_QUOTE,  // User requested quotes, awaiting selection
-        COMMITTED,      // User committed funds to a specific quote
-        FULFILLED,      // Solver completed the transfer (verified via zkTLS)
-        CANCELLED,      // User cancelled (after timeout)
-        EXPIRED         // Quote/commitment expired
+        NONE, // Default/non-existent
+        PENDING_QUOTE, // User requested quotes, awaiting selection
+        COMMITTED, // User committed funds to a specific quote
+        FULFILLED, // Solver completed the transfer (verified via zkTLS)
+        CANCELLED, // User cancelled (after timeout)
+        EXPIRED // Quote/commitment expired
     }
 
     // ============ Constants ============
@@ -70,37 +70,37 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     /// @notice A quote from a solver
     struct Quote {
         address solver;
-        RTPN rtpn;              // Which payment network
-        uint256 fiatAmount;     // Amount user will receive (2 decimals)
-        uint256 fee;            // Solver's fee in USDC (6 decimals)
-        uint64 estimatedTime;   // Estimated delivery time in seconds
-        uint64 expiresAt;       // When this quote expires
-        bool selected;          // Whether user selected this quote
+        RTPN rtpn; // Which payment network
+        uint256 fiatAmount; // Amount user will receive (2 decimals)
+        uint256 fee; // Solver's fee in USDC (6 decimals)
+        uint64 estimatedTime; // Estimated delivery time in seconds
+        uint64 expiresAt; // When this quote expires
+        bool selected; // Whether user selected this quote
     }
 
     /// @notice An off-ramp intent
     struct Intent {
         address depositor;
-        uint256 usdcAmount;         // USDC to off-ramp (6 decimals)
-        Currency currency;          // Target fiat currency
+        uint256 usdcAmount; // USDC to off-ramp (6 decimals)
+        Currency currency; // Target fiat currency
         IntentStatus status;
         uint64 createdAt;
-        uint64 committedAt;         // When user committed to a quote
+        uint64 committedAt; // When user committed to a quote
         // Filled after quote selection:
         address selectedSolver;
         RTPN selectedRtpn;
         uint256 selectedFiatAmount;
-        string receivingInfo;       // IBAN, sort code, PIX key, etc.
-        string recipientName;       // Required by most networks
-        bytes32 transferId;         // Fiat transfer ID (for verification)
+        string receivingInfo; // IBAN, sort code, PIX key, etc.
+        string recipientName; // Required by most networks
+        bytes32 transferId; // Fiat transfer ID (for verification)
     }
 
     /// @notice Solver info struct
     struct SolverInfo {
         string name;
-        uint256 totalFulfilled;     // Number of successful fulfillments
-        uint256 totalVolume;        // Total USDC volume processed
-        uint64 avgFulfillmentTime;  // Average time to fulfill (seconds)
+        uint256 totalFulfilled; // Number of successful fulfillments
+        uint256 totalVolume; // Total USDC volume processed
+        uint64 avgFulfillmentTime; // Average time to fulfill (seconds)
         bool active;
     }
 
@@ -136,10 +136,7 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     // ============ Events ============
 
     event IntentCreated(
-        bytes32 indexed intentId,
-        address indexed depositor,
-        uint256 usdcAmount,
-        Currency currency
+        bytes32 indexed intentId, address indexed depositor, uint256 usdcAmount, Currency currency
     );
 
     event QuoteSubmitted(
@@ -209,10 +206,12 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     /// @param usdcAmount Amount of USDC to off-ramp
     /// @param currency Target fiat currency
     /// @return intentId Unique identifier for this intent
-    function createIntent(
-        uint256 usdcAmount,
-        Currency currency
-    ) external nonReentrant whenNotPaused returns (bytes32 intentId) {
+    function createIntent(uint256 usdcAmount, Currency currency)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (bytes32 intentId)
+    {
         if (usdcAmount == 0) revert InvalidAmount();
 
         intentId = keccak256(
@@ -251,20 +250,23 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
         string calldata recipientName
     ) external nonReentrant whenNotPaused {
         Intent storage intent = intents[intentId];
-        
+
         if (intent.depositor == address(0)) revert IntentNotFound();
         if (intent.depositor != msg.sender) revert NotDepositor();
         if (intent.status != IntentStatus.PENDING_QUOTE) revert InvalidIntentStatus();
-        
+
         // Validate receiving info
-        if (bytes(receivingInfo).length == 0 || bytes(receivingInfo).length > 256) 
+        if (bytes(receivingInfo).length == 0 || bytes(receivingInfo).length > 256) {
             revert InvalidReceivingInfo();
-        if (bytes(recipientName).length == 0 || bytes(recipientName).length > 70) 
+        }
+        if (bytes(recipientName).length == 0 || bytes(recipientName).length > 70) {
             revert InvalidRecipientName();
-        
+        }
+
         // Check selection window
-        if (block.timestamp > intent.createdAt + QUOTE_WINDOW + SELECTION_WINDOW) 
+        if (block.timestamp > intent.createdAt + QUOTE_WINDOW + SELECTION_WINDOW) {
             revert SelectionWindowClosed();
+        }
 
         Quote storage quote = quotes[intentId][solver][rtpn];
         if (quote.solver == address(0)) revert QuoteNotFound();
@@ -272,7 +274,7 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
 
         // Mark quote as selected
         quote.selected = true;
-        
+
         // Update intent
         intent.status = IntentStatus.COMMITTED;
         intent.committedAt = uint64(block.timestamp);
@@ -292,16 +294,18 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     /// @param intentId The intent to cancel
     function cancelIntent(bytes32 intentId) external nonReentrant {
         Intent storage intent = intents[intentId];
-        
+
         if (intent.depositor != msg.sender) revert NotDepositor();
-        
+
         if (intent.status == IntentStatus.PENDING_QUOTE) {
-            if (block.timestamp <= intent.createdAt + QUOTE_WINDOW + SELECTION_WINDOW)
+            if (block.timestamp <= intent.createdAt + QUOTE_WINDOW + SELECTION_WINDOW) {
                 revert CannotCancelYet();
+            }
             intent.status = IntentStatus.EXPIRED;
         } else if (intent.status == IntentStatus.COMMITTED) {
-            if (block.timestamp <= intent.committedAt + FULFILLMENT_WINDOW)
+            if (block.timestamp <= intent.committedAt + FULFILLMENT_WINDOW) {
                 revert CannotCancelYet();
+            }
             intent.status = IntentStatus.CANCELLED;
             usdc.safeTransfer(msg.sender, intent.usdcAmount);
         } else {
@@ -329,18 +333,18 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
         Intent storage intent = intents[intentId];
         if (intent.depositor == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.PENDING_QUOTE) revert InvalidIntentStatus();
-        
+
         // Validate RTPN supports the requested currency
         if (!_rtpnSupportsCurrency(rtpn, intent.currency)) revert RtpnDoesNotSupportCurrency();
-        
+
         // Check quote window
         if (block.timestamp > intent.createdAt + QUOTE_WINDOW) revert QuoteWindowClosed();
-        
+
         // Check if already quoted this RTPN
         if (quotes[intentId][msg.sender][rtpn].solver != address(0)) revert AlreadyQuoted();
 
         uint64 expiresAt = uint64(block.timestamp) + QUOTE_WINDOW + SELECTION_WINDOW;
-        
+
         quotes[intentId][msg.sender][rtpn] = Quote({
             solver: msg.sender,
             rtpn: rtpn,
@@ -350,8 +354,8 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
             expiresAt: expiresAt,
             selected: false
         });
-        
-        intentQuotes[intentId].push(QuoteKey({solver: msg.sender, rtpn: rtpn}));
+
+        intentQuotes[intentId].push(QuoteKey({ solver: msg.sender, rtpn: rtpn }));
 
         emit QuoteSubmitted(intentId, msg.sender, rtpn, fiatAmount, fee, estimatedTime, expiresAt);
     }
@@ -366,21 +370,23 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
         Intent storage intent = intents[intentId];
-        
+
         if (intent.depositor == address(0)) revert IntentNotFound();
         if (intent.status != IntentStatus.COMMITTED) revert InvalidIntentStatus();
         if (intent.selectedSolver != msg.sender) revert NotSelectedSolver();
-        if (block.timestamp > intent.committedAt + FULFILLMENT_WINDOW) revert FulfillmentWindowExpired();
+        if (block.timestamp > intent.committedAt + FULFILLMENT_WINDOW) {
+            revert FulfillmentWindowExpired();
+        }
 
         // Verify the attestation matches this intent
         if (attestation.intentHash != intentId) revert PaymentVerificationFailed();
-        
+
         // Verify the amount matches (allow small tolerance for rounding)
         // attestation.amount is in cents, selectedFiatAmount is in cents (2 decimals)
         if (attestation.amount < intent.selectedFiatAmount * 99 / 100) revert AmountMismatch();
 
         // Verify the payment proof via the verifier contract
-        (bool valid, ) = verifier.verifyPayment(attestation, signature);
+        (bool valid,) = verifier.verifyPayment(attestation, signature);
         if (!valid) revert PaymentVerificationFailed();
 
         // Convert paymentId to transferId
@@ -410,7 +416,11 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     }
 
     /// @notice Gets a specific quote
-    function getQuote(bytes32 intentId, address solver, RTPN rtpn) external view returns (Quote memory) {
+    function getQuote(bytes32 intentId, address solver, RTPN rtpn)
+        external
+        view
+        returns (Quote memory)
+    {
         return quotes[intentId][solver][rtpn];
     }
 
@@ -422,15 +432,19 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     /// @notice Checks if an intent can be fulfilled
     function canFulfill(bytes32 intentId) external view returns (bool) {
         Intent storage intent = intents[intentId];
-        return intent.status == IntentStatus.COMMITTED &&
-               block.timestamp <= intent.committedAt + FULFILLMENT_WINDOW;
+        return intent.status == IntentStatus.COMMITTED
+            && block.timestamp <= intent.committedAt + FULFILLMENT_WINDOW;
     }
 
     /// @notice Gets the current status and time remaining
-    function getIntentTiming(bytes32 intentId) external view returns (IntentStatus status, uint256 timeRemaining) {
+    function getIntentTiming(bytes32 intentId)
+        external
+        view
+        returns (IntentStatus status, uint256 timeRemaining)
+    {
         Intent storage intent = intents[intentId];
         status = intent.status;
-        
+
         if (status == IntentStatus.PENDING_QUOTE) {
             uint64 deadline = intent.createdAt + QUOTE_WINDOW + SELECTION_WINDOW;
             timeRemaining = block.timestamp < deadline ? deadline - block.timestamp : 0;
@@ -467,11 +481,7 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     /// @notice Registers solver info (optional, for reputation)
     function registerSolver(string calldata name) external {
         solverInfo[msg.sender] = SolverInfo({
-            name: name,
-            totalFulfilled: 0,
-            totalVolume: 0,
-            avgFulfillmentTime: 0,
-            active: true
+            name: name, totalFulfilled: 0, totalVolume: 0, avgFulfillmentTime: 0, active: true
         });
         emit SolverRegistered(msg.sender, name);
     }
