@@ -87,7 +87,7 @@ export const config = {
   // ==========================================================================
   attestation: {
     enabled: optionalEnv("ATTESTATION_ENABLED", "false") === "true",
-    serviceUrl: optionalEnv("ATTESTATION_SERVICE_URL", "http://localhost:4001"),
+    serviceUrl: optionalEnv("ATTESTATION_SERVICE_URL", "http://127.0.0.1:4001"),
     timeout: parseInt(optionalEnv("ATTESTATION_TIMEOUT", "30000")),
   },
 
@@ -98,7 +98,7 @@ export const config = {
     enabled: optionalEnv("PROVER_ENABLED", "false") === "true",
     tlsnExamplesPath: optionalEnv("TLSN_EXAMPLES_PATH", ""),
     proofStoragePath: optionalEnv("PROOF_STORAGE_PATH", "./proofs"),
-    timeout: parseInt(optionalEnv("PROVER_TIMEOUT", "180000")), // 3 minutes (first run needs compilation)
+    timeout: parseInt(optionalEnv("PROVER_TIMEOUT", "300000")), // 5 minutes (first run includes Rust compilation)
     // API key credentials for TLSNotary (reads from Qonto API)
     qontoApiKeyLogin: optionalEnv("QONTO_API_KEY_LOGIN", ""),
     qontoApiKeySecret: optionalEnv("QONTO_API_KEY_SECRET", ""),
