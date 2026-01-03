@@ -13,7 +13,7 @@
     "dev:v3": "tsx watch src/index-v3.ts",
     "dev:swan": "tsx watch src/index-swan.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest run --passWithNoTests",
     "test:run": "vitest run"
   },
   "dependencies": {
