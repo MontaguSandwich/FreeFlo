@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test, console} from "forge-std/Test.sol";
-import {OffRampV2} from "../src/OffRampV2.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { Test, console } from "forge-std/Test.sol";
+import { OffRampV2 } from "../src/OffRampV2.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @notice Mock USDC token for testing
 contract MockUSDC is ERC20 {
-    constructor() ERC20("USD Coin", "USDC") {}
+    constructor() ERC20("USD Coin", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -55,10 +55,7 @@ contract OffRampV2Test is Test {
     );
 
     event IntentFulfilled(
-        bytes32 indexed intentId,
-        address indexed solver,
-        bytes32 transferId,
-        uint256 fiatSent
+        bytes32 indexed intentId, address indexed solver, bytes32 transferId, uint256 fiatSent
     );
 
     function setUp() public {
@@ -140,7 +137,8 @@ contract OffRampV2Test is Test {
             10 // 10 seconds
         );
 
-        OffRampV2.Quote memory quote = offRamp.getQuote(intentId, solver, OffRampV2.RTPN.SEPA_INSTANT);
+        OffRampV2.Quote memory quote =
+            offRamp.getQuote(intentId, solver, OffRampV2.RTPN.SEPA_INSTANT);
         assertEq(quote.solver, solver);
         assertEq(quote.fiatAmount, 9200);
         assertEq(quote.fee, 500000);
@@ -184,11 +182,7 @@ contract OffRampV2Test is Test {
         // Select quote
         vm.prank(user);
         offRamp.selectQuoteAndCommit(
-            intentId,
-            solver,
-            OffRampV2.RTPN.SEPA_INSTANT,
-            "FR7630006000011234567890189",
-            "John Doe"
+            intentId, solver, OffRampV2.RTPN.SEPA_INSTANT, "FR7630006000011234567890189", "John Doe"
         );
 
         OffRampV2.Intent memory intent = offRamp.getIntent(intentId);

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title OffRampV2
 /// @notice A quote-based off-ramp contract for USDC → Fiat via various RTPNs
@@ -18,35 +18,35 @@ contract OffRampV2 is ReentrancyGuard, Pausable, Ownable {
 
     /// @notice Supported fiat currencies
     enum Currency {
-        EUR,    // Euro
-        GBP,    // British Pound
-        USD,    // US Dollar
-        BRL,    // Brazilian Real
-        INR     // Indian Rupee
+        EUR, // Euro
+        GBP, // British Pound
+        USD, // US Dollar
+        BRL, // Brazilian Real
+        INR // Indian Rupee
     }
 
     /// @notice Supported Real-Time Payment Networks
     enum RTPN {
-        SEPA_INSTANT,   // EUR - Europe (~10 seconds)
-        SEPA_STANDARD,  // EUR - Europe (~1 day)
-        FPS,            // GBP - UK Faster Payments (~seconds)
-        BACS,           // GBP - UK (~3 days)
-        PIX,            // BRL - Brazil (~seconds)
-        TED,            // BRL - Brazil (~same day)
-        UPI,            // INR - India (~seconds)
-        IMPS,           // INR - India (~seconds)
-        FEDNOW,         // USD - US (~seconds)
-        ACH             // USD - US (~1-3 days)
+        SEPA_INSTANT, // EUR - Europe (~10 seconds)
+        SEPA_STANDARD, // EUR - Europe (~1 day)
+        FPS, // GBP - UK Faster Payments (~seconds)
+        BACS, // GBP - UK (~3 days)
+        PIX, // BRL - Brazil (~seconds)
+        TED, // BRL - Brazil (~same day)
+        UPI, // INR - India (~seconds)
+        IMPS, // INR - India (~seconds)
+        FEDNOW, // USD - US (~seconds)
+        ACH // USD - US (~1-3 days)
     }
 
     /// @notice Intent lifecycle states
     enum IntentStatus {
-        NONE,           // Default/non-existent
-        PENDING_QUOTE,  // User requested quotes, awaiting selection
-        COMMITTED,      // User committed funds to a specific quote
-        FULFILLED,      // Solver completed the transfer
-        CANCELLED,      // User cancelled (after timeout)
-        EXPIRED         // Quote/commitment expired
+        NONE, // Default/non-existent
+        PENDING_QUOTE, // User requested quotes, awaiting selection
+        COMMITTED, // User committed funds to a specific quote
+        FULFILLED, // Solver completed the transfer
+        CANCELLED, // User cancelled (after timeout)
+        EXPIRED // Quote/commitment expired
     }
 
     // ============ Constants ============

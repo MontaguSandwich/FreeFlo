@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test} from "forge-std/Test.sol";
-import {PaymentVerifier} from "../src/PaymentVerifier.sol";
+import { Test } from "forge-std/Test.sol";
+import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 
 contract PaymentVerifierTest is Test {
     PaymentVerifier public verifier;
-    
+
     // Test witness (corresponds to private key in attestation service)
-    uint256 constant WITNESS_PRIVATE_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant WITNESS_PRIVATE_KEY =
+        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address witness;
 
     function setUp() public {
@@ -39,7 +40,7 @@ contract PaymentVerifierTest is Test {
 
         // Verify
         (bool valid, address signer) = verifier.verifyPayment(attestation, signature);
-        
+
         assertTrue(valid);
         assertEq(signer, witness);
     }
@@ -68,7 +69,7 @@ contract PaymentVerifierTest is Test {
 
     function test_RejectsUnauthorizedWitness() public {
         uint256 fakeWitnessKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
-        
+
         PaymentVerifier.PaymentAttestation memory attestation = PaymentVerifier.PaymentAttestation({
             intentHash: bytes32(uint256(1)),
             amount: 10000,
@@ -112,12 +113,12 @@ contract PaymentVerifierTest is Test {
 
     function test_AddRemoveWitness() public {
         address newWitness = address(0x1234);
-        
+
         assertFalse(verifier.authorizedWitnesses(newWitness));
-        
+
         verifier.addWitness(newWitness);
         assertTrue(verifier.authorizedWitnesses(newWitness));
-        
+
         verifier.removeWitness(newWitness);
         assertFalse(verifier.authorizedWitnesses(newWitness));
     }

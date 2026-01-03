@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title PaymentVerifier
 /// @notice Verifies payment attestations from the zkTLS attestation service
@@ -33,11 +33,11 @@ contract PaymentVerifier is Ownable {
 
     /// @notice Payment attestation data
     struct PaymentAttestation {
-        bytes32 intentHash;     // Hash of the intent this payment is for
-        uint256 amount;         // Amount in smallest currency unit (cents)
-        uint256 timestamp;      // TLS session timestamp
-        string paymentId;       // Unique payment/transfer ID (nullifier)
-        bytes32 dataHash;       // Hash of the raw response data
+        bytes32 intentHash; // Hash of the intent this payment is for
+        uint256 amount; // Amount in smallest currency unit (cents)
+        uint256 timestamp; // TLS session timestamp
+        string paymentId; // Unique payment/transfer ID (nullifier)
+        bytes32 dataHash; // Hash of the raw response data
     }
 
     // ============ Events ============
@@ -46,10 +46,7 @@ contract PaymentVerifier is Ownable {
     event WitnessRemoved(address indexed witness);
     event MinWitnessesUpdated(uint256 oldMin, uint256 newMin);
     event PaymentVerified(
-        bytes32 indexed intentHash,
-        bytes32 indexed nullifier,
-        uint256 amount,
-        address verifiedBy
+        bytes32 indexed intentHash, bytes32 indexed nullifier, uint256 amount, address verifiedBy
     );
 
     // ============ Errors ============
@@ -67,7 +64,9 @@ contract PaymentVerifier is Ownable {
         // Compute EIP-712 domain separator
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
                 keccak256("WisePaymentVerifier"),
                 keccak256("1"),
                 block.chainid,
@@ -88,10 +87,10 @@ contract PaymentVerifier is Ownable {
     /// @param signature The EIP-712 signature from the attestation service
     /// @return valid Whether the attestation is valid
     /// @return signer The address that signed the attestation
-    function verifyPayment(
-        PaymentAttestation calldata attestation,
-        bytes calldata signature
-    ) external returns (bool valid, address signer) {
+    function verifyPayment(PaymentAttestation calldata attestation, bytes calldata signature)
+        external
+        returns (bool valid, address signer)
+    {
         // Check nullifier hasn't been used
         bytes32 nullifier = keccak256(bytes(attestation.paymentId));
         if (usedNullifiers[nullifier]) revert NullifierAlreadyUsed();
@@ -99,20 +98,15 @@ contract PaymentVerifier is Ownable {
         // Verify the signature
         bytes32 structHash = _hashAttestation(attestation);
         bytes32 digest = _hashTypedData(structHash);
-        
+
         signer = digest.recover(signature);
-        
+
         if (!authorizedWitnesses[signer]) revert NotAuthorizedWitness();
 
         // Mark nullifier as used
         usedNullifiers[nullifier] = true;
 
-        emit PaymentVerified(
-            attestation.intentHash,
-            nullifier,
-            attestation.amount,
-            signer
-        );
+        emit PaymentVerified(attestation.intentHash, nullifier, attestation.amount, signer);
 
         return (true, signer);
     }
