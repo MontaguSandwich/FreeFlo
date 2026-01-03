@@ -1,0 +1,41 @@
+[package]
+name = "tlsn-examples"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# TLSNotary
+tlsn = { path = "../tlsn" }
+tlsn-formats = { path = "../formats" }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["compat"] }
+
+# HTTP
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+
+# Crypto
+k256 = { workspace = true, features = ["ecdsa"] }
+
+# Serialization
+bincode = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Utils
+spansy = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+urlencoding = "2.1"
+
+[[example]]
+name = "qonto_prove_transfer"
+path = "qonto/prove_transfer.rs"
+
+[[example]]
+name = "qonto_present_transfer"
+path = "qonto/present_transfer.rs"
