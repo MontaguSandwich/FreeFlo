@@ -55,14 +55,6 @@ export const transferDurationSeconds = new Histogram({
   registers: [registry],
 });
 
-export const proofGenerationSeconds = new Histogram({
-  name: "freeflo_proof_generation_seconds",
-  help: "Duration of zkTLS proof generation in seconds",
-  labelNames: ["provider"] as const,
-  buckets: [1, 5, 10, 30, 60, 120, 300],
-  registers: [registry],
-});
-
 export const attestationDurationSeconds = new Histogram({
   name: "freeflo_attestation_duration_seconds",
   help: "Duration of attestation requests in seconds",
