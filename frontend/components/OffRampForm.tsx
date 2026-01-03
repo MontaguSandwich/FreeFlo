@@ -124,16 +124,26 @@ export function OffRampV2() {
     try {
       const newQuotes = await fetchQuotesByRtpn(numAmount, selectedCurrency);
       setQuotes(newQuotes);
-      setSelectedQuote(null);
+      // Only clear selectedQuote if we're in the input step to avoid resetting user's flow
+      // When in details step, the user has already selected a quote and we should preserve it
+      if (step === "input") {
+        setSelectedQuote(null);
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoadingQuotes(false);
     }
-  }, [amount, selectedCurrency]);
+  }, [amount, selectedCurrency, step]);
 
-  // Debounced quote fetching
+  // Debounced quote fetching - only in input step to prevent flow reset
   useEffect(() => {
+    // Don't refetch quotes when user is filling in details or in other steps
+    // This prevents the flow from resetting when user enters IBAN
+    if (step !== "input") {
+      return;
+    }
+
     const timer = setTimeout(() => {
       if (parseFloat(amount) >= 1) {
         loadQuotes();
@@ -143,7 +153,7 @@ export function OffRampV2() {
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [amount, selectedCurrency, loadQuotes]);
+  }, [amount, selectedCurrency, loadQuotes, step]);
 
   // Validate receiving info
   useEffect(() => {
@@ -353,9 +363,18 @@ export function OffRampV2() {
   }, [step, intentId, refetchIntent]);
 
   const handleSelectQuote = (quote: RTPNQuote) => {
+    // Preserve IBAN/receiving info if switching between quotes of the same RTPN type
+    // This prevents losing user input when comparing different solvers for the same payment method
+    const isSameRtpn = selectedQuote?.rtpn === quote.rtpn;
+
     setSelectedQuote(quote);
-    setReceivingInfo("");
-    setRecipientName("");
+
+    // Only clear receiving info if switching to a different payment method
+    if (!isSameRtpn) {
+      setReceivingInfo("");
+      setRecipientName("");
+    }
+
     setStep("details");
   };
 
