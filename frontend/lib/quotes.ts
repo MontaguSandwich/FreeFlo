@@ -247,21 +247,18 @@ const MOCK_SOLVERS: Array<SolverInfo & { supportedRtpns: RTPN[]; feeMultiplier: 
   },
 ];
 
-// Solver Quote API URL (configurable via env)
-const SOLVER_QUOTE_API_URL = process.env.NEXT_PUBLIC_SOLVER_API_URL || 'http://127.0.0.1:8081';
-
-// Fetch real quotes from solver API
+// Fetch real quotes from solver API (via Next.js proxy to avoid CORS/mixed-content)
 export async function fetchQuotesByRtpn(
   usdcAmount: number,
   currency: Currency
 ): Promise<RTPNQuote[]> {
   try {
-    // Try to fetch from real solver API
+    // Fetch via our API proxy route (handles CORS and HTTP->HTTPS)
     const response = await fetch(
-      `${SOLVER_QUOTE_API_URL}/api/quote?amount=${usdcAmount}&currency=${currency}`,
-      { 
+      `/api/quote?amount=${usdcAmount}&currency=${currency}`,
+      {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(5000), // 5 second timeout
+        signal: AbortSignal.timeout(10000), // 10 second timeout
       }
     );
 
