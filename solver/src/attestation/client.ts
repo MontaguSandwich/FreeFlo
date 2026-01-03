@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from "../utils/logger.js";
+import { attestationDurationSeconds } from "../metrics.js";
 
 const log = createLogger("attestation-client");
 
@@ -103,6 +104,8 @@ export class AttestationClient {
       "Requesting attestation"
     );
 
+    const startTime = Date.now();
+
     const response = await this.fetch("/api/v1/attest", {
       method: "POST",
       headers: {
@@ -119,12 +122,15 @@ export class AttestationClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = await response.json();
 
+    const durationSeconds = (Date.now() - startTime) / 1000;
+
     if (!response.ok) {
       const error = data as AttestationError;
       log.error(
         { intentHash: request.intentHash, error: error.error, code: error.code },
         "Attestation request failed"
       );
+      attestationDurationSeconds.observe({ status: "error" }, durationSeconds);
       throw new Error(`Attestation failed: ${error.error}`);
     }
 
@@ -141,6 +147,8 @@ export class AttestationClient {
         server: data.payment.server as string,
       },
     };
+
+    attestationDurationSeconds.observe({ status: "success" }, durationSeconds);
 
     log.info(
       {
