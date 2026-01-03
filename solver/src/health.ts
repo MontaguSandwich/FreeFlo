@@ -1,5 +1,6 @@
 import http from "http";
 import { createLogger } from "./utils/logger.js";
+import { getMetrics, getContentType } from "./metrics.js";
 
 const log = createLogger("health");
 
@@ -78,7 +79,7 @@ export function getHealthStatus(): HealthStatus {
  * Start a simple HTTP health check server
  */
 export function startHealthServer(port: number = 8080): http.Server {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -124,6 +125,20 @@ export function startHealthServer(port: number = 8080): http.Server {
         status: health.status,
         version: health.version,
       }, null, 2));
+      return;
+    }
+
+    // Prometheus metrics endpoint
+    if (req.url === "/metrics") {
+      try {
+        const metrics = await getMetrics();
+        res.writeHead(200, { "Content-Type": getContentType() });
+        res.end(metrics);
+      } catch (error) {
+        log.error({ error }, "Failed to collect metrics");
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Error collecting metrics");
+      }
       return;
     }
 

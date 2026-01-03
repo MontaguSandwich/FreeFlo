@@ -12,6 +12,13 @@ import {
   IntentStatus,
 } from "./types/index.js";
 import type { IntentCreatedEvent, QuoteSelectedEvent } from "./chain/abi.js";
+import {
+  intentsSeenTotal,
+  quotesSubmittedTotal,
+  intentsFulfilledTotal,
+  intentsFailedTotal,
+  transferDurationSeconds,
+} from "./metrics.js";
 
 const log = createLogger("orchestrator");
 
@@ -120,15 +127,20 @@ export class SolverOrchestrator {
   // ============ Event Handlers ============
 
   private handleIntentCreated(event: IntentCreatedEvent, blockNumber: bigint): void {
+    const currencyName = CURRENCY_NAMES[event.currency as Currency] || "unknown";
+
     log.info(
       {
         intentId: event.intentId,
         depositor: event.depositor,
         usdcAmount: event.usdcAmount.toString(),
-        currency: CURRENCY_NAMES[event.currency as Currency],
+        currency: currencyName,
       },
       "New intent created"
     );
+
+    // Increment metrics
+    intentsSeenTotal.inc({ currency: currencyName });
 
     // Store in database
     this.db.insertIntent({
@@ -316,10 +328,16 @@ export class SolverOrchestrator {
 
         this.db.markQuoteSubmittedOnChain(quoteId, txHash);
 
+        const rtpnName = RTPN_NAMES[rtpn] || "unknown";
+        const currencyName = CURRENCY_NAMES[currency as Currency] || "unknown";
+
+        // Increment quote submitted metric
+        quotesSubmittedTotal.inc({ rtpn: rtpnName, currency: currencyName });
+
         log.info(
           {
             intentId,
-            rtpn: RTPN_NAMES[rtpn],
+            rtpn: rtpnName,
             fiatAmount: (Number(quote.fiatAmount) / 100).toFixed(2),
             fee: (Number(quote.fee) / 1_000_000).toFixed(2),
             txHash,
@@ -374,8 +392,11 @@ export class SolverOrchestrator {
       recipientName,
     } = intent;
 
+    const rtpnName = selectedRtpn !== null ? (RTPN_NAMES[selectedRtpn as RTPN] || "unknown") : "unknown";
+
     if (selectedRtpn === null || selectedFiatAmount === null || !receivingInfo || !recipientName) {
       log.error({ intentId }, "Intent missing required fields for fulfillment");
+      intentsFailedTotal.inc({ rtpn: rtpnName, reason: "missing_fields" });
       this.db.markFailed(intentId, "Missing required fields");
       return;
     }
@@ -384,6 +405,7 @@ export class SolverOrchestrator {
     const canFulfill = await this.chain.canFulfill(intentId as `0x${string}`);
     if (!canFulfill) {
       log.info({ intentId }, "Intent no longer fulfillable on-chain");
+      intentsFailedTotal.inc({ rtpn: rtpnName, reason: "not_fulfillable" });
       this.db.markFailed(intentId, "No longer fulfillable");
       return;
     }
@@ -402,11 +424,13 @@ export class SolverOrchestrator {
     const providers = this.registry.getProvidersForRtpn(selectedRtpn as RTPN);
     if (providers.length === 0) {
       log.error({ intentId, rtpn: selectedRtpn }, "No provider for RTPN");
+      intentsFailedTotal.inc({ rtpn: rtpnName, reason: "no_provider" });
       this.db.markFailed(intentId, `No provider for RTPN ${selectedRtpn}`);
       return;
     }
 
     const provider = providers[0];
+    const transferStartTime = Date.now();
 
     try {
       // Execute fiat transfer
@@ -420,8 +444,12 @@ export class SolverOrchestrator {
         recipientName,
       });
 
+      const transferDuration = (Date.now() - transferStartTime) / 1000;
+
       if (!result.success) {
         log.error({ intentId, error: result.error }, "Fiat transfer failed");
+        intentsFailedTotal.inc({ rtpn: rtpnName, reason: "transfer_failed" });
+        transferDurationSeconds.observe({ rtpn: rtpnName, status: "failed" }, transferDuration);
         this.db.markFailed(intentId, result.error || "Transfer failed");
         return;
       }
@@ -441,6 +469,10 @@ export class SolverOrchestrator {
       // Mark as fulfilled
       this.db.markFulfilled(intentId, txHash, result.transferId);
 
+      // Record successful metrics
+      intentsFulfilledTotal.inc({ rtpn: rtpnName });
+      transferDurationSeconds.observe({ rtpn: rtpnName, status: "success" }, transferDuration);
+
       log.info(
         { intentId, txHash, transferId: result.transferId },
         "Intent fulfilled successfully"
@@ -449,6 +481,7 @@ export class SolverOrchestrator {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error({ intentId, error: errorMessage }, "Failed to fulfill intent");
+      intentsFailedTotal.inc({ rtpn: rtpnName, reason: "exception" });
       this.db.markFailed(intentId, errorMessage);
     }
   }
