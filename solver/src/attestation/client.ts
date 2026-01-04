@@ -7,6 +7,12 @@
 
 import { createLogger } from "../utils/logger.js";
 import { attestationDurationSeconds } from "../metrics.js";
+import {
+  AttestationServiceError,
+  AttestationStage,
+  classifyAttestationError,
+  createConnectionError,
+} from "./errors.js";
 
 const log = createLogger("attestation-client");
 
@@ -75,12 +81,24 @@ export class AttestationClient {
    * Check if the attestation service is healthy
    */
   async healthCheck(): Promise<HealthResponse> {
-    const response = await this.fetch("/api/v1/health", {
-      method: "GET",
-    });
+    let response: Response;
+    try {
+      response = await this.fetch("/api/v1/health", {
+        method: "GET",
+      });
+    } catch (error) {
+      throw createConnectionError(
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
 
     if (!response.ok) {
-      throw new Error(`Health check failed: ${response.status}`);
+      throw new AttestationServiceError({
+        stage: AttestationStage.CONNECTION,
+        originalError: `Health check failed with status ${response.status}`,
+        suggestion: "Attestation service unhealthy. Check service logs and restart if needed",
+        httpCode: response.status,
+      });
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,18 +124,31 @@ export class AttestationClient {
 
     const startTime = Date.now();
 
-    const response = await this.fetch("/api/v1/attest", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        presentation: request.presentation,
-        intent_hash: request.intentHash,
-        expected_amount_cents: request.expectedAmountCents,
-        expected_beneficiary_iban: request.expectedBeneficiaryIban,
-      }),
-    });
+    let response: Response;
+    try {
+      response = await this.fetch("/api/v1/attest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          presentation: request.presentation,
+          intent_hash: request.intentHash,
+          expected_amount_cents: request.expectedAmountCents,
+          expected_beneficiary_iban: request.expectedBeneficiaryIban,
+        }),
+      });
+    } catch (error) {
+      const durationSeconds = (Date.now() - startTime) / 1000;
+      attestationDurationSeconds.observe({ status: "error" }, durationSeconds);
+
+      const connectionError = createConnectionError(
+        error instanceof Error ? error : new Error(String(error)),
+        request.intentHash
+      );
+      log.error(connectionError.toLogContext(), "Attestation connection failed");
+      throw connectionError;
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = await response.json();
@@ -125,13 +156,15 @@ export class AttestationClient {
     const durationSeconds = (Date.now() - startTime) / 1000;
 
     if (!response.ok) {
-      const error = data as AttestationError;
-      log.error(
-        { intentHash: request.intentHash, error: error.error, code: error.code },
-        "Attestation request failed"
+      const errorResponse = data as AttestationError;
+      const classifiedError = classifyAttestationError(
+        errorResponse.error,
+        errorResponse.code,
+        request.intentHash
       );
+      log.error(classifiedError.toLogContext(), "Attestation request failed");
       attestationDurationSeconds.observe({ status: "error" }, durationSeconds);
-      throw new Error(`Attestation failed: ${error.error}`);
+      throw classifiedError;
     }
 
     const attestation: AttestationResponse = {
