@@ -382,20 +382,66 @@ async function fetchMockQuotes(
   });
 }
 
+/**
+ * Validates an IBAN using the ISO 13616 mod-97 checksum algorithm.
+ *
+ * Algorithm:
+ * 1. Check length is 15-34 characters
+ * 2. Verify format: 2 letters (country) + 2 digits (check) + alphanumeric (BBAN)
+ * 3. Move first 4 characters to end
+ * 4. Replace letters with digits (A=10, B=11, ..., Z=35)
+ * 5. Calculate modulo 97 - must equal 1
+ */
+export function validateIBAN(iban: string): { valid: boolean; error?: string } {
+  // Remove spaces and convert to uppercase
+  const formatted = iban.replace(/\s/g, '').toUpperCase();
+
+  // Check length (15-34 characters per ISO 13616)
+  if (formatted.length < 15 || formatted.length > 34) {
+    return { valid: false, error: 'IBAN must be 15-34 characters' };
+  }
+
+  // Check basic format: 2 letters + 2 digits + alphanumeric
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(formatted)) {
+    return { valid: false, error: 'Invalid IBAN format (expected: country code + check digits + account)' };
+  }
+
+  // Move first 4 characters (country code + check digits) to the end
+  const rearranged = formatted.slice(4) + formatted.slice(0, 4);
+
+  // Replace letters with numbers (A=10, B=11, ..., Z=35)
+  let numericString = '';
+  for (const char of rearranged) {
+    if (/[A-Z]/.test(char)) {
+      numericString += (char.charCodeAt(0) - 55).toString(); // A=65, so 65-55=10
+    } else {
+      numericString += char;
+    }
+  }
+
+  // Calculate mod 97 using chunked arithmetic (handles large numbers)
+  // Process in chunks of 9 digits to stay within safe integer range
+  let remainder = 0;
+  for (let i = 0; i < numericString.length; i += 9) {
+    const chunk = numericString.slice(i, i + 9);
+    remainder = parseInt(remainder.toString() + chunk, 10) % 97;
+  }
+
+  if (remainder !== 1) {
+    return { valid: false, error: 'Invalid IBAN checksum' };
+  }
+
+  return { valid: true };
+}
+
 // Validate receiving info based on RTPN
 export function validateReceivingInfo(rtpn: RTPN, info: string): { valid: boolean; error?: string } {
   const rtpnInfo = RTPN_CONFIG[rtpn];
-  
+
   switch (rtpnInfo.currency) {
     case 'EUR': {
-      const formatted = info.replace(/\s/g, '').toUpperCase();
-      if (formatted.length < 15 || formatted.length > 34) {
-        return { valid: false, error: 'Invalid IBAN length' };
-      }
-      if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(formatted)) {
-        return { valid: false, error: 'Invalid IBAN format' };
-      }
-      return { valid: true };
+      // Use proper IBAN validation with checksum
+      return validateIBAN(info);
     }
     case 'GBP': {
       if (info.length < 10) {
