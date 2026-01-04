@@ -1,7 +1,11 @@
 import { config as loadEnv } from "dotenv";
 import type { Address, Hex } from "viem";
+import { getSolverConfig } from "./config/solver-config.js";
 
 loadEnv();
+
+// Load solver-config.json (or defaults)
+const solverConfig = getSolverConfig();
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -26,11 +30,18 @@ export const config = {
   // Solver wallet
   solverPrivateKey: requireEnv("SOLVER_PRIVATE_KEY") as Hex,
 
-  // Orchestrator settings
+  // Orchestrator settings (env vars override solver-config.json)
   orchestrator: {
     pollInterval: parseInt(optionalEnv("POLL_INTERVAL", "5000")),
-    minUsdcAmount: BigInt(optionalEnv("MIN_USDC_AMOUNT", "1000000")), // 1 USDC
-    maxUsdcAmount: BigInt(optionalEnv("MAX_USDC_AMOUNT", "10000000000")), // 10,000 USDC
+    minUsdcAmount: BigInt(
+      optionalEnv("MIN_USDC_AMOUNT", String(solverConfig.limits.minUsdcAmount))
+    ),
+    maxUsdcAmount: BigInt(
+      optionalEnv("MAX_USDC_AMOUNT", String(solverConfig.limits.maxUsdcAmount))
+    ),
+    maxDailyVolume: solverConfig.limits.maxDailyVolume
+      ? BigInt(solverConfig.limits.maxDailyVolume)
+      : undefined,
   },
 
   // Database
@@ -59,7 +70,9 @@ export const config = {
     bankAccountId: optionalEnv("QONTO_BANK_ACCOUNT_ID", ""),
     useSandbox: optionalEnv("QONTO_USE_SANDBOX", "false") === "true",
     stagingToken: optionalEnv("QONTO_STAGING_TOKEN", ""),
-    feeBps: parseInt(optionalEnv("QONTO_FEE_BPS", "50")), // 0.5% default
+    feeBps: parseInt(
+      optionalEnv("QONTO_FEE_BPS", String(solverConfig.pricing.feeBps))
+    ), // From solver-config.json or 0.5% default
   },
 
   // -------------------------------------------------------------------------
@@ -108,5 +121,6 @@ export const config = {
 
 export type Config = typeof config;
 
-
-
+// Re-export solver config for direct access
+export { getSolverConfig, reloadSolverConfig } from "./config/solver-config.js";
+export type { SolverConfigSchema } from "./config/solver-config.js";
