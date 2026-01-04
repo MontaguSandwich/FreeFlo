@@ -1,0 +1,30 @@
+{
+  "_comment": "Solver Configuration - Copy to solver-config.json and customize",
+  
+  "limits": {
+    "_comment_min": "Minimum USDC amount to accept (6 decimals). 1000000 = 1 USDC",
+    "minUsdcAmount": 1000000,
+    
+    "_comment_max": "Maximum USDC amount to accept (6 decimals). 10000000000 = 10,000 USDC",
+    "maxUsdcAmount": 10000000000,
+    
+    "_comment_daily": "Maximum daily volume (6 decimals). Set to 0 for unlimited. 50000000000 = 50,000 USDC",
+    "maxDailyVolume": 50000000000
+  },
+  
+  "pricing": {
+    "_comment_fee": "Fee in basis points. 50 = 0.5%, 100 = 1%",
+    "feeBps": 50,
+    
+    "_comment_min_fee": "Optional minimum fee in cents. E.g., 10 = $0.10 minimum fee",
+    "minFeeCents": 10
+  },
+  
+  "supported": {
+    "_comment_currencies": "List of supported fiat currencies",
+    "currencies": ["EUR"],
+    
+    "_comment_rtpns": "List of supported Real-Time Payment Networks",
+    "rtpns": ["SEPA_INSTANT"]
+  }
+}
