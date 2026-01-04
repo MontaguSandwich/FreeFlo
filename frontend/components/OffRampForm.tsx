@@ -735,10 +735,15 @@ export function OffRampV2() {
 
         <button
           onClick={handleCommit}
-          disabled={isApproving || isApproveConfirming || isSelectingQuote || isSelectConfirming || !!receivingInfoError || !receivingInfo || !recipientName}
-          className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
+          disabled={isCreatingIntent || isCreateConfirming || isApproving || isApproveConfirming || isSelectingQuote || isSelectConfirming || !!receivingInfoError || !receivingInfo || !recipientName}
+          className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
-          {isApproving || isApproveConfirming
+          {(isCreatingIntent || isCreateConfirming || isApproving || isApproveConfirming || isSelectingQuote || isSelectConfirming) && (
+            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          )}
+          {isCreatingIntent || isCreateConfirming
+            ? "Creating Intent..."
+            : isApproving || isApproveConfirming
             ? "Approving USDC..."
             : isSelectingQuote || isSelectConfirming
             ? "Confirming..."
