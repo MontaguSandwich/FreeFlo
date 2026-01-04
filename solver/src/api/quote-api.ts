@@ -10,6 +10,7 @@ import { URL } from "url";
 import { createLogger } from "../utils/logger.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { RTPN, Currency, getRtpnsForCurrency, RTPN_NAMES } from "../types/index.js";
+import { config } from "../config.js";
 
 const log = createLogger("quote-api");
 
@@ -134,6 +135,25 @@ async function getQuotes(
 ): Promise<QuoteApiResponse> {
   const quotes: QuoteApiResponse["quotes"] = [];
   const usdcAmountBigInt = BigInt(Math.round(usdcAmount * 1_000_000)); // Convert to 6 decimals
+
+  // Check against solver limits from solver-config.json
+  const { minUsdcAmount, maxUsdcAmount } = config.orchestrator;
+
+  if (usdcAmountBigInt < minUsdcAmount) {
+    log.debug(
+      { usdcAmount, minUsdcAmount: minUsdcAmount.toString() },
+      "Amount below minimum, skipping quotes"
+    );
+    return { quotes: [], timestamp: Date.now() };
+  }
+
+  if (usdcAmountBigInt > maxUsdcAmount) {
+    log.debug(
+      { usdcAmount, maxUsdcAmount: maxUsdcAmount.toString() },
+      "Amount above maximum, skipping quotes"
+    );
+    return { quotes: [], timestamp: Date.now() };
+  }
 
   // Get RTPNs for this currency
   const rtpnsForCurrency = getRtpnsForCurrency(currency);

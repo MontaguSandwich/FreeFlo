@@ -113,6 +113,7 @@ async function main() {
       pollInterval: config.orchestrator.pollInterval,
       minUsdcAmount: config.orchestrator.minUsdcAmount,
       maxUsdcAmount: config.orchestrator.maxUsdcAmount,
+      maxDailyVolume: config.orchestrator.maxDailyVolume,
     }
   );
 

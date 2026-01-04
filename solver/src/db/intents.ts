@@ -50,6 +50,16 @@ export class IntentDatabase {
     // Migration: add retry columns if they don't exist
     this.migrateRetryColumns();
 
+    // Create daily volume tracking table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS daily_volume (
+        date TEXT PRIMARY KEY,
+        usdc_volume TEXT NOT NULL DEFAULT '0',
+        tx_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
     this.db.exec(`
 
       -- Quotes table (our submitted quotes)
@@ -489,6 +499,113 @@ export class IntentDatabase {
       submittedOnChain: Boolean(r.submitted_on_chain),
       txHash: r.tx_hash as string | null,
       createdAt: r.created_at as number,
+    };
+  }
+
+  // ============ Daily Volume Tracking ============
+
+  /**
+   * Get the current date in UTC as YYYY-MM-DD format
+   */
+  private getCurrentDateUTC(): string {
+    return new Date().toISOString().split("T")[0];
+  }
+
+  /**
+   * Get today's cumulative USDC volume in base units (6 decimals)
+   */
+  getDailyVolume(): bigint {
+    const date = this.getCurrentDateUTC();
+    const stmt = this.db.prepare(
+      `SELECT usdc_volume FROM daily_volume WHERE date = ?`
+    );
+    const row = stmt.get(date) as { usdc_volume: string } | undefined;
+    return row ? BigInt(row.usdc_volume) : 0n;
+  }
+
+  /**
+   * Add to today's volume after a successful quote submission.
+   * This is called when we submit a quote (not when fulfilled, to prevent
+   * exceeding limits while quotes are pending).
+   */
+  addToDailyVolume(usdcAmount: bigint): void {
+    const date = this.getCurrentDateUTC();
+    const now = Date.now();
+
+    // Upsert: increment volume if exists, create if not
+    const existing = this.db
+      .prepare(`SELECT usdc_volume, tx_count FROM daily_volume WHERE date = ?`)
+      .get(date) as { usdc_volume: string; tx_count: number } | undefined;
+
+    if (existing) {
+      const newVolume = BigInt(existing.usdc_volume) + usdcAmount;
+      const stmt = this.db.prepare(`
+        UPDATE daily_volume
+        SET usdc_volume = ?, tx_count = tx_count + 1, updated_at = ?
+        WHERE date = ?
+      `);
+      stmt.run(newVolume.toString(), now, date);
+    } else {
+      const stmt = this.db.prepare(`
+        INSERT INTO daily_volume (date, usdc_volume, tx_count, updated_at)
+        VALUES (?, ?, 1, ?)
+      `);
+      stmt.run(date, usdcAmount.toString(), now);
+    }
+
+    log.debug(
+      { date, addedVolume: usdcAmount.toString() },
+      "Updated daily volume"
+    );
+  }
+
+  /**
+   * Check if adding a new amount would exceed the daily volume limit.
+   * Returns true if the transaction can proceed, false otherwise.
+   */
+  canAcceptVolume(usdcAmount: bigint, maxDailyVolume: bigint | undefined): boolean {
+    if (!maxDailyVolume) {
+      return true; // No limit configured
+    }
+
+    const currentVolume = this.getDailyVolume();
+    const projectedVolume = currentVolume + usdcAmount;
+
+    if (projectedVolume > maxDailyVolume) {
+      log.warn(
+        {
+          currentVolume: currentVolume.toString(),
+          requestedAmount: usdcAmount.toString(),
+          maxDailyVolume: maxDailyVolume.toString(),
+        },
+        "Daily volume limit would be exceeded"
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Get volume stats for monitoring
+   */
+  getVolumeStats(): {
+    todayVolume: string;
+    todayTxCount: number;
+    todayDate: string;
+  } {
+    const date = this.getCurrentDateUTC();
+    const stmt = this.db.prepare(
+      `SELECT usdc_volume, tx_count FROM daily_volume WHERE date = ?`
+    );
+    const row = stmt.get(date) as
+      | { usdc_volume: string; tx_count: number }
+      | undefined;
+
+    return {
+      todayVolume: row?.usdc_volume || "0",
+      todayTxCount: row?.tx_count || 0,
+      todayDate: date,
     };
   }
 
