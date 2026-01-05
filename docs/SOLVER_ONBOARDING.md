@@ -55,29 +55,42 @@ Once approved:
 
 ### 1.3 Get OAuth Credentials
 
-You need both **OAuth tokens** (for transfers) and **API keys** (for TLSNotary prover):
+You need both **OAuth tokens** (for transfers) and **API keys** (for TLSNotary prover).
 
 #### OAuth Credentials (for transfers)
-```
-Client ID:      your_client_id
-Client Secret:  your_client_secret
-Access Token:   ory_at_...
-Refresh Token:  ory_rt_...
-```
 
-To get initial tokens, use Qonto's OAuth flow:
+Use the helper script to get OAuth tokens:
+
 ```bash
-# 1. Open authorization URL in browser
-https://oauth.qonto.com/oauth/authorize?client_id=YOUR_CLIENT_ID&response_type=code&redirect_uri=YOUR_REDIRECT_URI&scope=organization.read%20transaction.read%20payment.write
+cd /opt/FreeFlo/solver
 
-# 2. After authorization, exchange code for tokens
-curl -X POST https://oauth.qonto.com/oauth/token \
-  -d "grant_type=authorization_code" \
-  -d "code=AUTHORIZATION_CODE" \
-  -d "client_id=YOUR_CLIENT_ID" \
-  -d "client_secret=YOUR_CLIENT_SECRET" \
-  -d "redirect_uri=YOUR_REDIRECT_URI"
+# Run OAuth flow (starts local callback server on port 3456)
+QONTO_CLIENT_ID=your_client_id \
+QONTO_CLIENT_SECRET=your_client_secret \
+node scripts/qonto-oauth-simple.mjs
 ```
+
+The script will:
+1. Print a URL to open in your browser
+2. Start a local callback server on port 3456
+3. After you authorize in Qonto, automatically capture the code
+4. Exchange for tokens and print your `.env` values
+
+**Output example:**
+```
+🎉 SUCCESS! Add these to your solver/.env file:
+============================================================
+QONTO_ENABLED=true
+QONTO_AUTH_METHOD=oauth
+QONTO_ACCESS_TOKEN=ory_at_...
+QONTO_REFRESH_TOKEN=ory_rt_...
+
+# Available bank accounts:
+# 1. Main Account - FR76... (Balance: €1234.56)
+QONTO_BANK_ACCOUNT_ID=your-org-slug-bank-account-1
+```
+
+> **Note**: You need `QONTO_CLIENT_ID` and `QONTO_CLIENT_SECRET` from the Qonto Partner Portal first (Settings → Integrations → OAuth Applications).
 
 #### API Key Credentials (for TLSNotary)
 ```
@@ -87,19 +100,9 @@ API Key Secret: your_api_key_secret
 
 Find these in Qonto dashboard under **Settings** → **Integrations** → **API Keys**.
 
-### 1.4 Get Bank Account ID
+> **Note**: The OAuth script above also outputs your `QONTO_BANK_ACCOUNT_ID` automatically.
 
-```bash
-# Using OAuth token
-curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  https://thirdparty.qonto.com/v2/organization
-
-# Response includes bank_accounts[].id (UUID format)
-```
-
-Save the bank account ID (e.g., `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
-
-### 1.5 Set Up Trusted Beneficiaries (Optional)
+### 1.4 Set Up Trusted Beneficiaries (Optional)
 
 For fully automated transfers without SCA (Strong Customer Authentication):
 
