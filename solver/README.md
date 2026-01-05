@@ -1,15 +1,19 @@
-# OffRamp Solver
+# FreeFlo Solver
 
-Modular solver service for fulfilling USDC → Fiat off-ramp intents via various Real-Time Payment Networks (RTPNs).
+Modular solver service for fulfilling USDC → Fiat off-ramp intents via various Real-Time Payment Networks (RTPNs) with **zkTLS verification**.
+
+> **New solver?** See the complete setup guide: [docs/SOLVER_ONBOARDING.md](../docs/SOLVER_ONBOARDING.md)
 
 ## Overview
 
-The solver:
-1. Watches for `IntentCreated` events from the OffRampV2 contract
-2. Generates quotes via registered RTPN providers
+The solver (V3 with zkTLS):
+1. Watches for `IntentCreated` events from the OffRampV3 contract
+2. Generates quotes via registered RTPN providers (currently Qonto for SEPA Instant)
 3. Submits quotes on-chain
 4. Executes fiat transfers when quotes are selected
-5. Submits fulfillment transactions to claim USDC
+5. Generates TLSNotary proofs of the bank transfer
+6. Gets EIP-712 attestation from the attestation service
+7. Submits fulfillment with cryptographic proof to claim USDC
 
 ## Architecture
 
@@ -56,9 +60,9 @@ cp .env.example .env
 # Development (with hot reload)
 npm run dev
 
-# Production
+# Production (V3 with zkTLS)
 npm run build
-npm start
+npm run start:v3
 ```
 
 ## Configuration
@@ -69,13 +73,16 @@ npm start
 |----------|-------------|---------|
 | `RPC_URL` | Base RPC endpoint | - |
 | `CHAIN_ID` | Chain ID (84532 for Base Sepolia) | 84532 |
-| `OFFRAMP_V2_ADDRESS` | OffRampV2 contract address | - |
+| `OFFRAMP_V3_ADDRESS` | OffRampV3 contract address | - |
+| `PAYMENT_VERIFIER_ADDRESS` | PaymentVerifier contract address | - |
 | `SOLVER_PRIVATE_KEY` | Solver wallet private key | - |
-| `POLL_INTERVAL` | Intent polling interval (ms) | 5000 |
-| `MIN_USDC_AMOUNT` | Minimum USDC to process | 1 USDC |
-| `MAX_USDC_AMOUNT` | Maximum USDC to process | 10,000 USDC |
-| `DB_PATH` | SQLite database path | ./solver.db |
+| `ATTESTATION_SERVICE_URL` | Attestation service URL | http://127.0.0.1:4001 |
+| `PROVER_ENABLED` | Enable TLSNotary prover | false |
+| `TLSN_EXAMPLES_PATH` | Path to TLSNotary examples | - |
 | `HEALTH_PORT` | Health check server port | 8080 |
+| `QUOTE_API_PORT` | Quote API server port | 8081 |
+
+See [.env.example](.env.example) for all configuration options.
 
 ### Qonto Provider (SEPA Instant - EUR)
 

@@ -1,6 +1,8 @@
 # VPS Deployment Guide
 
-This guide walks you through deploying ZKP2P Off-Ramp to a VPS for testing with colleagues.
+> **Note**: For complete solver setup including Qonto credentials, TLSNotary, and on-chain registration, see **[SOLVER_ONBOARDING.md](./SOLVER_ONBOARDING.md)**.
+
+This guide covers VPS-specific deployment using Docker Compose.
 
 ## Architecture
 
@@ -196,6 +198,8 @@ api.yourdomain.com → YOUR_VPS_IP
 ---
 
 ## Step 9: Running Attestation Service
+
+> **Important**: The attestation service requires a **witness private key** that must be **authorized on-chain**. See [SOLVER_ONBOARDING.md#step-6-on-chain-setup](./SOLVER_ONBOARDING.md#step-6-on-chain-setup) for authorization instructions.
 
 The attestation service requires Rust and TLSNotary. For testing, you can run it on your local machine:
 
