@@ -382,21 +382,56 @@ async function fetchMockQuotes(
   });
 }
 
+// Validate IBAN using ISO 13616 mod-97 checksum algorithm
+export function validateIBAN(iban: string): { valid: boolean; error?: string } {
+  const formatted = iban.replace(/\s/g, '').toUpperCase();
+
+  // Length check (15-34 characters per ISO 13616)
+  if (formatted.length < 15 || formatted.length > 34) {
+    return { valid: false, error: 'Invalid IBAN length' };
+  }
+
+  // Format: 2 country letters + 2 check digits + alphanumeric BBAN
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(formatted)) {
+    return { valid: false, error: 'Invalid IBAN format' };
+  }
+
+  // Mod-97 checksum validation:
+  // 1. Move first 4 chars (country + check digits) to end
+  // 2. Convert letters to numbers (A=10, B=11, ..., Z=35)
+  // 3. Result mod 97 must equal 1
+  const rearranged = formatted.slice(4) + formatted.slice(0, 4);
+
+  let numericString = '';
+  for (const char of rearranged) {
+    if (char >= 'A' && char <= 'Z') {
+      numericString += (char.charCodeAt(0) - 55).toString(); // A=10, B=11, etc.
+    } else {
+      numericString += char;
+    }
+  }
+
+  // Process in chunks to handle large numbers (JS can't handle 30+ digit integers)
+  let remainder = 0;
+  for (let i = 0; i < numericString.length; i += 7) {
+    const chunk = numericString.slice(i, i + 7);
+    remainder = parseInt(remainder.toString() + chunk, 10) % 97;
+  }
+
+  if (remainder !== 1) {
+    return { valid: false, error: 'Invalid IBAN checksum' };
+  }
+
+  return { valid: true };
+}
+
 // Validate receiving info based on RTPN
 export function validateReceivingInfo(rtpn: RTPN, info: string): { valid: boolean; error?: string } {
   const rtpnInfo = RTPN_CONFIG[rtpn];
-  
+
   switch (rtpnInfo.currency) {
-    case 'EUR': {
-      const formatted = info.replace(/\s/g, '').toUpperCase();
-      if (formatted.length < 15 || formatted.length > 34) {
-        return { valid: false, error: 'Invalid IBAN length' };
-      }
-      if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(formatted)) {
-        return { valid: false, error: 'Invalid IBAN format' };
-      }
-      return { valid: true };
-    }
+    case 'EUR':
+      return validateIBAN(info);
     case 'GBP': {
       if (info.length < 10) {
         return { valid: false, error: 'Enter sort code and account number' };
