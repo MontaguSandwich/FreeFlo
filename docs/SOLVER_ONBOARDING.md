@@ -59,10 +59,16 @@ You need both **OAuth tokens** (for transfers) and **API keys** (for TLSNotary p
 
 #### OAuth Credentials (for transfers)
 
-Use the helper script to get OAuth tokens:
+Use the helper script to get OAuth tokens.
+
+> **Important**: Run this script on your **local machine** (laptop/Mac), not the VPS. Qonto requires HTTPS for non-localhost OAuth redirects. The script uses `localhost:3456` which only works locally.
+
+**On your local machine:**
 
 ```bash
-cd /opt/FreeFlo/solver
+# Clone the repo locally if you haven't
+git clone https://github.com/MontaguSandwich/FreeFlo.git
+cd FreeFlo/solver
 
 # Run OAuth flow (starts local callback server on port 3456)
 QONTO_CLIENT_ID=your_client_id \
@@ -89,6 +95,8 @@ QONTO_REFRESH_TOKEN=ory_rt_...
 # 1. Main Account - FR76... (Balance: €1234.56)
 QONTO_BANK_ACCOUNT_ID=your-org-slug-bank-account-1
 ```
+
+**Then copy these values to your VPS** when configuring the solver `.env` file in Step 5.
 
 > **Note**: You need `QONTO_CLIENT_ID` and `QONTO_CLIENT_SECRET` from the Qonto Partner Portal first (Settings → Integrations → OAuth Applications).
 
