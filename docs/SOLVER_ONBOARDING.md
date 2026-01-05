@@ -96,9 +96,13 @@ QONTO_REFRESH_TOKEN=ory_rt_...
 QONTO_BANK_ACCOUNT_ID=your-org-slug-bank-account-1
 ```
 
+> ⚠️ **Important**: The `QONTO_BANK_ACCOUNT_ID` shown above is in **slug format**. The Qonto transfer API requires the **UUID format** instead. After completing OAuth, you must fetch the correct UUID (see Step 1.5 below).
+
 **Then copy these values to your VPS** when configuring the solver `.env` file in Step 5.
 
 > **Note**: You need `QONTO_CLIENT_ID` and `QONTO_CLIENT_SECRET` from the Qonto Partner Portal first (Settings → Integrations → OAuth Applications).
+
+> ⚠️ **Critical**: Each solver instance **must have its own Qonto OAuth application**. Qonto does not support multiple concurrent sessions from the same OAuth app - the VoP (Verification of Payee) proof tokens will fail validation. Create a separate OAuth application in the Qonto Partner Portal for each solver.
 
 #### API Key Credentials (for TLSNotary)
 ```
@@ -117,6 +121,32 @@ For fully automated transfers without SCA (Strong Customer Authentication):
 1. In Qonto dashboard, go to **Transfers** → **Beneficiaries**
 2. Add beneficiaries you'll be sending to
 3. Mark them as "Trusted"
+
+### 1.5 Get Correct Bank Account UUID
+
+The OAuth script outputs a **slug-format** bank account ID (e.g., `your-org-slug-bank-account-1`), but the Qonto transfer API requires the **UUID format** (e.g., `019b224e-3c54-78cc-a6cb-b29a798874b0`).
+
+**After getting your OAuth tokens**, fetch the correct UUID:
+
+```bash
+# Using the access token from the OAuth flow
+curl -s -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  "https://thirdparty.qonto.com/v2/organization" | jq '.organization.bank_accounts[] | {id, iban, name, balance}'
+```
+
+**Example output:**
+```json
+{
+  "id": "019b224e-3c54-78cc-a6cb-b29a798874b0",
+  "iban": "FR7616958000012912340967682",
+  "name": "Compte principal",
+  "balance": 1234.56
+}
+```
+
+Use the `id` field (UUID format) as your `QONTO_BANK_ACCOUNT_ID` in the solver `.env`.
+
+> **Note**: If you don't have `jq` installed, you can install it with `apt install -y jq` or just view the raw JSON response.
 
 ---
 
@@ -221,7 +251,29 @@ cd tlsn
 cp -r /opt/FreeFlo/tlsn/crates/examples/qonto /opt/tlsn/crates/examples/
 ```
 
-### 3.3 Build Prover
+### 3.3 Register Examples in Cargo.toml
+
+The TLSNotary Cargo.toml needs to know about the Qonto examples:
+
+```bash
+# Add urlencoding dependency
+cd /opt/tlsn/crates/examples
+cargo add urlencoding
+
+# Add example entries to Cargo.toml
+cat >> /opt/tlsn/crates/examples/Cargo.toml << 'EOF'
+
+[[example]]
+name = "qonto_prove_transfer"
+path = "qonto/prove_transfer.rs"
+
+[[example]]
+name = "qonto_present_transfer"
+path = "qonto/present_transfer.rs"
+EOF
+```
+
+### 3.4 Build Prover
 
 ```bash
 cd /opt/tlsn/crates/examples
@@ -234,7 +286,9 @@ cargo build --release --example qonto_present_transfer
 ls -la /opt/tlsn/target/release/examples/qonto_*
 ```
 
-### 3.4 Test Prover (Optional)
+> **Note**: You'll see deprecation warnings during build - these are from upstream TLSNotary code and can be safely ignored.
+
+### 3.5 Test Prover (Optional)
 
 ```bash
 # Set environment
@@ -340,13 +394,19 @@ OFFRAMP_V3_ADDRESS=0x34249F4AB741F0661A38651A08213DDe1469b60f
 PAYMENT_VERIFIER_ADDRESS=0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
 SOLVER_PRIVATE_KEY=0x_YOUR_SOLVER_PRIVATE_KEY
 
+# Legacy V2 address (required by config, can be zero address)
+OFFRAMP_V2_ADDRESS=0x0000000000000000000000000000000000000000
+
 # Qonto OAuth
 QONTO_ENABLED=true
+QONTO_AUTH_METHOD=oauth
 QONTO_ACCESS_TOKEN=ory_at_...
 QONTO_REFRESH_TOKEN=ory_rt_...
 QONTO_CLIENT_ID=your_client_id
 QONTO_CLIENT_SECRET=your_client_secret
+# IMPORTANT: Use UUID format from Step 1.5, NOT the slug format
 QONTO_BANK_ACCOUNT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+QONTO_FEE_BPS=50  # Your fee in basis points (50 = 0.5%)
 
 # Attestation - IMPORTANT: Use 127.0.0.1, NOT localhost
 ATTESTATION_ENABLED=true
@@ -354,11 +414,21 @@ ATTESTATION_SERVICE_URL=http://127.0.0.1:4001
 
 # TLSNotary Prover
 PROVER_ENABLED=true
+PROVER_TIMEOUT=300000  # 5 minutes (first run includes Rust compilation)
 TLSN_EXAMPLES_PATH=/opt/tlsn/crates/examples
 QONTO_API_KEY_LOGIN=your-org-slug
 QONTO_API_KEY_SECRET=your_api_key_secret
 QONTO_BANK_ACCOUNT_SLUG=your-org-slug-bank-account-1
+
+# Server ports
+HEALTH_PORT=8080
+QUOTE_API_PORT=8081
 ```
+
+> ⚠️ **Important Notes**:
+> - `QONTO_BANK_ACCOUNT_ID` must be in UUID format (see Step 1.5)
+> - `ATTESTATION_SERVICE_URL` must use `127.0.0.1`, not `localhost` (Node resolves localhost to IPv6, Rust binds to IPv4)
+> - `OFFRAMP_V2_ADDRESS` is a legacy requirement - use a zero address if you don't have a V2 contract
 
 ### 5.3 Build Solver
 
@@ -561,16 +631,89 @@ If refresh fails:
 pm2 restart zkp2p-solver
 ```
 
+### VoP proof token invalid
+
+If you see `vop_proof_token_invalid: VOP proof token validation failed: invalid signature`:
+
+```bash
+# 1. Check server clock is synchronized
+timedatectl status
+
+# If NTP is not synchronized:
+timedatectl set-ntp true
+systemctl restart systemd-timesyncd
+```
+
+**Most common cause**: Multiple solver instances using the **same Qonto OAuth application**. Qonto doesn't support concurrent sessions from the same OAuth app. Each solver needs its own OAuth application in the Qonto Partner Portal.
+
+### Bank account not found
+
+If you see `bank_account_not_found`:
+
+```bash
+# You're using the wrong bank account ID format
+# The OAuth script outputs slug format: your-org-slug-bank-account-1
+# The API requires UUID format: 019b224e-3c54-78cc-a6cb-b29a798874b0
+
+# Fetch the correct UUID:
+source .env
+curl -s -H "Authorization: Bearer $QONTO_ACCESS_TOKEN" \
+  "https://thirdparty.qonto.com/v2/organization" | jq '.organization.bank_accounts[] | {id, iban}'
+
+# Update .env with the UUID from the "id" field
+```
+
+### Build errors: missing dependencies
+
+If you see `use of unresolved module or unlinked crate`:
+
+```bash
+# For urlencoding error in TLSNotary:
+cd /opt/tlsn/crates/examples
+cargo add urlencoding
+cargo build --release --example qonto_prove_transfer
+```
+
+### Build errors: example not found
+
+If you see `no example target named 'qonto_prove_transfer'`:
+
+```bash
+# The Cargo.toml doesn't have the example entries
+# Add them manually:
+cat >> /opt/tlsn/crates/examples/Cargo.toml << 'EOF'
+
+[[example]]
+name = "qonto_prove_transfer"
+path = "qonto/prove_transfer.rs"
+
+[[example]]
+name = "qonto_present_transfer"
+path = "qonto/present_transfer.rs"
+EOF
+```
+
+### Solver won't start: missing OFFRAMP_V2_ADDRESS
+
+If you see `Missing required environment variable: OFFRAMP_V2_ADDRESS`:
+
+```bash
+# Add the legacy V2 address to .env (can be zero address)
+echo 'OFFRAMP_V2_ADDRESS=0x0000000000000000000000000000000000000000' >> .env
+```
+
 ---
 
 ## Production Considerations
 
-1. **SSL/HTTPS**: Set up nginx with Let's Encrypt for Quote API
-2. **Monitoring**: Use PM2 monitoring or set up alerts
-3. **Backup**: Backup `.env` and `solver.db` regularly
-4. **Key Security**: Consider using a secrets manager
-5. **Rate Limits**: Be aware of Qonto API rate limits
-6. **Balance Alerts**: Monitor Qonto and solver wallet balances
+1. **One OAuth App Per Solver**: Each solver instance needs its own Qonto OAuth application. Qonto doesn't support multiple concurrent sessions from the same OAuth app - VoP tokens will fail.
+2. **SSL/HTTPS**: Set up nginx with Let's Encrypt for Quote API
+3. **Monitoring**: Use PM2 monitoring or set up alerts
+4. **Backup**: Backup `.env` and `solver.db` regularly
+5. **Key Security**: Consider using a secrets manager
+6. **Rate Limits**: Be aware of Qonto API rate limits
+7. **Balance Alerts**: Monitor Qonto and solver wallet balances
+8. **Clock Sync**: Ensure NTP is enabled (`timedatectl set-ntp true`) - clock drift can cause VoP token failures
 
 ---
 
