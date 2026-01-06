@@ -98,11 +98,21 @@ QONTO_BANK_ACCOUNT_ID=your-org-slug-bank-account-1
 
 > ⚠️ **Important**: The `QONTO_BANK_ACCOUNT_ID` shown above is in **slug format**. The Qonto transfer API requires the **UUID format** instead. After completing OAuth, you must fetch the correct UUID (see Step 1.5 below).
 
-**Then copy these values to your VPS** when configuring the solver `.env` file in Step 5.
+**Save these values** - you'll copy them to your VPS in Step 5.
 
 > **Note**: You need `QONTO_CLIENT_ID` and `QONTO_CLIENT_SECRET` from the Qonto Partner Portal first (Settings → Integrations → OAuth Applications).
 
-> ⚠️ **Critical**: Each solver instance **must have its own Qonto OAuth application**. Qonto does not support multiple concurrent sessions from the same OAuth app - the VoP (Verification of Payee) proof tokens will fail validation. Create a separate OAuth application in the Qonto Partner Portal for each solver.
+#### Why Run OAuth Locally?
+
+The OAuth flow requires a callback URL. Qonto only allows:
+- `http://localhost:*` - Works locally without HTTPS
+- `https://your-domain.com` - Requires valid SSL certificate
+
+Since most VPS setups don't have SSL configured initially, it's simpler to:
+1. Run the OAuth script on your laptop (uses localhost)
+2. Copy the resulting tokens to your VPS
+
+The tokens work from any server once obtained.
 
 #### API Key Credentials (for TLSNotary)
 ```
@@ -387,48 +397,64 @@ nano .env
 Fill in all required values. Key settings:
 
 ```bash
-# Blockchain
+# =============================================================================
+# BLOCKCHAIN
+# =============================================================================
 RPC_URL=https://base-sepolia-rpc.publicnode.com
 CHAIN_ID=84532
 OFFRAMP_V3_ADDRESS=0x34249F4AB741F0661A38651A08213DDe1469b60f
 PAYMENT_VERIFIER_ADDRESS=0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
 SOLVER_PRIVATE_KEY=0x_YOUR_SOLVER_PRIVATE_KEY
 
-# Legacy V2 address (required by config, can be zero address)
-OFFRAMP_V2_ADDRESS=0x0000000000000000000000000000000000000000
-
-# Qonto OAuth
+# =============================================================================
+# QONTO - Copy these from OAuth script output (Step 1.3)
+# =============================================================================
 QONTO_ENABLED=true
 QONTO_AUTH_METHOD=oauth
+
+# OAuth tokens (from running the script on your laptop)
 QONTO_ACCESS_TOKEN=ory_at_...
 QONTO_REFRESH_TOKEN=ory_rt_...
+
+# OAuth app credentials (from Qonto Partner Portal)
 QONTO_CLIENT_ID=your_client_id
 QONTO_CLIENT_SECRET=your_client_secret
-# IMPORTANT: Use UUID format from Step 1.5, NOT the slug format
-QONTO_BANK_ACCOUNT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-QONTO_FEE_BPS=50  # Your fee in basis points (50 = 0.5%)
 
-# Attestation - IMPORTANT: Use 127.0.0.1, NOT localhost
+# Bank account - MUST be UUID format from Step 1.5
+QONTO_BANK_ACCOUNT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Your fee (50 = 0.5%, 100 = 1%, 0 = free)
+QONTO_FEE_BPS=50
+
+# =============================================================================
+# ATTESTATION SERVICE
+# =============================================================================
 ATTESTATION_ENABLED=true
+# IMPORTANT: Use 127.0.0.1, NOT localhost (IPv6 vs IPv4 issue)
 ATTESTATION_SERVICE_URL=http://127.0.0.1:4001
 
-# TLSNotary Prover
+# =============================================================================
+# TLSNOTARY PROVER
+# =============================================================================
 PROVER_ENABLED=true
-PROVER_TIMEOUT=300000  # 5 minutes (first run includes Rust compilation)
+PROVER_TIMEOUT=300000
 TLSN_EXAMPLES_PATH=/opt/tlsn/crates/examples
+
+# API key credentials (from Qonto dashboard, different from OAuth)
 QONTO_API_KEY_LOGIN=your-org-slug
 QONTO_API_KEY_SECRET=your_api_key_secret
 QONTO_BANK_ACCOUNT_SLUG=your-org-slug-bank-account-1
 
-# Server ports
+# =============================================================================
+# SERVER
+# =============================================================================
 HEALTH_PORT=8080
 QUOTE_API_PORT=8081
 ```
 
 > ⚠️ **Important Notes**:
-> - `QONTO_BANK_ACCOUNT_ID` must be in UUID format (see Step 1.5)
+> - `QONTO_BANK_ACCOUNT_ID` must be in **UUID format** (see Step 1.5), not the slug format
 > - `ATTESTATION_SERVICE_URL` must use `127.0.0.1`, not `localhost` (Node resolves localhost to IPv6, Rust binds to IPv4)
-> - `OFFRAMP_V2_ADDRESS` is a legacy requirement - use a zero address if you don't have a V2 contract
 
 ### 5.3 Build Solver
 
@@ -636,7 +662,7 @@ pm2 restart zkp2p-solver
 If you see `vop_proof_token_invalid: VOP proof token validation failed: invalid signature`:
 
 ```bash
-# 1. Check server clock is synchronized
+# Check server clock is synchronized
 timedatectl status
 
 # If NTP is not synchronized:
@@ -644,7 +670,7 @@ timedatectl set-ntp true
 systemctl restart systemd-timesyncd
 ```
 
-**Most common cause**: Multiple solver instances using the **same Qonto OAuth application**. Qonto doesn't support concurrent sessions from the same OAuth app. Each solver needs its own OAuth application in the Qonto Partner Portal.
+Clock drift can cause VoP tokens to fail validation. See also [Appendix: Multiple Solvers](#appendix-multiple-solvers-same-qonto-account) if running multiple solver instances.
 
 ### Bank account not found
 
@@ -693,27 +719,53 @@ path = "qonto/present_transfer.rs"
 EOF
 ```
 
-### Solver won't start: missing OFFRAMP_V2_ADDRESS
-
-If you see `Missing required environment variable: OFFRAMP_V2_ADDRESS`:
-
-```bash
-# Add the legacy V2 address to .env (can be zero address)
-echo 'OFFRAMP_V2_ADDRESS=0x0000000000000000000000000000000000000000' >> .env
-```
-
 ---
 
 ## Production Considerations
 
-1. **One OAuth App Per Solver**: Each solver instance needs its own Qonto OAuth application. Qonto doesn't support multiple concurrent sessions from the same OAuth app - VoP tokens will fail.
-2. **SSL/HTTPS**: Set up nginx with Let's Encrypt for Quote API
-3. **Monitoring**: Use PM2 monitoring or set up alerts
-4. **Backup**: Backup `.env` and `solver.db` regularly
-5. **Key Security**: Consider using a secrets manager
-6. **Rate Limits**: Be aware of Qonto API rate limits
-7. **Balance Alerts**: Monitor Qonto and solver wallet balances
-8. **Clock Sync**: Ensure NTP is enabled (`timedatectl set-ntp true`) - clock drift can cause VoP token failures
+1. **SSL/HTTPS**: Set up nginx with Let's Encrypt for Quote API
+2. **Monitoring**: Use PM2 monitoring or set up alerts
+3. **Backup**: Backup `.env` and `solver.db` regularly
+4. **Key Security**: Consider using a secrets manager
+5. **Rate Limits**: Be aware of Qonto API rate limits
+6. **Balance Alerts**: Monitor Qonto and solver wallet balances
+7. **Clock Sync**: Ensure NTP is enabled (`timedatectl set-ntp true`)
+
+---
+
+## Appendix: Multiple Solvers (Same Qonto Account)
+
+If you're testing multiple solver instances using the **same Qonto business account**, be aware of these constraints:
+
+### Each Solver Needs Its Own OAuth Application
+
+Qonto's VoP (Verification of Payee) proof tokens appear to be scoped to the OAuth application/session. If two solvers share the same OAuth app credentials (`QONTO_CLIENT_ID`/`QONTO_CLIENT_SECRET`), you may encounter:
+
+```
+vop_proof_token_invalid: VOP proof token validation failed: invalid signature
+```
+
+**Solution**: Create a separate OAuth application in Qonto Partner Portal for each solver instance:
+1. Go to Qonto → Settings → Integrations → OAuth Applications
+2. Create a new application (e.g., "FreeFlo Solver 2")
+3. Use different `QONTO_CLIENT_ID` and `QONTO_CLIENT_SECRET` for each solver
+4. Run the OAuth flow separately for each solver
+
+### Token Refresh Conflicts
+
+If two solvers share OAuth credentials, token refreshes can invalidate each other's tokens since refresh tokens are rotated on use.
+
+### Same Bank Account is OK
+
+Multiple solvers can use the same Qonto bank account (`QONTO_BANK_ACCOUNT_ID`) - just ensure they have separate OAuth applications.
+
+### Frontend Multi-Solver Support
+
+To display quotes from multiple solvers on the frontend, set the `SOLVER_API_URLS` environment variable in Vercel:
+
+```
+SOLVER_API_URLS=http://solver1-ip:8081,http://solver2-ip:8081
+```
 
 ---
 
