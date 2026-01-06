@@ -20,8 +20,8 @@ export const config = {
   rpcUrl: requireEnv("RPC_URL"),
   chainId: parseInt(optionalEnv("CHAIN_ID", "84532")), // Base Sepolia default
 
-  // Contract
-  offRampAddress: requireEnv("OFFRAMP_V2_ADDRESS") as Address,
+  // Contract (V2 - legacy, optional for V3-only deployments)
+  offRampAddress: optionalEnv("OFFRAMP_V2_ADDRESS", "") as Address,
 
   // Solver wallet
   solverPrivateKey: requireEnv("SOLVER_PRIVATE_KEY") as Hex,
