@@ -26,6 +26,7 @@ export interface OrchestratorConfig {
   pollInterval: number;        // ms between loop iterations
   minUsdcAmount: bigint;       // minimum USDC to process
   maxUsdcAmount: bigint;       // maximum USDC to process
+  maxDailyVolume?: bigint;     // optional max daily volume limit
 }
 
 /**
@@ -253,6 +254,16 @@ export class SolverOrchestrator {
       return;
     }
 
+    // Check daily volume limit
+    if (!this.db.canAcceptVolume(usdcAmount, this.config.maxDailyVolume)) {
+      log.info(
+        { intentId, usdcAmount: usdcAmount.toString() },
+        "Daily volume limit would be exceeded, skipping"
+      );
+      this.db.markQuotesSubmitted(intentId);
+      return;
+    }
+
     // Get RTPNs for this currency
     const rtpns = getRtpnsForCurrency(currency as Currency);
     
@@ -327,6 +338,9 @@ export class SolverOrchestrator {
         );
 
         this.db.markQuoteSubmittedOnChain(quoteId, txHash);
+
+        // Track volume for daily limit enforcement
+        this.db.addToDailyVolume(usdcAmount);
 
         const rtpnName = RTPN_NAMES[rtpn] || "unknown";
         const currencyName = CURRENCY_NAMES[currency as Currency] || "unknown";
