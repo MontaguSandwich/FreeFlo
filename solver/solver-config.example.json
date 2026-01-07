@@ -1,0 +1,15 @@
+{
+  "limits": {
+    "minUsdcAmount": 1000000,
+    "maxUsdcAmount": 10000000000,
+    "maxDailyVolume": 50000000000
+  },
+  "pricing": {
+    "feeBps": 50,
+    "minFeeCents": 10
+  },
+  "supported": {
+    "currencies": ["EUR"],
+    "rtpns": ["SEPA_INSTANT"]
+  }
+}
