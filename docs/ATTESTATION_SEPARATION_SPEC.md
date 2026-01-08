@@ -119,13 +119,21 @@ SOLVER_API_KEYS=key1:solver_addr1,key2:solver_addr2,...
 RATE_LIMIT_PER_SOLVER=100/minute
 ```
 
-#### 1.3 Enhanced Validation
-Add stricter validation before signing:
+#### 1.3 On-Chain Intent Validation (Required)
+Query the blockchain before signing any attestation:
 
 1. **Intent exists on-chain:** Query OffRampV3 to verify intent exists and is ACTIVE
 2. **Solver is authorized:** Check solver address against OffRampV3.authorizedSolvers
 3. **Amount matches intent:** Verify payment amount matches intent amount
 4. **Not already fulfilled:** Check intent status != FULFILLED
+
+**New config fields:**
+```rust
+RPC_URL=https://base-sepolia-rpc.publicnode.com
+OFFRAMP_CONTRACT=0x34249F4AB741F0661A38651A08213DDe1469b60f
+```
+
+This adds ~100-500ms latency but prevents attestation of invalid/non-existent intents.
 
 #### 1.4 Audit Logging
 Log all attestation requests for security audit:
@@ -344,10 +352,14 @@ X-Solver-API-Key: <api_key>
 4. **Auditability:** All attestation requests logged with full context
 5. **Scalability:** Support 10+ concurrent solvers
 
+## Design Decisions
+
+1. **Domain:** `attestation.free-flo.xyz` (subdomain of existing domain)
+2. **Solver registration:** Manual approval process - solvers contact FreeFlo team, get vetted, receive API key
+3. **Intent validation:** Yes - attestation service queries chain before signing (more secure, ~100-500ms latency acceptable)
+
 ## Open Questions
 
-1. **Solver registration:** Manual approval or automated?
-2. **API key rotation:** How often? Automatic or manual?
-3. **Intent validation:** Should attestation service query chain for every request?
-4. **Geographic distribution:** Single region or multi-region deployment?
-5. **Backup witness key:** Hot standby or cold backup?
+1. **API key rotation:** How often? Automatic or manual?
+2. **Geographic distribution:** Single region or multi-region deployment?
+3. **Backup witness key:** Hot standby or cold backup?

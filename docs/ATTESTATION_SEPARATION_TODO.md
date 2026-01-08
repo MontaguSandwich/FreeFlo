@@ -13,7 +13,7 @@ Separate the attestation service from solvers so that only FreeFlo can sign paym
 ### 1.1 Server Setup
 - [ ] Provision FreeFlo server for attestation service
 - [ ] Configure firewall (allow 443, block 4001 externally)
-- [ ] Set up domain: `attestation.free-flo.xyz` (or similar)
+- [ ] Set up domain: `attestation.free-flo.xyz`
 - [ ] Configure TLS certificate (Let's Encrypt or similar)
 - [ ] Set up reverse proxy (nginx/caddy) for HTTPS termination
 
@@ -35,7 +35,7 @@ Separate the attestation service from solvers so that only FreeFlo can sign paym
 - [ ] Set up monitoring (health endpoint polling)
 
 ### 1.4 Verify Deployment
-- [ ] Test health endpoint: `GET https://attestation.free-flo.xyz/api/v1/health`
+- [ ] Test health endpoint: `curl https://attestation.free-flo.xyz/api/v1/health`
 - [ ] Verify witness address matches on-chain authorization
 - [ ] Test attest endpoint with valid proof
 
@@ -69,18 +69,29 @@ Separate the attestation service from solvers so that only FreeFlo can sign paym
   - [ ] Return 429 Too Many Requests when exceeded
   - [ ] Include `Retry-After` header
 
-### 2.2 Enhanced Validation (Optional but Recommended)
+### 2.2 On-Chain Intent Validation (Required)
 
-**File:** `attestation-service/src/attestation.rs`
+**File:** `attestation-service/src/`
+
+- [ ] Add `chain.rs` module for RPC calls:
+  - [ ] Add `ethers` or `alloy` crate dependency
+  - [ ] Implement `get_intent(intent_hash)` → Intent struct
+  - [ ] Implement `is_solver_authorized(solver_address)` → bool
+
+- [ ] Update `config.rs`:
+  - [ ] Add `rpc_url: String` field (e.g., `https://base-sepolia-rpc.publicnode.com`)
+  - [ ] Add `offramp_contract: Address` field (`0x34249F4AB741F0661A38651A08213DDe1469b60f`)
+
+- [ ] Update `attestation.rs` to validate before signing:
+  - [ ] Query intent exists on-chain
+  - [ ] Verify intent status is ACTIVE (not FULFILLED/CANCELLED)
+  - [ ] Verify payment amount matches intent amount
+  - [ ] Verify requesting solver is authorized for this intent
+  - [ ] Reject with 400 if any check fails
 
 - [ ] Add timestamp validation:
-  - [ ] Reject proofs older than 1 hour
+  - [ ] Reject TLS proofs older than 1 hour
   - [ ] Prevent replay of old proofs
-
-- [ ] Add intent validation (optional, requires RPC):
-  - [ ] Query OffRampV3 to verify intent exists
-  - [ ] Verify intent status is ACTIVE
-  - [ ] Verify solver is authorized for this intent
 
 ### 2.3 Audit Logging
 
@@ -226,9 +237,11 @@ Separate the attestation service from solvers so that only FreeFlo can sign paym
 | File | Change Type | Description |
 |------|-------------|-------------|
 | `attestation-service/src/auth.rs` | **NEW** | API key validation |
+| `attestation-service/src/chain.rs` | **NEW** | On-chain intent validation (RPC calls) |
 | `attestation-service/src/audit.rs` | **NEW** | Audit logging |
-| `attestation-service/src/config.rs` | MODIFY | Add API keys, rate limit config |
+| `attestation-service/src/config.rs` | MODIFY | Add API keys, RPC URL, contract address |
 | `attestation-service/src/api.rs` | MODIFY | Add auth middleware, rate limiting |
+| `attestation-service/src/attestation.rs` | MODIFY | Add intent validation before signing |
 | `attestation-service/src/main.rs` | MODIFY | Wire up new modules |
 | `solver/src/config.ts` | MODIFY | Add `apiKey` field |
 | `solver/src/attestation/client.ts` | MODIFY | Add API key header, handle 401/429 |
@@ -260,10 +273,15 @@ Separate the attestation service from solvers so that only FreeFlo can sign paym
 
 ---
 
-## Open Decisions Needed
+## Design Decisions (Resolved)
 
-1. **Domain name:** `attestation.free-flo.xyz`? `attest.freeflo.io`?
-2. **Rate limits:** 100/min per solver? Higher/lower?
-3. **API key format:** UUID? JWT? Simple random string?
-4. **Solver registration:** Manual approval process? Self-service?
-5. **Intent validation:** Should attestation service query chain? (adds latency but more secure)
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Domain | `attestation.free-flo.xyz` | Subdomain of existing domain, no new purchase needed |
+| Solver registration | Manual approval | FreeFlo team vets solvers, issues API keys directly |
+| Intent validation | Required | Query chain before signing (~100-500ms latency acceptable for security) |
+
+## Open Decisions
+
+1. **Rate limits:** 100/min per solver? Higher/lower?
+2. **API key format:** UUID? JWT? Simple random string?
