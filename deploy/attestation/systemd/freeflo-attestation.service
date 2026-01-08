@@ -1,0 +1,43 @@
+[Unit]
+Description=FreeFlo Attestation Service
+Documentation=https://github.com/MontaguSandwich/FreeFlo
+After=network.target
+
+[Service]
+Type=simple
+User=freeflo
+Group=freeflo
+WorkingDirectory=/opt/freeflo/attestation-service
+
+# Environment file contains secrets (WITNESS_PRIVATE_KEY)
+EnvironmentFile=/etc/freeflo/attestation.env
+
+# Run the service
+ExecStart=/opt/freeflo/attestation-service/target/release/attestation-service
+
+# Restart on failure
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+
+# Allow binding to port 4001
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=freeflo-attestation
+
+[Install]
+WantedBy=multi-user.target
