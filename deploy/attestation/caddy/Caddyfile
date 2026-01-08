@@ -1,0 +1,25 @@
+# Caddyfile for FreeFlo Attestation Service
+# Caddy automatically handles TLS certificates via Let's Encrypt
+
+attestation.free-flo.xyz {
+    # Reverse proxy to attestation service
+    reverse_proxy localhost:4001
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Remove server header
+        -Server
+    }
+
+    # Rate limiting (basic - Caddy doesn't have built-in rate limiting)
+    # For production, consider using a WAF or the attestation service's own rate limiting
+
+    # Logging
+    log {
+        output file /var/log/caddy/attestation.log
+        format json
+    }
+}
