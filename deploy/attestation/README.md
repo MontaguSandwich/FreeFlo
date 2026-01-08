@@ -94,15 +94,21 @@ sudo chown freeflo:freeflo /etc/freeflo/attestation.env
 
 ## Step 7: Authorize Witness On-Chain
 
-The witness address must be authorized in `PaymentVerifier` contract:
+The witness address must be authorized in `PaymentVerifier` contract.
+
+**Note:** Only the contract owner can add witnesses.
 
 ```bash
-# Using cast (requires deployer private key)
+# Check who owns the contract
+cast call 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe \
+  "owner()" \
+  --rpc-url https://base-sepolia-rpc.publicnode.com
+
+# Add witness (requires owner's private key)
 cast send 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe \
-  "setAuthorizedWitness(address,bool)" \
+  "addWitness(address)" \
   YOUR_WITNESS_ADDRESS \
-  true \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --private-key $OWNER_PRIVATE_KEY \
   --rpc-url https://base-sepolia-rpc.publicnode.com
 
 # Verify authorization
