@@ -57,6 +57,8 @@ export interface AttestationClientConfig {
   baseUrl: string;
   /** Request timeout in milliseconds */
   timeout?: number;
+  /** API key for authentication (optional, required if attestation service has auth enabled) */
+  apiKey?: string;
 }
 
 /**
@@ -65,10 +67,12 @@ export interface AttestationClientConfig {
 export class AttestationClient {
   private baseUrl: string;
   private timeout: number;
+  private apiKey?: string;
 
   constructor(config: AttestationClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, ""); // Remove trailing slash
     this.timeout = config.timeout ?? 30000;
+    this.apiKey = config.apiKey;
   }
 
   /**
@@ -106,11 +110,16 @@ export class AttestationClient {
 
     const startTime = Date.now();
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.apiKey) {
+      headers["X-Solver-API-Key"] = this.apiKey;
+    }
+
     const response = await this.fetch("/api/v1/attest", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         presentation: request.presentation,
         intent_hash: request.intentHash,
@@ -181,7 +190,7 @@ export class AttestationClient {
 /**
  * Create an attestation client from configuration
  */
-export function createAttestationClient(baseUrl: string): AttestationClient {
-  return new AttestationClient({ baseUrl });
+export function createAttestationClient(baseUrl: string, apiKey?: string): AttestationClient {
+  return new AttestationClient({ baseUrl, apiKey });
 }
 
