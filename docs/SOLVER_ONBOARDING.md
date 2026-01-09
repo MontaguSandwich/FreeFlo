@@ -375,7 +375,7 @@ ATTESTATION_API_KEY=your_api_key_from_freeflo  # From Step 4
 # =============================================================================
 PROVER_ENABLED=true
 PROVER_TIMEOUT=300000
-TLSN_EXAMPLES_PATH=/opt/tlsn/crates/examples
+TLSN_EXAMPLES_PATH=/opt/FreeFlo/tlsn/qonto
 
 # API key credentials (from Qonto dashboard, different from OAuth)
 QONTO_API_KEY_LOGIN=your-org-slug
@@ -547,8 +547,8 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 PROVER_TIMEOUT=300000
 
 # Pre-build the prover to avoid compilation during first transfer
-cd /opt/tlsn/crates/examples
-cargo build --release --example qonto_prove_transfer
+cd /opt/FreeFlo/tlsn/qonto
+cargo build --release --bin qonto_prove_transfer
 ```
 
 ### Qonto tokens expired
@@ -593,34 +593,27 @@ curl -s -H "Authorization: Bearer $QONTO_ACCESS_TOKEN" \
 # Update .env with the UUID from the "id" field
 ```
 
-### Build errors: missing dependencies
+### Build errors: binary not found
 
-If you see `use of unresolved module or unlinked crate`:
+If you see `no bin target named 'qonto_prove_transfer'`:
 
 ```bash
-# For urlencoding error in TLSNotary:
-cd /opt/tlsn/crates/examples
-cargo add urlencoding
-cargo build --release --example qonto_prove_transfer
+# Ensure you're in the correct directory and have the latest code
+cd /opt/FreeFlo
+git pull
+cd tlsn/qonto
+cargo build --release --bin qonto_prove_transfer
 ```
 
-### Build errors: example not found
+### Build errors: missing dependencies
 
-If you see `no example target named 'qonto_prove_transfer'`:
+If you see dependency resolution errors:
 
 ```bash
-# The Cargo.toml doesn't have the example entries
-# Add them manually:
-cat >> /opt/tlsn/crates/examples/Cargo.toml << 'EOF'
-
-[[example]]
-name = "qonto_prove_transfer"
-path = "qonto/prove_transfer.rs"
-
-[[example]]
-name = "qonto_present_transfer"
-path = "qonto/present_transfer.rs"
-EOF
+# Update dependencies and rebuild
+cd /opt/FreeFlo/tlsn/qonto
+cargo update
+cargo build --release --bin qonto_prove_transfer
 ```
 
 ---
