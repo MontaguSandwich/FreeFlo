@@ -262,12 +262,9 @@ pub async fn validate_intent(
         }
     }
 
-    // Check solver is authorized
-    let is_authorized = chain.is_solver_authorized(solver_address).await?;
-    if !is_authorized {
-        warn!(solver = %solver_address, "Unauthorized solver attempted attestation");
-        return Err(format!("Solver {} is not authorized", solver_address));
-    }
+    // Note: OffRampV3 is permissionless - no authorizedSolvers mapping
+    // The selectedSolver check above is sufficient to verify the solver
+    // is authorized to fulfill this specific intent
 
     // Check amount matches (convert from wei to cents if needed)
     // Note: This assumes intent.amount is in the same units as expected_amount_cents
