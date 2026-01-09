@@ -13,6 +13,7 @@ Before you begin, you'll need:
 | **Qonto Business Account** | EU business required, 2-4 week approval |
 | **VPS** | Ubuntu 22.04, 2GB+ RAM (Hetzner €4/mo, DigitalOcean $12/mo) |
 | **ETH on Base Sepolia** | For gas fees (~0.01 ETH) |
+| **FreeFlo API Key** | Contact FreeFlo team to register as a solver |
 | **Domain** (optional) | For SSL/HTTPS |
 
 ---
@@ -26,12 +27,14 @@ Before you begin, you'll need:
 │  1. Qonto Account     → Get API credentials                         │
 │  2. VPS Setup         → Install dependencies                        │
 │  3. TLSNotary         → Build Qonto prover                          │
-│  4. Attestation       → Run attestation service                     │
+│  4. FreeFlo API Key   → Register with FreeFlo                       │
 │  5. Solver            → Configure and run                           │
-│  6. On-chain          → Register solver, authorize witness          │
+│  6. On-chain          → Register solver (optional)                  │
 │  7. Verify            → Test end-to-end                             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Important**: You do NOT need to run your own attestation service. FreeFlo operates the attestation service with the witness key. This ensures trustless operation - solvers cannot forge payment proofs.
 
 ---
 
@@ -191,7 +194,6 @@ apt install -y git curl build-essential pkg-config libssl-dev
 ufw allow 22/tcp   # SSH
 ufw allow 8080/tcp # Health check
 ufw allow 8081/tcp # Quote API
-ufw allow 4001/tcp # Attestation service
 ufw enable
 ```
 
@@ -314,67 +316,36 @@ cargo run --release --example qonto_prove_transfer
 
 ---
 
-## Step 4: Attestation Service Setup
+## Step 4: Get FreeFlo API Key
 
-The attestation service verifies TLSNotary proofs and signs EIP-712 attestations.
+**The attestation service is operated by FreeFlo.** You need an API key to request attestations.
 
-### 4.1 Generate Witness Key
+### 4.1 Register with FreeFlo
 
-```bash
-# Generate a new private key for the attestation service
-cast wallet new
+Contact the FreeFlo team to register as a solver:
+- Email: (contact info TBD)
+- Discord: (link TBD)
+- GitHub: Open an issue at https://github.com/MontaguSandwich/FreeFlo/issues
 
-# Output:
-# Address: 0x...YOUR_WITNESS_ADDRESS
-# Private key: 0x...YOUR_WITNESS_PRIVATE_KEY
-```
+Provide:
+1. Your **solver Ethereum address** (the address that will submit on-chain transactions)
+2. Your **company/organization name**
+3. Brief description of your setup
 
-Save both - you'll need the address for on-chain authorization.
+### 4.2 Receive API Key
 
-### 4.2 Build Attestation Service
+FreeFlo will issue you:
+- **API Key**: A unique key tied to your solver address
+- **Attestation Service URL**: `https://attestation.freeflo.live` (or current endpoint)
 
-```bash
-cd /opt/FreeFlo/attestation-service
-cargo build --release
-```
+**Keep your API key secret!** It authenticates your solver to the attestation service.
 
-### 4.3 Configure Attestation Service
+### 4.3 Why FreeFlo Controls the Attestation Service
 
-Create `/opt/FreeFlo/attestation-service/.env`:
-
-```bash
-# Witness key (signs attestations)
-WITNESS_PRIVATE_KEY=0x_YOUR_WITNESS_PRIVATE_KEY
-
-# Must match PaymentVerifier contract
-CHAIN_ID=84532
-VERIFIER_CONTRACT=0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
-
-# Logging
-RUST_LOG=info
-
-# Port
-ATTESTATION_PORT=4001
-```
-
-### 4.4 Run Attestation Service
-
-```bash
-cd /opt/FreeFlo/attestation-service
-./target/release/attestation-service
-
-# Or with PM2 for production
-pm2 start ./target/release/attestation-service --name zkp2p-attestation
-```
-
-### 4.5 Verify Attestation Service
-
-```bash
-curl http://127.0.0.1:4001/health
-
-# Expected response:
-# {"status":"ok","witness_address":"0x...","chain_id":84532}
-```
+This architecture ensures trustless operation:
+- **Solvers cannot forge proofs**: Only FreeFlo's witness key can sign valid attestations
+- **On-chain validation**: Before signing, the service verifies the intent exists and you're the selected solver
+- **Audit trail**: All attestation requests are logged
 
 ---
 
@@ -427,11 +398,11 @@ QONTO_BANK_ACCOUNT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 QONTO_FEE_BPS=50
 
 # =============================================================================
-# ATTESTATION SERVICE
+# FREEFLO ATTESTATION SERVICE
 # =============================================================================
 ATTESTATION_ENABLED=true
-# IMPORTANT: Use 127.0.0.1, NOT localhost (IPv6 vs IPv4 issue)
-ATTESTATION_SERVICE_URL=http://127.0.0.1:4001
+ATTESTATION_SERVICE_URL=https://attestation.freeflo.live
+ATTESTATION_API_KEY=your_api_key_from_freeflo  # From Step 4
 
 # =============================================================================
 # TLSNOTARY PROVER
@@ -454,7 +425,8 @@ QUOTE_API_PORT=8081
 
 > ⚠️ **Important Notes**:
 > - `QONTO_BANK_ACCOUNT_ID` must be in **UUID format** (see Step 1.5), not the slug format
-> - `ATTESTATION_SERVICE_URL` must use `127.0.0.1`, not `localhost` (Node resolves localhost to IPv6, Rust binds to IPv4)
+> - `ATTESTATION_SERVICE_URL` should be the FreeFlo endpoint, NOT `127.0.0.1`
+> - `ATTESTATION_API_KEY` is issued by FreeFlo (Step 4)
 
 ### 5.3 Build Solver
 
@@ -485,7 +457,7 @@ curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"
 
 ---
 
-## Step 6: On-Chain Setup
+## Step 6: On-Chain Setup (Optional)
 
 ### 6.1 Fund Solver Wallet
 
@@ -498,56 +470,37 @@ Get testnet ETH for gas:
 cast balance YOUR_SOLVER_ADDRESS --rpc-url https://base-sepolia-rpc.publicnode.com
 ```
 
-### 6.2 Run Setup Script
+### 6.2 Register Solver (Optional)
 
-```bash
-cd /opt/FreeFlo
-./scripts/setup-solver.sh
-```
-
-The script will:
-1. Register your solver (optional, for reputation)
-2. Enable SEPA_INSTANT support
-3. Authorize your witness (requires contract owner key)
-
-### 6.3 Manual Setup (Alternative)
-
-If you prefer manual commands:
+Registration is optional but helps with reputation tracking:
 
 ```bash
 RPC="https://base-sepolia-rpc.publicnode.com"
 OFFRAMP="0x34249F4AB741F0661A38651A08213DDe1469b60f"
-VERIFIER="0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe"
 
-# Register solver (optional)
+# Register solver
 cast send $OFFRAMP "registerSolver(string)" "MySolver" \
   --private-key $SOLVER_PRIVATE_KEY --rpc-url $RPC
 
 # Enable SEPA_INSTANT (RTPN 0)
 cast send $OFFRAMP "setSolverRtpn(uint8,bool)" 0 true \
   --private-key $SOLVER_PRIVATE_KEY --rpc-url $RPC
-
-# Authorize witness (requires contract owner)
-cast send $VERIFIER "addWitness(address)" $WITNESS_ADDRESS \
-  --private-key $OWNER_PRIVATE_KEY --rpc-url $RPC
 ```
 
-### 6.4 Verify On-Chain Status
+### 6.3 Verify On-Chain Status
 
 ```bash
 RPC="https://base-sepolia-rpc.publicnode.com"
 OFFRAMP="0x34249F4AB741F0661A38651A08213DDe1469b60f"
-VERIFIER="0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe"
 
 # Check solver registration
 cast call $OFFRAMP "solverInfo(address)" $SOLVER_ADDRESS --rpc-url $RPC
 
 # Check SEPA_INSTANT support
 cast call $OFFRAMP "solverSupportsRtpn(address,uint8)" $SOLVER_ADDRESS 0 --rpc-url $RPC
-
-# Check witness authorization
-cast call $VERIFIER "authorizedWitnesses(address)" $WITNESS_ADDRESS --rpc-url $RPC
 ```
+
+**Note**: You do NOT need to authorize a witness - FreeFlo's witness is already authorized in the PaymentVerifier contract.
 
 ---
 
@@ -557,13 +510,12 @@ Before going live, verify everything works:
 
 ### Infrastructure
 - [ ] VPS accessible via SSH
-- [ ] Firewall configured (22, 8080, 8081, 4001 open)
+- [ ] Firewall configured (22, 8080, 8081 open)
 - [ ] Node.js 20+ installed
 - [ ] Rust installed
 - [ ] TLSNotary prover built
 
 ### Services
-- [ ] Attestation service running: `curl http://127.0.0.1:4001/health`
 - [ ] Solver running: `curl http://127.0.0.1:8080/health`
 - [ ] Quote API working: `curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"`
 
@@ -571,20 +523,18 @@ Before going live, verify everything works:
 - [ ] Qonto OAuth tokens configured
 - [ ] Qonto API keys configured (for prover)
 - [ ] Solver private key has ETH for gas
-- [ ] Witness private key configured in attestation service
+- [ ] FreeFlo API key configured (`ATTESTATION_API_KEY`)
 
-### On-Chain
+### On-Chain (Optional)
 - [ ] Solver registered on OffRampV3
 - [ ] SEPA_INSTANT support enabled
-- [ ] Witness authorized on PaymentVerifier
-- [ ] EIP-712 domain matches (check CLAUDE.md for domain details)
 
 ### End-to-End Test
 - [ ] Create small test intent on frontend
 - [ ] Solver quotes the intent
 - [ ] Fiat transfer executes
 - [ ] TLSNotary proof generates
-- [ ] Attestation signs proof
+- [ ] Attestation received from FreeFlo
 - [ ] Fulfillment transaction succeeds
 
 ---
@@ -611,15 +561,17 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   https://thirdparty.qonto.com/v2/organization
 ```
 
-### Attestation service unreachable
+### Attestation request fails
 
 ```bash
-# IMPORTANT: Use IP, not localhost
-# Wrong: ATTESTATION_SERVICE_URL=http://localhost:4001
-# Right: ATTESTATION_SERVICE_URL=http://127.0.0.1:4001
+# Check API key is correct
+# Check attestation service URL
+# Check solver logs for detailed error
 
-# Check service is running
-ps aux | grep attestation
+# Common errors:
+# - "Invalid API key": Check ATTESTATION_API_KEY in .env
+# - "Intent not found": Intent may have expired or wrong hash
+# - "Solver mismatch": Your address doesn't match selectedSolver on-chain
 ```
 
 ### TLSNotary proof timeout
@@ -631,20 +583,6 @@ PROVER_TIMEOUT=300000
 # Pre-build the prover to avoid compilation during first transfer
 cd /opt/tlsn/crates/examples
 cargo build --release --example qonto_prove_transfer
-```
-
-### NotAuthorizedWitness error
-
-```bash
-# Check witness is authorized
-cast call $VERIFIER "authorizedWitnesses(address)" $WITNESS_ADDRESS --rpc-url $RPC
-
-# Check EIP-712 domain matches
-# Domain must be:
-#   name: "WisePaymentVerifier"
-#   version: "1"
-#   chainId: 84532
-#   verifyingContract: 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
 ```
 
 ### Qonto tokens expired
