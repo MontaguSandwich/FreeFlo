@@ -1,5 +1,12 @@
 # Attestation Service Separation Spec
 
+> **Status: IMPLEMENTED** (January 2026)
+>
+> This spec has been fully implemented. The attestation service is now hosted by FreeFlo
+> with API key authentication, on-chain intent validation, and audit logging.
+> See `docs/ARCHITECTURE.md` for current architecture and `docs/SOLVER_ONBOARDING.md`
+> for solver setup instructions.
+
 ## Problem Statement
 
 Currently, the documentation and default setup have solvers running **all components**:
