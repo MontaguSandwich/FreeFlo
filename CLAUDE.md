@@ -75,8 +75,8 @@ cd attestation-service && cargo build --release
 curl http://127.0.0.1:4001/health
 
 # TLSNotary prover (VPS)
-cd /opt/tlsn/crates/examples
-cargo build --release --example qonto_prove_transfer
+cd /opt/FreeFlo/tlsn/qonto
+cargo build --release --bin qonto_prove_transfer
 ```
 
 ## Critical Invariants
@@ -120,7 +120,7 @@ Mismatch → `NotAuthorizedWitness` error.
 ATTESTATION_SERVICE_URL=https://attestation.freeflo.live  # FreeFlo's service
 ATTESTATION_API_KEY=your_api_key_from_freeflo            # Issued by FreeFlo
 PROVER_TIMEOUT=300000
-TLSN_EXAMPLES_PATH=/opt/tlsn/crates/examples
+TLSN_EXAMPLES_PATH=/opt/FreeFlo/tlsn/qonto
 ```
 
 ### Vercel

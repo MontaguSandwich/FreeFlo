@@ -25,7 +25,7 @@
                       │                     │                          │
                       │  ┌──────────────────▼──────────────────────┐  │
                       │  │       TLSNOTARY PROVER (Rust)           │  │
-                      │  │        /opt/tlsn/crates/examples        │  │
+                      │  │        /opt/FreeFlo/tlsn/qonto          │  │
                       │  │  - qonto_prove_transfer                 │  │
                       │  │  - qonto_present_transfer               │  │
                       │  └─────────────────────────────────────────┘  │
