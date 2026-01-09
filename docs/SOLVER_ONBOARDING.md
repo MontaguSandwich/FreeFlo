@@ -77,6 +77,10 @@ cd FreeFlo/solver
 QONTO_CLIENT_ID=your_client_id \
 QONTO_CLIENT_SECRET=your_client_secret \
 node scripts/qonto-oauth-simple.mjs
+
+# OR if you saved your variable in an solver/.env file
+(set -a; source .env; set +a; \
+node scripts/qonto-oauth-simple.mjs)
 ```
 
 The script will:
