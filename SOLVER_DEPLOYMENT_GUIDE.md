@@ -199,48 +199,19 @@ git clone https://github.com/MontaguSandwich/FreeFlo.git
 
 ## Part 4: TLSNotary Prover Setup
 
-### 4.1 Clone TLSNotary
+The TLSNotary Qonto prover is included in the FreeFlo repository. No need to clone TLSNotary separately.
+
+### 4.1 Build Prover (Takes 5-10 Minutes)
 
 ```bash
-cd /opt
-git clone --branch v0.1.0-alpha.13 https://github.com/tlsnotary/tlsn.git
-```
+cd /opt/FreeFlo/tlsn/qonto
 
-### 4.2 Copy Qonto Prover Examples
-
-```bash
-cp -r /opt/FreeFlo/tlsn/crates/examples/qonto /opt/tlsn/crates/examples/
-```
-
-### 4.3 Configure TLSNotary Cargo.toml
-
-```bash
-cd /opt/tlsn/crates/examples
-
-# Add required dependency
-cargo add urlencoding
-
-# Register the Qonto examples
-cat >> Cargo.toml << 'EOF'
-
-[[example]]
-name = "qonto_prove_transfer"
-path = "qonto/prove_transfer.rs"
-
-[[example]]
-name = "qonto_present_transfer"
-path = "qonto/present_transfer.rs"
-EOF
-```
-
-### 4.4 Build Prover (Takes 5-10 Minutes)
-
-```bash
-cargo build --release --example qonto_prove_transfer
-cargo build --release --example qonto_present_transfer
+# Build the prover binaries
+cargo build --release --bin qonto_prove_transfer
+cargo build --release --bin qonto_present_transfer
 
 # Verify binaries exist
-ls /opt/tlsn/target/release/examples/qonto_*
+ls /opt/FreeFlo/tlsn/target/release/qonto_*
 ```
 
 You'll see deprecation warnings - ignore them, they're from upstream code.
@@ -302,7 +273,7 @@ ATTESTATION_API_KEY=your_api_key_from_freeflo
 # =============================================================================
 PROVER_ENABLED=true
 PROVER_TIMEOUT=300000
-TLSN_EXAMPLES_PATH=/opt/tlsn/crates/examples
+TLSN_EXAMPLES_PATH=/opt/FreeFlo/tlsn/qonto
 
 # API key credentials (from Part 1.2 - different from OAuth!)
 QONTO_API_KEY_LOGIN=your-org-slug
