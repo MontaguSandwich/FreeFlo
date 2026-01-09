@@ -170,13 +170,23 @@ impl ChainClient {
 
     /// Make an eth_call RPC request
     async fn eth_call(&self, calldata: &[u8]) -> Result<Vec<u8>, String> {
+        let to_addr = format!("0x{}", hex::encode(self.offramp_contract.as_slice()));
+        let data_hex = format!("0x{}", hex::encode(calldata));
+
+        debug!(
+            to = %to_addr,
+            data = %data_hex,
+            rpc_url = %self.rpc_url,
+            "Making eth_call"
+        );
+
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             method: "eth_call",
             params: vec![
                 serde_json::json!({
-                    "to": format!("0x{}", hex::encode(self.offramp_contract.as_slice())),
-                    "data": format!("0x{}", hex::encode(calldata)),
+                    "to": to_addr,
+                    "data": data_hex,
                 }),
                 serde_json::json!("latest"),
             ],
