@@ -4,21 +4,25 @@ use alloy_primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-/// On-chain intent status
+/// On-chain intent status (matches OffRampV3.IntentStatus)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntentStatus {
     None = 0,
-    Active = 1,
-    Fulfilled = 2,
-    Cancelled = 3,
+    PendingQuote = 1,
+    Committed = 2,     // User committed to a quote, solver should fulfill
+    Fulfilled = 3,
+    Cancelled = 4,
+    Expired = 5,
 }
 
 impl From<u8> for IntentStatus {
     fn from(v: u8) -> Self {
         match v {
-            1 => IntentStatus::Active,
-            2 => IntentStatus::Fulfilled,
-            3 => IntentStatus::Cancelled,
+            1 => IntentStatus::PendingQuote,
+            2 => IntentStatus::Committed,
+            3 => IntentStatus::Fulfilled,
+            4 => IntentStatus::Cancelled,
+            5 => IntentStatus::Expired,
             _ => IntentStatus::None,
         }
     }
@@ -79,45 +83,59 @@ impl ChainClient {
     }
 
     /// Get intent from on-chain
-    /// Calls: OffRampV3.intents(bytes32 intentId) returns (Intent)
+    /// Calls: OffRampV3.getIntent(bytes32 intentId) returns (Intent)
     pub async fn get_intent(&self, intent_hash: [u8; 32]) -> Result<Option<OnChainIntent>, String> {
-        // Function selector for intents(bytes32)
-        // keccak256("intents(bytes32)")[:4] = 0xbd564402
-        let selector = hex::decode("bd564402").unwrap();
+        // Function selector for getIntent(bytes32)
+        // keccak256("getIntent(bytes32)")[:4] = 0xf13c46aa
+        let selector = hex::decode("f13c46aa").unwrap();
 
         let mut calldata = selector;
         calldata.extend_from_slice(&intent_hash);
 
         let result = self.eth_call(&calldata).await?;
 
-        if result.len() < 128 {
+        // Response is a dynamic tuple with offset pointer at start
+        // Minimum size: 32 (offset) + 256 (first 8 fields) = 288 bytes
+        if result.len() < 288 {
             // Intent doesn't exist or empty response
             return Ok(None);
         }
 
-        // Parse Intent struct:
+        // Parse Intent struct (getIntent returns full struct as dynamic tuple):
+        // First 32 bytes are offset pointer (0x20), actual data starts at byte 32
         // struct Intent {
-        //     address owner;      // offset 0
-        //     address solver;     // offset 32
-        //     uint256 amount;     // offset 64
-        //     uint8 status;       // offset 96 (packed in uint256)
+        //     address depositor;        // offset 32+0  = 32
+        //     uint256 usdcAmount;       // offset 32+32 = 64
+        //     Currency currency;        // offset 32+64 = 96  (uint8 padded to 32)
+        //     IntentStatus status;      // offset 32+96 = 128 (uint8 padded to 32)
+        //     uint64 createdAt;         // offset 32+128 = 160
+        //     uint64 committedAt;       // offset 32+160 = 192
+        //     address selectedSolver;   // offset 32+192 = 224
+        //     RTPN selectedRtpn;        // offset 32+224 = 256 (uint8 padded to 32)
+        //     uint256 selectedFiatAmount; // offset 32+256 = 288
         //     ...
         // }
 
-        let owner = Address::from_slice(&result[12..32]);
-        let solver = Address::from_slice(&result[44..64]);
-        let amount = U256::from_be_slice(&result[64..96]);
-        let status = IntentStatus::from(result[127]); // Last byte of status word
+        let base = 32; // Skip offset pointer
 
-        // Check if intent exists (owner is not zero)
-        if owner == Address::ZERO {
+        let depositor = Address::from_slice(&result[base + 12..base + 32]);
+        let usdc_amount = U256::from_be_slice(&result[base + 32..base + 64]);
+        // currency at base+64..base+96 (not needed for validation)
+        let status = IntentStatus::from(result[base + 96 + 31]); // Last byte of status word
+        // createdAt at base+128..base+160
+        // committedAt at base+160..base+192
+        let selected_solver = Address::from_slice(&result[base + 192 + 12..base + 224]);
+        // selectedFiatAmount at base+256..base+288
+
+        // Check if intent exists (depositor is not zero)
+        if depositor == Address::ZERO {
             return Ok(None);
         }
 
         Ok(Some(OnChainIntent {
-            owner,
-            solver,
-            amount,
+            owner: depositor,
+            solver: selected_solver,
+            amount: usdc_amount,
             status,
         }))
     }
@@ -212,10 +230,10 @@ pub async fn validate_intent(
         .await?
         .ok_or_else(|| "Intent does not exist on-chain".to_string())?;
 
-    // Check intent is active
-    if intent.status != IntentStatus::Active {
+    // Check intent is in COMMITTED status (ready for fulfillment)
+    if intent.status != IntentStatus::Committed {
         return Err(format!(
-            "Intent is not active (status: {:?})",
+            "Intent is not ready for fulfillment (status: {:?})",
             intent.status
         ));
     }
@@ -265,9 +283,11 @@ mod tests {
     #[test]
     fn test_intent_status_from() {
         assert_eq!(IntentStatus::from(0), IntentStatus::None);
-        assert_eq!(IntentStatus::from(1), IntentStatus::Active);
-        assert_eq!(IntentStatus::from(2), IntentStatus::Fulfilled);
-        assert_eq!(IntentStatus::from(3), IntentStatus::Cancelled);
+        assert_eq!(IntentStatus::from(1), IntentStatus::PendingQuote);
+        assert_eq!(IntentStatus::from(2), IntentStatus::Committed);
+        assert_eq!(IntentStatus::from(3), IntentStatus::Fulfilled);
+        assert_eq!(IntentStatus::from(4), IntentStatus::Cancelled);
+        assert_eq!(IntentStatus::from(5), IntentStatus::Expired);
         assert_eq!(IntentStatus::from(99), IntentStatus::None);
     }
 }
