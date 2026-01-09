@@ -37,8 +37,10 @@ impl AppState {
             warn!("Solver authentication DISABLED - set SOLVER_API_KEYS to enable");
         }
 
-        if chain.is_some() {
+        if let Some(ref c) = chain {
             info!("On-chain intent validation enabled");
+            info!("  RPC URL: {}", std::env::var("RPC_URL").unwrap_or_default());
+            info!("  Contract: {}", std::env::var("OFFRAMP_CONTRACT").unwrap_or_default());
         } else {
             warn!("On-chain validation DISABLED - set RPC_URL and OFFRAMP_CONTRACT to enable");
         }
