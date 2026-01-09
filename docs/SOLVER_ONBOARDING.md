@@ -145,6 +145,11 @@ The OAuth script outputs a **slug-format** bank account ID (e.g., `your-org-slug
 # Using the access token from the OAuth flow
 curl -s -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   "https://thirdparty.qonto.com/v2/organization" | jq '.organization.bank_accounts[] | {id, iban, name, balance}'
+
+# OR if you saved your variable in an solver/.env file
+(set -a; source .env; set +a; \
+curl -s -H "Authorization: Bearer $QONTO_ACCESS_TOKEN" \
+  "https://thirdparty.qonto.com/v2/organization" | jq '.organization.bank_accounts[] | {id, iban, name, balance}')
 ```
 
 **Example output:**
@@ -246,72 +251,33 @@ cd FreeFlo
 
 TLSNotary generates cryptographic proofs of your bank API responses.
 
-### 3.1 Clone TLSNotary
+### 3.1 Build Prover
 
 ```bash
-cd /opt
-git clone --branch v0.1.0-alpha.13 https://github.com/tlsnotary/tlsn.git
-cd tlsn
-```
-
-> **Important**: Use version `v0.1.0-alpha.13` for compatibility.
-
-### 3.2 Copy Qonto Prover
-
-```bash
-# Copy Qonto prover examples from FreeFlo repo
-cp -r /opt/FreeFlo/tlsn/crates/examples/qonto /opt/tlsn/crates/examples/
-```
-
-### 3.3 Register Examples in Cargo.toml
-
-The TLSNotary Cargo.toml needs to know about the Qonto examples:
-
-```bash
-# Add urlencoding dependency
-cd /opt/tlsn/crates/examples
-cargo add urlencoding
-
-# Add example entries to Cargo.toml
-cat >> /opt/tlsn/crates/examples/Cargo.toml << 'EOF'
-
-[[example]]
-name = "qonto_prove_transfer"
-path = "qonto/prove_transfer.rs"
-
-[[example]]
-name = "qonto_present_transfer"
-path = "qonto/present_transfer.rs"
-EOF
-```
-
-### 3.4 Build Prover
-
-```bash
-cd /opt/tlsn/crates/examples
+cd /opt/FreeFlo/tlsn/qonto
 
 # Build (first run takes 5-10 minutes)
-cargo build --release --example qonto_prove_transfer
-cargo build --release --example qonto_present_transfer
+cargo build --release --bin qonto_prove_transfer
+cargo build --release --bin qonto_present_transfer
 
 # Verify binaries exist
-ls -la /opt/tlsn/target/release/examples/qonto_*
+ls -la /opt/FreeFlo/tlsn/target/release/qonto_*
 ```
 
 > **Note**: You'll see deprecation warnings during build - these are from upstream TLSNotary code and can be safely ignored.
 
-### 3.5 Test Prover (Optional)
+### 3.2 Test Prover (Optional)
 
 ```bash
-# Set environment
+# Set environment (for instance in .env file)
 export QONTO_API_KEY_LOGIN=your-org-slug
 export QONTO_API_KEY_SECRET=your_api_key_secret
 export QONTO_BANK_ACCOUNT_SLUG=your-org-slug-bank-account-1
 export QONTO_REFERENCE=test-reference
 
 # Run prover (will fail if no matching transaction, but confirms build works)
-cd /opt/tlsn/crates/examples
-cargo run --release --example qonto_prove_transfer
+cd /opt/FreeFlo/tlsn/qonto
+cargo run --release --bin qonto_prove_transfer
 ```
 
 ---
