@@ -77,6 +77,10 @@ cd FreeFlo/solver
 QONTO_CLIENT_ID=your_client_id \
 QONTO_CLIENT_SECRET=your_client_secret \
 node scripts/qonto-oauth-simple.mjs
+
+# OR if you saved your variable in an solver/.env file
+(set -a; source .env; set +a; \
+node scripts/qonto-oauth-simple.mjs)
 ```
 
 The script will:
@@ -393,6 +397,36 @@ QUOTE_API_PORT=8081
 > - `QONTO_BANK_ACCOUNT_ID` must be in **UUID format** (see Step 1.5), not the slug format
 > - `ATTESTATION_SERVICE_URL` should be the FreeFlo endpoint, NOT `127.0.0.1`
 > - `ATTESTATION_API_KEY` is issued by FreeFlo (Step 4)
+
+### 5.2.1 Generate Solver Wallet
+
+The solver needs a dedicated wallet to pay gas fees for submitting attestations and fulfillment transactions on-chain. Create a new wallet for this purpose:
+
+```bash
+# Generate a new wallet
+cast wallet new
+
+# Output example:
+# Successfully created new keypair.
+# Address:     0x1234567890abcdef1234567890abcdef12345678
+# Private key: 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+```
+
+**Add the private key to your `.env` file:**
+
+```bash
+SOLVER_PRIVATE_KEY=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+```
+
+> 🔒 **Security**: Keep this private key secret! Anyone with access to it can control your solver wallet and submit transactions on your behalf.
+
+**Fund the address** with Base Sepolia ETH (~0.01 ETH recommended) for gas fees. The solver will use this wallet to:
+- Submit fulfillment transactions with attestations
+- Register on-chain (optional)
+- Enable payment methods (optional)
+
+See [Step 6.1](#61-fund-solver-wallet) for faucet links.
+> 
 
 ### 5.3 Build Solver
 
