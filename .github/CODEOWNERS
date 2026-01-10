@@ -1,0 +1,13 @@
+# CODEOWNERS - Require MontaguSandwich approval for all changes
+# This file defines who must approve PRs for different parts of the codebase
+# Documentation: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: All files require approval from the repository owner
+* @MontaguSandwich
+
+# Critical paths - explicitly require owner approval
+/contracts/ @MontaguSandwich
+/solver/ @MontaguSandwich
+/frontend/ @MontaguSandwich
+/attestation-service/ @MontaguSandwich
+/.github/ @MontaguSandwich
