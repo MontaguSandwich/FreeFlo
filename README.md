@@ -1,263 +1,195 @@
-<p align="center">
-  <h1 align="center">ZKP2P Off-Ramp</h1>
-  <p align="center">
-    <strong>Permissionless USDC → Fiat using zkTLS</strong>
-  </p>
-  <p align="center">
-    <a href="https://github.com/your-org/zkp2p-offramp/actions/workflows/ci.yml">
-      <img src="https://github.com/your-org/zkp2p-offramp/actions/workflows/ci.yml/badge.svg" alt="CI Status">
-    </a>
-    <a href="LICENSE">
-      <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
-    </a>
-    <a href="https://github.com/your-org/zkp2p-offramp/issues">
-      <img src="https://img.shields.io/github/issues/your-org/zkp2p-offramp" alt="Issues">
-    </a>
-  </p>
-</p>
+# FreeFlo
 
----
+**Intent-based, permissionless Crypto <> Fiat swaps**
 
-A trust-minimized off-ramp that converts USDC to EUR via real-time payment networks (SEPA Instant), with cryptographic proof of payment using [TLSNotary](https://tlsnotary.org).
+[![CI Status](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml/badge.svg)](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## ✨ Features
+> **Note**: FreeFlo is currently deployed on Base Sepolia testnet.
 
-| Feature | Description |
-|---------|-------------|
-| 🔐 **Permissionless** | Anyone can run a solver, no whitelisting required |
-| 🔗 **Trust-minimized** | Payment verification via zkTLS (TLSNotary) proofs |
-| ⚡ **Real-time** | SEPA Instant delivery in ~10 seconds |
-| 📊 **Live Rates** | Dynamic USDC/EUR rates from CoinGecko |
-| 🔄 **Auto Retry** | Failed intents retry with exponential backoff |
-| 🔑 **Token Refresh** | Automatic OAuth token refresh and persistence |
+## Overview
 
-## 🏗️ Architecture
+FreeFlo is a trust-minimized off-ramp protocol that converts USDC to fiat currency (EUR) via real-time payment networks. Users deposit USDC into an on-chain intent, solvers compete to fulfill the order by sending fiat via SEPA Instant, and payment is cryptographically verified using [TLSNotary](https://tlsnotary.org) before USDC is released.
+
+End-to-end settlement: ~10-15 seconds.
+
+### Key Properties
+
+- **Permissionless**: Anyone can run a solver—no whitelisting required
+- **Trust-minimized**: Payment verification via zkTLS proofs, not trusted oracles
+- **Non-custodial**: Users retain control until payment is cryptographically proven
+- **Real-time**: SEPA Instant delivery in seconds, not days
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              ZKP2P Off-Ramp                             │
+│                                FreeFlo                                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐    │
-│  │   Frontend   │────▶│   Smart Contracts │◀────│      Solver      │    │
-│  │   (Next.js)  │     │   (Base Sepolia)  │     │   (TypeScript)   │    │
+│  │   Frontend   │────▶│  Smart Contracts │◀────│      Solver      │    │
+│  │   (Next.js)  │     │  (Base Sepolia)  │     │   (TypeScript)   │    │
 │  └──────────────┘     └──────────────────┘     └────────┬─────────┘    │
-│                                                          │              │
-│                       ┌──────────────────────────────────┼──────────┐   │
-│                       │                                  │          │   │
-│                       ▼                                  ▼          │   │
-│               ┌──────────────┐                   ┌──────────────┐  │   │
-│               │  Qonto API   │   TLSNotary       │ Attestation  │  │   │
-│               │   (SEPA)     │ ──────────────────▶   Service    │  │   │
-│               └──────────────┘                   │    (Rust)    │  │   │
-│                                                  └──────────────┘  │   │
+│                                                         │              │
+│                       ┌─────────────────────────────────┼──────────┐   │
+│                       │                                 │          │   │
+│                       ▼                                 ▼          │   │
+│               ┌──────────────┐                  ┌──────────────┐   │   │
+│               │  Qonto API   │   TLSNotary      │ Attestation  │   │   │
+│               │   (SEPA)     │ ────────────────▶│   Service    │   │   │
+│               └──────────────┘                  │    (Rust)    │   │   │
+│                                                 └──────────────┘   │   │
 │                                                                    │   │
 └────────────────────────────────────────────────────────────────────┘   │
 ```
 
-## 📋 Table of Contents
+### Transaction Flow
 
-- [Quick Start](#-quick-start)
-- [Documentation](#-documentation)
-- [Components](#-components)
-- [Deployed Contracts](#-deployed-contracts)
-- [Development](#-development)
-- [Contributing](#-contributing)
-- [Security](#-security)
-- [License](#-license)
+```
+User                                                           Solver
+  │                                                               │
+  │  1. Create Intent (deposit USDC)                              │
+  │──────────────────────────────────▶                            │
+  │                                                               │
+  │                                     2. Submit Quote           │
+  │                                 ◀──────────────────────────────│
+  │                                                               │
+  │  3. Select Quote                                              │
+  │──────────────────────────────────▶                            │
+  │                                                               │
+  │                                     4. Send SEPA Instant      │
+  │                                     5. Generate TLSNotary proof
+  │                                     6. Get attestation        │
+  │                                     7. Fulfill on-chain       │
+  │                                 ◀──────────────────────────────│
+  │                                                               │
+  │  8. EUR received in bank account                              │
+  │◀──────────────────────────────────                            │
+```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 20+
-- Rust 1.75+ (for attestation service)
+- Rust 1.75+ (for attestation service and TLSNotary)
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 
 ### Setup
 
 ```bash
 # Clone
-git clone https://github.com/your-org/zkp2p-offramp.git
-cd zkp2p-offramp
+git clone https://github.com/MontaguSandwich/FreeFlo.git
+cd FreeFlo
 
 # Install dependencies
 cd contracts && forge install && cd ..
 cd solver && npm install && cd ..
 cd frontend && npm install && cd ..
 
-# Configure
+# Configure environment
 cp solver/env.example solver/.env
 cp frontend/env.example frontend/.env.local
 # Edit .env files with your values
 
-# Start services (3 terminals)
-cd solver && npm run dev:v3      # Terminal 1
-cd frontend && npm run dev       # Terminal 2
-# Attestation service             # Terminal 3
+# Start services
+cd solver && npm run dev:v3      # Terminal 1: Solver
+cd frontend && npm run dev       # Terminal 2: Frontend
 
 # Open http://localhost:3000
 ```
 
-📖 See [Quick Start Guide](docs/guides/quickstart.md) for detailed instructions.
+See [Solver Onboarding Guide](docs/SOLVER_ONBOARDING.md) for production deployment.
 
-## 📚 Documentation
+## Components
 
-| Document | Description |
-|----------|-------------|
-| [Architecture Overview](docs/architecture/overview.md) | System design and components |
-| [Intent Lifecycle](docs/architecture/intent-lifecycle.md) | How intents work |
-| [zkTLS Verification](docs/architecture/zktls-verification.md) | TLSNotary integration |
-| [Quick Start](docs/guides/quickstart.md) | Get running in 5 minutes |
-| [Running a Solver](docs/guides/running-solver.md) | Production solver setup |
-| [Deployment](docs/DEPLOYMENT.md) | Deploy to testnet/mainnet |
-| [Security](docs/SECURITY.md) | Security policy |
+| Component | Description | Stack |
+|-----------|-------------|-------|
+| [`/contracts`](contracts/) | Intent management and payment verification | Solidity, Foundry |
+| [`/solver`](solver/) | Quote API and fulfillment orchestrator | TypeScript, Node.js |
+| [`/attestation-service`](attestation-service/) | TLSNotary proof verification and EIP-712 signing | Rust, Axum |
+| [`/frontend`](frontend/) | Web application for users | Next.js, React |
+| [`/tlsn`](tlsn/) | TLSNotary prover for Qonto | Rust |
 
-## 📦 Components
-
-| Component | Description | Tech Stack |
-|-----------|-------------|------------|
-| [`/contracts`](contracts/) | Smart contracts | Solidity, Foundry |
-| [`/solver`](solver/) | Solver service | TypeScript, Node.js |
-| [`/attestation-service`](attestation-service/) | zkTLS proof verification | Rust, Axum |
-| [`/frontend`](frontend/) | Web application | Next.js, React |
-| [`/tlsn`](tlsn/) | TLSNotary libraries | Rust |
-
-## 📍 Deployed Contracts
+## Deployed Contracts
 
 ### Base Sepolia (Testnet)
 
-| Contract | Address | Explorer |
-|----------|---------|----------|
-| OffRampV3 | `0x34249f4ab741f0661a38651a08213dde1469b60f` | [View ↗](https://sepolia.basescan.org/address/0x34249f4ab741f0661a38651a08213dde1469b60f) |
-| PaymentVerifier | `0xd54e8219d30c2d04a8faec64657f06f440889d70` | [View ↗](https://sepolia.basescan.org/address/0xd54e8219d30c2d04a8faec64657f06f440889d70) |
-| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | [View ↗](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
+| Contract | Address |
+|----------|---------|
+| OffRampV3 | [`0x34249F4AB741F0661A38651A08213DDe1469b60f`](https://sepolia.basescan.org/address/0x34249F4AB741F0661A38651A08213DDe1469b60f) |
+| PaymentVerifier | [`0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe`](https://sepolia.basescan.org/address/0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe) |
+| USDC | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
 
-## 🐳 Docker Deployment
+## Documentation
 
-Deploy the full stack using Docker Compose:
+| Document | Description |
+|----------|-------------|
+| [Architecture Overview](docs/ARCHITECTURE.md) | System design and security model |
+| [Solver Onboarding](docs/SOLVER_ONBOARDING.md) | Run your own solver |
+| [Attestation Separation](docs/ATTESTATION_SEPARATION_SPEC.md) | Security architecture |
+| [Operations Runbook](docs/OPERATIONS_RUNBOOK.md) | Production operations |
 
-```bash
-# Copy environment template
-cp env.production.example .env
-# Edit .env with your values
-
-# Build and start all services
-docker compose up -d
-
-# Check health
-curl http://localhost:8080/health    # Solver
-curl http://localhost:4001/health    # Attestation
-
-# View logs
-docker compose logs -f
-```
-
-Services included:
-- **solver**: Quote API + fulfillment orchestrator
-- **attestation-service**: TLSNotary proof verification + EIP-712 signing
-- **nginx**: Reverse proxy with rate limiting
-
-📖 See [VPS Deployment Guide](docs/guides/running-solver.md#vps-deployment) for production setup.
-
-## 🛠️ Development
+## Development
 
 ### Build
 
 ```bash
-# Contracts
 cd contracts && forge build
-
-# Solver
 cd solver && npm run build
-
-# Attestation Service
 cd attestation-service && cargo build --release
-
-# Frontend
 cd frontend && npm run build
 ```
 
 ### Test
 
 ```bash
-# Contracts
 cd contracts && forge test -vvv
-
-# Solver
 cd solver && npm test
-
-# E2E Test
-cd solver && node scripts/test-e2e-v3.mjs
 ```
 
-### Format
+### Lint
 
 ```bash
-# Contracts
-cd contracts && forge fmt
-
-# TypeScript
+cd contracts && forge fmt --check
 cd solver && npm run lint
 ```
 
-## 🔄 How It Works
+## Docker Deployment
 
-```
-┌─────────┐                                                      ┌─────────┐
-│  User   │                                                      │ Solver  │
-└────┬────┘                                                      └────┬────┘
-     │                                                                │
-     │  1. Create Intent (deposit USDC)                               │
-     │────────────────────────────────▶                               │
-     │                                                                │
-     │                                    2. Submit Quote             │
-     │                                ◀───────────────────────────────│
-     │                                                                │
-     │  3. Select Quote (commit)                                      │
-     │────────────────────────────────▶                               │
-     │                                                                │
-     │                                    4. Execute SEPA Transfer    │
-     │                                    5. Generate TLSNotary Proof │
-     │                                    6. Get Attestation          │
-     │                                    7. Fulfill On-Chain         │
-     │                                ◀───────────────────────────────│
-     │                                                                │
-     │  8. Receive EUR in bank account                                │
-     │◀───────────────────────────────                                │
-     │                                                                │
+```bash
+# Configure
+cp env.production.example .env
+# Edit .env with your values
+
+# Start
+docker compose up -d
+
+# Verify
+curl http://localhost:8080/health    # Solver
+curl http://localhost:4001/health    # Attestation
 ```
 
-## 🤝 Contributing
+## Security
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+FreeFlo uses a separated trust model where the attestation service (controlled by FreeFlo infrastructure) validates TLSNotary proofs before signing EIP-712 attestations. Solvers cannot forge payment proofs.
 
-### Quick Links
+For security concerns, see [SECURITY.md](docs/SECURITY.md). Do not open public issues for vulnerabilities.
 
-- [Open Issues](https://github.com/your-org/zkp2p-offramp/issues)
-- [Good First Issues](https://github.com/your-org/zkp2p-offramp/labels/good%20first%20issue)
-- [Feature Requests](https://github.com/your-org/zkp2p-offramp/labels/enhancement)
+## Contributing
 
-## 🔒 Security
+Contributions welcome. Please open an issue to discuss significant changes before submitting a PR.
 
-For security concerns, please see [SECURITY.md](docs/SECURITY.md).
+- [Open Issues](https://github.com/MontaguSandwich/FreeFlo/issues)
+- [Pull Requests](https://github.com/MontaguSandwich/FreeFlo/pulls)
 
-**Do not open public issues for security vulnerabilities.**
+## License
 
-## 📄 License
+MIT License. See [LICENSE](LICENSE).
 
-This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.
+## Acknowledgments
 
-## 🙏 Acknowledgments
-
-- [TLSNotary](https://tlsnotary.org) - Privacy-preserving TLS proofs
-- [ZKP2P](https://zkp2p.xyz) - Inspiration and research
-- [Across Protocol](https://across.to) - Intent-based architecture patterns
-- [Open Intents Framework](https://openintents.xyz) - ERC-7683 reference
-
----
-
-<p align="center">
-  Built with ❤️ for the decentralized future of payments
-</p>
-
+- [TLSNotary](https://tlsnotary.org) — Privacy-preserving TLS proofs
+- [ZKP2P](https://zkp2p.xyz) — Research and inspiration
+- [Across Protocol](https://across.to) — Intent-based architecture patterns
