@@ -32,6 +32,16 @@ export USDC="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 | Solver VPS | 95.217.235.164 | 8080 (health), 8081 (quotes) |
 | Attestation | 77.42.68.242 | 4001 |
 
+### Active Development Branch
+
+Both servers run on: `claude/review-deployment-feedback-bQM6t`
+
+To check what branch/commit a server is running:
+```bash
+cd /opt/zkp2p-offramp && git branch --show-current && git log -1 --oneline  # Solver
+cd /opt/freeflo/attestation-service && git branch --show-current && git log -1 --oneline  # Attestation
+```
+
 ---
 
 ## Solver Operations
@@ -131,8 +141,8 @@ ssh root@77.42.68.242
 ### Health Check
 
 ```bash
-curl http://127.0.0.1:4001/health
-curl -v http://127.0.0.1:4001/health  # verbose
+curl http://127.0.0.1:4001/api/v1/health
+curl -v http://127.0.0.1:4001/api/v1/health  # verbose
 ```
 
 ### View Logs
@@ -154,17 +164,17 @@ ps aux | grep attestation | grep -v grep
 # Kill existing
 pkill -f attestation-service
 
-# Load env and start
+# Load env and start (set -a exports all variables)
 set -a
 source /etc/freeflo/attestation.env
 set +a
 
 cd /opt/freeflo/attestation-service
-nohup ./target/release/attestation-service > /var/log/attestation.log 2>&1 &
+./target/release/attestation-service &
 
 # Verify
 sleep 2
-curl http://127.0.0.1:4001/health
+curl http://127.0.0.1:4001/api/v1/health
 ```
 
 ### View Current Configuration
@@ -199,6 +209,26 @@ grep SOLVER_API_KEYS /etc/freeflo/attestation.env
 cd /opt/freeflo/attestation-service
 cargo build --release
 # Then restart (see above)
+```
+
+### Update Attestation Service Code
+
+```bash
+cd /opt/freeflo/attestation-service
+git fetch origin
+git pull origin claude/review-deployment-feedback-bQM6t
+cargo build --release
+
+# Restart
+pkill -f attestation-service
+set -a
+source /etc/freeflo/attestation.env
+set +a
+./target/release/attestation-service &
+
+# Verify
+sleep 2
+curl http://127.0.0.1:4001/api/v1/health
 ```
 
 ---
@@ -355,10 +385,10 @@ cast call --trace $TX_HASH --rpc-url $RPC
 
 ```bash
 # From solver VPS
-curl -v https://attestation.freeflo.live/health
+curl -v https://attestation.freeflo.live/api/v1/health
 
 # Test attestation endpoint (will fail auth but confirms connectivity)
-curl -X POST https://attestation.freeflo.live/attest \
+curl -X POST https://attestation.freeflo.live/api/v1/attest \
   -H "Content-Type: application/json" \
   -d '{"test": true}'
 ```
