@@ -23,9 +23,9 @@ contracts/          Solidity (Foundry)
 attestation-service/  Rust service on FreeFlo infrastructure (:4001)
 └── src/              Verifies TLSNotary proofs, validates on-chain, signs attestations
 
-tlsn/crates/examples/qonto/  TLSNotary prover for Qonto
-├── prove_transfer.rs        Generate attestation
-└── present_transfer.rs      Create presentation
+tlsn/qonto/                 TLSNotary prover for Qonto (uses git dep to tlsnotary/tlsn)
+├── src/prove_transfer.rs   Generate attestation
+└── src/present_transfer.rs Create presentation
 ```
 
 ## Contracts (Base Sepolia)
@@ -72,7 +72,7 @@ curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"
 
 # Attestation (FreeFlo infrastructure)
 cd attestation-service && cargo build --release
-curl http://127.0.0.1:4001/health
+curl http://127.0.0.1:4001/api/v1/health
 
 # TLSNotary prover (VPS)
 cd /opt/FreeFlo/tlsn/qonto
@@ -112,6 +112,8 @@ Mismatch → `NotAuthorizedWitness` error.
 - **Duplicate prevention**: Solver saves `provider_transfer_id` after fiat transfer. On retry, skips transfer if ID exists.
 - **Quote API 404**: Ensure `SOLVER_API_URL` is set in Vercel env vars.
 - **Intent detection**: Solver event watchers only start after historical sync. Wait for "V3 Orchestrator started" log before creating intents.
+- **tlsn dependency**: Attestation service uses git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.14), not crates.io. First build downloads and compiles tlsn.
+- **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service.
 
 ## Environment Variables
 
@@ -154,8 +156,20 @@ cast call 0x34249F4AB741F0661A38651A08213DDe1469b60f "getIntent(bytes32)" $INTEN
 rm -rf solver/data/ solver/*.db solver/proofs/ && pm2 restart zkp2p-solver
 ```
 
+## Development & Deployment
+
+**Active branch**: `claude/review-deployment-feedback-bQM6t` (both servers run this)
+
+| Server | IP | Code Path |
+|--------|-----|-----------|
+| Solver | 95.217.235.164 | `/opt/zkp2p-offramp/` |
+| Attestation | 77.42.68.242 | `/opt/freeflo/attestation-service/` |
+
+To update servers, see `docs/OPERATIONS_RUNBOOK.md`.
+
 ## More Info
 
+- **Operations runbook**: `docs/OPERATIONS_RUNBOOK.md` (server commands, debugging)
 - Detailed architecture: `docs/ARCHITECTURE.md`
 - Solver setup: `docs/SOLVER_ONBOARDING.md`
 - Security model: `docs/ATTESTATION_SEPARATION_SPEC.md`
