@@ -1,5 +1,8 @@
 mod api;
 mod attestation;
+mod audit;
+mod auth;
+mod chain;
 mod config;
 mod eip712;
 mod error;
@@ -27,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
 
     info!("Starting Attestation Service");
-    info!("  Witness address: {:?}", config.witness_address());
+    info!("  Witness address: 0x{}", hex::encode(config.witness_address()));
 
     // Create app state
     let state = Arc::new(api::AppState::new(config)?);
@@ -41,7 +44,12 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     // Start server
-    let addr = SocketAddr::from(([0, 0, 0, 0], 4001));
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(4001);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

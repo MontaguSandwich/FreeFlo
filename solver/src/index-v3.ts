@@ -105,8 +105,14 @@ async function main() {
   log.info({ solverAddress }, "Solver wallet initialized");
 
   // Initialize attestation client
-  const attestation = createAttestationClient(config.attestation.serviceUrl);
-  log.info({ url: config.attestation.serviceUrl }, "Attestation client initialized");
+  const attestation = createAttestationClient(
+    config.attestation.serviceUrl,
+    config.attestation.apiKey || undefined
+  );
+  log.info({
+    url: config.attestation.serviceUrl,
+    hasApiKey: !!config.attestation.apiKey,
+  }, "Attestation client initialized");
 
   // Register providers
   registerProviders();
