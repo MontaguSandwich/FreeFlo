@@ -202,32 +202,20 @@ export class QontoProvider extends BaseProvider {
         };
       }
 
-      // Step 2: Check if beneficiary is trusted (for fully automated flow)
-      const trustedBeneficiaryId = await this.client.findTrustedBeneficiary(iban);
-      
-      if (!trustedBeneficiaryId) {
-        log.warn({ iban }, "Beneficiary not trusted - transfer may require manual approval");
-        // We'll still attempt the transfer, but it might need SCA
-        // For production, you'd want to handle this case appropriately
-      }
-
-      // Step 3: Create the transfer
+      // Step 2: Create the transfer
       const amountEur = (Number(fiatAmount) / 100).toFixed(2);
       const reference = `OFFRAMP-${intentId.substring(0, 8)}`;
 
+      // Always use beneficiary object with name/IBAN to match VoP token
+      // (beneficiary_id would cause VoP signature mismatch)
       const transferResponse = await this.client.createTransfer({
         vop_proof_token: vopResult.proof_token.token,
         transfer: {
           bank_account_id: this.config.bankAccountId,
-          ...(trustedBeneficiaryId 
-            ? { beneficiary_id: trustedBeneficiaryId }
-            : { 
-                beneficiary: {
-                  name: recipientName,
-                  iban,
-                },
-              }
-          ),
+          beneficiary: {
+            name: recipientName,
+            iban,
+          },
           amount: amountEur,
           reference,
           note: `Off-ramp intent ${intentId}`,
