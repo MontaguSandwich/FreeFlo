@@ -1,5 +1,5 @@
 [workspace]
-members = ["qonto"]
+members = ["adapters/qonto"]
 resolver = "2"
 
 [workspace.dependencies]

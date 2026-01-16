@@ -13,19 +13,21 @@ frontend/           Next.js on Vercel (free-flo.vercel.app)
 solver/             TypeScript service on VPS (95.217.235.164:8080-8081)
 ├── src/index-v3.ts         Entry point
 ├── src/orchestrator-v3.ts  Intent processing & fulfillment
-├── src/providers/qonto.ts  Qonto SEPA provider
-└── src/attestation/        Prover + attestation client
+├── src/providers/qonto.ts  Qonto SEPA executor
+└── src/attestation/        Prover client + attestation client
 
 contracts/          Solidity (Foundry)
 ├── src/OffRampV3.sol       Intent/quote/fulfillment (permissionless)
 └── src/PaymentVerifier.sol EIP-712 verification
 
-attestation-service/  Rust service on FreeFlo infrastructure (:4001)
-└── src/              Verifies TLSNotary proofs, validates on-chain, signs attestations
+attestation/        Rust service on FreeFlo infrastructure (:4001)
+└── src/            Verifies TLSNotary proofs, validates on-chain, signs attestations
 
-tlsn/qonto/                 TLSNotary prover for Qonto (uses git dep to tlsnotary/tlsn)
-├── src/prove_transfer.rs   Generate attestation
-└── src/present_transfer.rs Create presentation
+providers/          Payment provider implementations
+├── README.md       Provider overview and how to add new providers
+├── prover/         Rust TLSNotary prover workspace
+│   └── adapters/qonto/  Qonto-specific prover (uses tlsnotary/tlsn v0.1.0-alpha.13)
+└── qonto/          Qonto provider docs
 ```
 
 ## Contracts (Base Sepolia)
@@ -71,11 +73,11 @@ cd solver && npm run build && npm run start:v3
 curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"
 
 # Attestation (FreeFlo infrastructure)
-cd attestation-service && cargo build --release
+cd attestation && cargo build --release
 curl http://127.0.0.1:4001/api/v1/health
 
 # TLSNotary prover (VPS)
-cd /opt/FreeFlo/tlsn/qonto
+cd providers/prover
 cargo build --release --bin qonto_prove_transfer
 ```
 
@@ -122,7 +124,7 @@ Mismatch → `NotAuthorizedWitness` error.
 ATTESTATION_SERVICE_URL=https://attestation.freeflo.live  # FreeFlo's service
 ATTESTATION_API_KEY=your_api_key_from_freeflo            # Issued by FreeFlo
 PROVER_TIMEOUT=300000
-TLSN_EXAMPLES_PATH=/opt/FreeFlo/tlsn/qonto
+TLSN_EXAMPLES_PATH=/opt/FreeFlo/providers/prover/adapters/qonto
 ```
 
 ### Vercel
@@ -158,12 +160,14 @@ rm -rf solver/data/ solver/*.db solver/proofs/ && pm2 restart zkp2p-solver
 
 ## Development & Deployment
 
-**Active branch**: `claude/review-deployment-feedback-bQM6t` (both servers run this)
+**Branches**:
+- `main` - stable, production-ready
+- `preprod-with-claude` - pre-prod experimentation (servers track this)
 
 | Server | IP | Code Path |
 |--------|-----|-----------|
 | Solver | 95.217.235.164 | `/opt/zkp2p-offramp/` |
-| Attestation | 77.42.68.242 | `/opt/freeflo/attestation-service/` |
+| Attestation | 77.42.68.242 | `/opt/freeflo/attestation/` |
 
 To update servers, see `docs/OPERATIONS_RUNBOOK.md`.
 
