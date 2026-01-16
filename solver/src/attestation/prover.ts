@@ -13,7 +13,7 @@ import { createLogger } from "../utils/logger.js";
 const log = createLogger("tlsnotary-prover");
 
 export interface ProverConfig {
-  /** Path to the TLSNotary examples directory */
+  /** Path to the TLSNotary qonto crate directory (e.g., /opt/FreeFlo/tlsn/qonto) */
   tlsnExamplesPath: string;
   /** Path to store generated proofs */
   proofStoragePath: string;
@@ -53,7 +53,7 @@ export async function generateQontoProof(
     // Step 1: Generate attestation and secrets
     log.info({ transferId }, "Step 1/2: Generating attestation...");
     
-    const proveResult = await runCargoExample(
+    const proveResult = await runCargoBinary(
       config.tlsnExamplesPath,
       "qonto_prove_transfer",
       {
@@ -76,7 +76,7 @@ export async function generateQontoProof(
     // Step 2: Generate presentation
     log.info({ transferId }, "Step 2/2: Generating presentation...");
 
-    const presentResult = await runCargoExample(
+    const presentResult = await runCargoBinary(
       config.tlsnExamplesPath,
       "qonto_present_transfer",
       {},
@@ -126,16 +126,16 @@ export async function generateQontoProof(
 }
 
 /**
- * Run a cargo example and wait for completion
+ * Run a cargo binary and wait for completion
  */
-async function runCargoExample(
+async function runCargoBinary(
   workingDir: string,
-  exampleName: string,
+  binaryName: string,
   env: Record<string, string>,
   timeout: number
 ): Promise<{ success: boolean; stdout: string; stderr: string; error?: string }> {
   return new Promise((resolve) => {
-    const child = spawn("cargo", ["run", "--release", "--example", exampleName], {
+    const child = spawn("cargo", ["run", "--release", "--bin", binaryName], {
       cwd: workingDir,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -201,10 +201,10 @@ async function runCargoExample(
  */
 export async function checkProverAvailable(tlsnExamplesPath: string): Promise<boolean> {
   try {
-    const result = await runCargoExample(
-      dirname(tlsnExamplesPath),
-      "help", // This will fail but tells us if cargo is available
-      {},
+    const result = await runCargoBinary(
+      tlsnExamplesPath,
+      "qonto_prove_transfer", // Check if the binary exists
+      { QONTO_REFERENCE: "__check__" }, // Will fail but tells us if cargo is available
       5000
     );
     // If cargo ran at all (even with error), we're good

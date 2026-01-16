@@ -11,7 +11,7 @@
 └─────────────────────────────────────────────┼───────────────────────────┘
                                               │
                       ┌───────────────────────▼───────────────────────┐
-                      │                    VPS                         │
+                      │              SOLVER VPS (Untrusted)           │
                       │              95.217.235.164                    │
                       │                                                │
                       │  ┌─────────────────────────────────────────┐  │
@@ -24,21 +24,38 @@
                       │  └──────────────────┬──────────────────────┘  │
                       │                     │                          │
                       │  ┌──────────────────▼──────────────────────┐  │
-                      │  │      ATTESTATION SERVICE (Rust)         │  │
-                      │  │              Port 4001                   │  │
-                      │  │  - Verifies TLSNotary presentations     │  │
-                      │  │  - Signs EIP-712 attestations           │  │
-                      │  └─────────────────────────────────────────┘  │
-                      │                                                │
-                      │  ┌─────────────────────────────────────────┐  │
                       │  │       TLSNOTARY PROVER (Rust)           │  │
-                      │  │        /opt/tlsn/crates/examples        │  │
+                      │  │        /opt/FreeFlo/tlsn/qonto          │  │
                       │  │  - qonto_prove_transfer                 │  │
                       │  │  - qonto_present_transfer               │  │
                       │  └─────────────────────────────────────────┘  │
+                      └──────────────────────┬────────────────────────┘
+                                             │
+                                  POST /attest (with API key)
+                                             │
+                      ┌──────────────────────▼────────────────────────┐
+                      │         FREEFLO INFRASTRUCTURE (Trusted)      │
+                      │              77.42.68.242 / attestation.freeflo.live │
+                      │                                                │
+                      │  ┌─────────────────────────────────────────┐  │
+                      │  │      ATTESTATION SERVICE (Rust)         │  │
+                      │  │              Port 4001                   │  │
+                      │  │  - API key authentication               │  │
+                      │  │  - On-chain intent validation           │  │
+                      │  │  - TLSNotary proof verification         │  │
+                      │  │  - EIP-712 attestation signing          │  │
+                      │  │  - Audit logging                        │  │
+                      │  │  - Rate limiting                        │  │
+                      │  └─────────────────────────────────────────┘  │
+                      │                                                │
+                      │  ┌─────────────────────────────────────────┐  │
+                      │  │       WITNESS PRIVATE KEY               │  │
+                      │  │  (Never shared with solvers)            │  │
+                      │  │  Address: 0x343830917e4e5f6291146af...  │  │
+                      │  └─────────────────────────────────────────┘  │
                       └────────────────────────────────────────────────┘
-                                              │
-                      ┌───────────────────────▼───────────────────────┐
+                                             │
+                      ┌──────────────────────▼────────────────────────┐
                       │              BASE SEPOLIA                      │
                       │  OffRampV3: 0x34249F4AB741F0661A38651A08213DDe │
                       │  PaymentVerifier: 0xd72ddbFAfFc390947CB6fE26af │
@@ -46,19 +63,46 @@
                       └────────────────────────────────────────────────┘
 ```
 
+## Security Model: Trust Boundaries
+
+### Untrusted: Solvers
+Solvers are third-party operators who:
+- Process fiat transfers (SEPA Instant via Qonto)
+- Generate TLSNotary proofs
+- Submit attestation requests
+- Claim USDC on-chain
+
+**Solvers CANNOT:**
+- Forge payment proofs (TLSNotary cryptographic guarantee)
+- Sign attestations (don't have witness key)
+- Claim USDC without valid proof (on-chain verification)
+
+### Trusted: FreeFlo Protocol
+FreeFlo controls:
+- **Attestation Service**: Verifies proofs, validates intents on-chain
+- **Witness Private Key**: Signs EIP-712 attestations
+- **Smart Contracts**: Verify signatures, manage intents
+
+**Security Guarantees:**
+1. **On-chain validation**: Before signing, attestation service verifies:
+   - Intent exists and is in COMMITTED status
+   - Requesting solver matches `selectedSolver` on-chain
+2. **API authentication**: Each solver has unique API key tied to their address
+3. **Audit logging**: All attestation requests logged for forensics
+
 ## Transaction Flow
 
-### Typical Timeline (~14 seconds total)
+### Typical Timeline (~10-15 seconds total)
 
-| Step | Duration |
-|------|----------|
-| User creates intent | - |
-| Solver quotes on-chain | ~3s |
-| User selects quote | (user action) |
-| **Step 1/4:** SEPA Instant transfer | ~6s |
-| **Step 2/4:** TLSNotary proof | ~4.5s |
-| **Step 3/4:** Attestation signing | ~12ms |
-| **Step 4/4:** On-chain fulfillment | ~3s |
+| Step | Duration | Actor |
+|------|----------|-------|
+| User creates intent | - | User |
+| Solver quotes on-chain | ~3s | Solver |
+| User selects quote & commits USDC | (user action) | User |
+| **Step 1/4:** SEPA Instant transfer | ~4-6s | Solver |
+| **Step 2/4:** TLSNotary proof generation | ~5s | Solver |
+| **Step 3/4:** Attestation request | ~100ms | Solver → FreeFlo |
+| **Step 4/4:** On-chain fulfillment | ~3s | Solver |
 
 ### Intent Lifecycle
 
@@ -68,46 +112,62 @@ PENDING_QUOTE → COMMITTED → FULFILLED
               CANCELLED/EXPIRED (on timeout)
 ```
 
-1. **PENDING_QUOTE**: User deposits USDC, creates intent with amount/currency
-2. **COMMITTED**: User selects solver's quote, provides IBAN/recipient name
+1. **PENDING_QUOTE**: User creates intent with amount/currency (no USDC locked yet)
+2. **COMMITTED**: User selects solver's quote, provides IBAN, USDC transferred to contract
 3. **FULFILLED**: Solver proves payment with zkTLS, claims USDC
-4. **CANCELLED**: User cancels after timeout (if solver doesn't fulfill)
+4. **CANCELLED**: User cancels after timeout (30 min for COMMITTED, 15 min for PENDING_QUOTE)
 
-### Quote Flow
+### Attestation Flow (Detailed)
 
 ```
-Frontend                    Solver (VPS)
-   │                            │
-   ├─── GET /api/quote ────────►│  (via Next.js proxy)
-   │    ?amount=100&currency=EUR│
-   │                            │
-   │◄── { quotes: [...] } ─────┤  (real rates from Qonto)
-   │                            │
-```
-
-### Solver Fulfillment Code Path
-
-```typescript
-// Step 1: Execute fiat transfer
-const transfer = await qontoProvider.executeTransfer({
-  iban: intent.receivingInfo,
-  name: intent.recipientName,
-  amount: fiatAmount,
-  reference: intentId
-});
-
-// Step 2: Generate TLSNotary proof
-const proof = await prover.generateProof(transfer.id);
-
-// Step 3: Get attestation signature
-const attestation = await attestationClient.attest({
-  intentHash: intentId,
-  proof: proof,
-  expectedAmount: fiatAmountCents
-});
-
-// Step 4: Submit on-chain
-await contract.fulfillIntentWithProof(intentId, attestation);
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           SOLVER (Untrusted)                            │
+│                                                                         │
+│  1. Execute SEPA Instant transfer via Qonto                             │
+│  2. Generate TLSNotary proof of transfer API response                   │
+│  3. POST /attest to FreeFlo attestation service                         │
+│     Headers: X-Solver-API-Key: <api_key>                                │
+│     Body: { presentation, intent_hash, expected_amount_cents }          │
+│                                                                         │
+└───────────────────────────────────────┬─────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      ATTESTATION SERVICE (Trusted)                       │
+│                                                                         │
+│  4. Authenticate solver via API key                                      │
+│  5. Query OffRampV3.getIntent(intentHash) on-chain                       │
+│     - Verify intent.status == COMMITTED                                  │
+│     - Verify intent.selectedSolver == requesting solver                  │
+│  6. Verify TLSNotary proof                                               │
+│     - Check server certificate (thirdparty.qonto.com)                    │
+│     - Parse payment data from revealed content                           │
+│     - Verify amount matches expected                                     │
+│  7. Sign EIP-712 PaymentAttestation with witness key                     │
+│  8. Return { signature, payment_data }                                   │
+│  9. Log to audit trail                                                   │
+│                                                                         │
+└───────────────────────────────────────┬─────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           SOLVER (Untrusted)                            │
+│                                                                         │
+│  10. Submit fulfillIntentWithProof(intentId, attestation, signature)    │
+│                                                                         │
+└───────────────────────────────────────┬─────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        ON-CHAIN (PaymentVerifier)                        │
+│                                                                         │
+│  11. Recover signer from EIP-712 signature                               │
+│  12. Verify authorizedWitnesses[signer] == true                          │
+│  13. Verify domain separator matches                                     │
+│  14. Check nullifier not used (prevent replay)                           │
+│  15. Transfer USDC to solver                                             │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
@@ -120,8 +180,8 @@ await contract.fulfillIntentWithProof(intentId, attestation);
 | Attestation | Rust, axum, alloy, k256 |
 | TLSNotary | Rust (tlsn v0.1.0-alpha.13) |
 | Database | SQLite (solver state) |
-| Deployment | Vercel (frontend), VPS (solver/attestation) |
-| Process Mgmt | PM2 |
+| Deployment | Vercel (frontend), VPS (solver), VPS (attestation) |
+| Process Mgmt | PM2 (solver), systemd (attestation) |
 
 ## TLSNotary Proof Structure
 
@@ -129,6 +189,21 @@ await contract.fulfillIntentWithProof(intentId, attestation);
 qonto_prove_transfer    → qonto_transfer.attestation.tlsn + secrets.tlsn
 qonto_present_transfer  → qonto_transfer.presentation.tlsn (sent to attestation service)
 ```
+
+The presentation contains:
+- Server certificate (proves connection to thirdparty.qonto.com)
+- Revealed HTTP response content (payment details)
+- Cryptographic commitments hiding other data
+
+## Component Ownership
+
+| Component | Owner | Location | Notes |
+|-----------|-------|----------|-------|
+| TLSNotary Prover | Solver | Solver's VPS | Generates cryptographic proofs |
+| Attestation Service | FreeFlo | FreeFlo infrastructure | Validates and signs attestations |
+| Witness Private Key | FreeFlo | FreeFlo infrastructure | NEVER shared with solvers |
+| Solver Service | Solver | Solver's VPS | Quote API, fiat transfers |
+| Smart Contracts | FreeFlo | Base Sepolia | Immutable, deployed |
 
 ---
 

@@ -89,6 +89,8 @@ export const config = {
     enabled: optionalEnv("ATTESTATION_ENABLED", "false") === "true",
     serviceUrl: optionalEnv("ATTESTATION_SERVICE_URL", "http://localhost:4001"),
     timeout: parseInt(optionalEnv("ATTESTATION_TIMEOUT", "30000")),
+    // API key for authenticating with FreeFlo's attestation service
+    apiKey: optionalEnv("ATTESTATION_API_KEY", ""),
   },
 
   // ==========================================================================
