@@ -112,7 +112,7 @@ Mismatch → `NotAuthorizedWitness` error.
 - **Duplicate prevention**: Solver saves `provider_transfer_id` after fiat transfer. On retry, skips transfer if ID exists.
 - **Quote API 404**: Ensure `SOLVER_API_URL` is set in Vercel env vars.
 - **Intent detection**: Solver event watchers only start after historical sync. Wait for "V3 Orchestrator started" log before creating intents.
-- **tlsn dependency**: Attestation service uses git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.14), not crates.io. First build downloads and compiles tlsn.
+- **tlsn dependency**: Both attestation service and prover use git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.13). Versions must match or deserialization fails.
 - **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service.
 
 ## Environment Variables
