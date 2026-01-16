@@ -13,7 +13,7 @@ import { createLogger } from "../utils/logger.js";
 const log = createLogger("tlsnotary-prover");
 
 export interface ProverConfig {
-  /** Path to the TLSNotary qonto crate directory (e.g., /opt/FreeFlo/tlsn/qonto) */
+  /** Path to the TLSNotary qonto crate directory (e.g., /opt/FreeFlo/providers/prover/adapters/qonto) */
   tlsnExamplesPath: string;
   /** Path to store generated proofs */
   proofStoragePath: string;
