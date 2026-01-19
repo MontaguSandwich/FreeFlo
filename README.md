@@ -1,6 +1,6 @@
 # FreeFlo Protocol
 
-**Permissionless, fast, intent-based on-chain ↔ off-chain interoperability**
+Permissionless, intent-based on-chain ↔ off-chain interoperability.
 
 [![CI Status](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml/badge.svg)](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
