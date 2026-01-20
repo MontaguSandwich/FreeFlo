@@ -81,3 +81,4 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 *.env.backup
+*.env.backup
