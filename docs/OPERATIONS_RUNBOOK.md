@@ -25,13 +25,6 @@ export VERIFIER="0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe"
 export USDC="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 ```
 
-### Server Addresses
-
-| Service | IP | Port |
-|---------|-----|------|
-| Solver VPS | 95.217.235.164 | 8080 (health), 8081 (quotes) |
-| Attestation | 77.42.68.242 | 4001 |
-
 ### Active Development Branch
 
 Both servers run on: `claude/review-deployment-feedback-bQM6t`
@@ -46,12 +39,6 @@ cd /opt/freeflo/attestation-service && git branch --show-current && git log -1 -
 
 ## Solver Operations
 
-### SSH Access
-
-```bash
-ssh root@95.217.235.164
-```
-
 ### Health Checks
 
 ```bash
@@ -62,7 +49,7 @@ curl http://127.0.0.1:8080/health
 curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"
 
 # External check (from anywhere)
-curl "http://95.217.235.164:8081/api/quote?amount=100&currency=EUR"
+curl "http://SSH_IP:8081/api/quote?amount=100&currency=EUR"
 ```
 
 ### PM2 Management
@@ -131,12 +118,6 @@ ls -la /opt/zkp2p-offramp/tlsn/target/release/qonto_*
 ---
 
 ## Attestation Service Operations
-
-### SSH Access
-
-```bash
-ssh root@77.42.68.242
-```
 
 ### Health Check
 

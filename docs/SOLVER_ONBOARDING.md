@@ -2,16 +2,14 @@
 
 This guide walks you through setting up a FreeFlo solver from scratch. A solver processes USDC-to-fiat off-ramp requests by sending fiat payments (SEPA Instant) and proving them via TLSNotary.
 
-**Time estimate**: 2-4 hours (excluding Qonto account approval)
-
 ## Prerequisites
 
 Before you begin, you'll need:
 
 | Requirement | Notes |
 |-------------|-------|
-| **Qonto Business Account** | EU business required, 2-4 week approval |
-| **VPS** | Ubuntu 22.04, 2GB+ RAM (Hetzner €4/mo, DigitalOcean $12/mo) |
+| **Qonto Business Account** | EU business required |
+| **VPS** | Ubuntu 22.04, 2GB+ RAM  |
 | **ETH on Base Sepolia** | For gas fees (~0.01 ETH) |
 | **FreeFlo API Key** | Contact FreeFlo team to register as a solver |
 | **Domain** (optional) | For SSL/HTTPS |
