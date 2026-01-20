@@ -215,5 +215,5 @@ MIT License. See [LICENSE](LICENSE).
 ## Acknowledgments
 
 - [TLSNotary](https://tlsnotary.org) — Privacy-preserving TLS proofs
-- [OIF](https://zkp2p.xyz) — Research and inspiration
+- [ZKP2P](https://zkp2p.xyz) — Research and inspiration
 - [OIF](https://openintents.xyz) — Research, inspiration and Intent-based architecture
