@@ -1,72 +1,108 @@
-# FreeFlo
+# FreeFlo Protocol
 
-**Intent-based, permissionless Crypto <> Fiat swaps**
+Permissionless, intent-based on-chain ↔ off-chain interoperability.
 
 [![CI Status](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml/badge.svg)](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Note**: FreeFlo is currently deployed on Base Sepolia testnet.
+> **FreeFlo is currently on MVP stage. Meaning that some trade-offs had to be made to prove this actually works:**
+> - The current provider for Instant SEPA transfers doesn't allow for API execution of payment for non-trusted beneficiaries. Receiver's details have to be stored with the provider pre-transfer.
+> - Attestation Service is running on a dedicated server creating a single point of failure. The goal is to have this running on a TEE.
+> - The current Solver implementation allows solvers to set their own ForEx rate. Future implementation will have an enshrined oracle for each currency.
 
 ## Overview
 
-FreeFlo is a trust-minimized off-ramp protocol that converts USDC to fiat currency (EUR) via real-time payment networks. Users deposit USDC into an on-chain intent, solvers compete to fulfill the order by sending fiat via SEPA Instant, and payment is cryptographically verified using [TLSNotary](https://tlsnotary.org) before USDC is released.
+FreeFlo is a trust-minimized, intent-powered off-ramp protocol enabling USDC ↔ Fiat swaps.
 
-End-to-end settlement: ~10-15 seconds.
+Unlike cross-chain protocols where both input and output occur on-chain, FreeFlo settles the output leg off-chain via real-time payment networks (RTPNs), with fulfillment proven cryptographically using [TLSNotary](https://tlsnotary.org).
+
+FreeFlo's MVP currently supports just the one RTPN: Instant SEPA which enables real-time EURO payments across european banks.
+
+Note:
+MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 ### Key Properties
 
-- **Permissionless**: Anyone can run a solver—no whitelisting required
-- **Trust-minimized**: Payment verification via zkTLS proofs, not trusted oracles
-- **Non-custodial**: Users retain control until payment is cryptographically proven
-- **Real-time**: SEPA Instant delivery in seconds, not days
+- **Permissionless**: Anyone with an account form supported RTPNs can run a solver.
+- **Trust-minimized**: Payment verification via zkTLS proofs, not trusted third-parties required.
+- **Non-custodial**: Users crypto is escrowed in smart contracts and only released if off-chain payment is cryptographically proven.
+- **RTPN-agnostic**: Extensible to any real-time payment network with API ( for automation) and TLS ( for proof generation) capabilities.
 
-## Architecture
+## Dictionary
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                FreeFlo                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐    │
-│  │   Frontend   │────▶│  Smart Contracts │◀────│      Solver      │    │
-│  │   (Next.js)  │     │  (Base Sepolia)  │     │   (TypeScript)   │    │
-│  └──────────────┘     └──────────────────┘     └────────┬─────────┘    │
-│                                                         │              │
-│                       ┌─────────────────────────────────┼──────────┐   │
-│                       │                                 │          │   │
-│                       ▼                                 ▼          │   │
-│               ┌──────────────┐                  ┌──────────────┐   │   │
-│               │  Qonto API   │   TLSNotary      │ Attestation  │   │   │
-│               │   (SEPA)     │ ────────────────▶│   Service    │   │   │
-│               └──────────────┘                  │    (Rust)    │   │   │
-│                                                 └──────────────┘   │   │
-│                                                                    │   │
-└────────────────────────────────────────────────────────────────────┘   │
-```
+| Term | Definition |
+|------|------------|
+| **Intent** | A user's request to convert USDC to fiat at a specified destination: RTPN, fiat currency, and recipient details. |
+| **Solver** | An entity that fulfills intents by sending fiat and proving payment. |
+| **Quote** | A solver's offer to fulfill an intent, specifying the amount to be sent in the requested fiat currency |
+| **Commitment** | User's selection of a specific quote, locking USDC for the duration of the fulfillment window |
+| **Fulfillment** | Completing an intent: sending fiat, generating proof, submitting it on-chain, and claiming USDC |
+| **Attestation** | An EIP-712 signed statement from an authorized witness confirming payment was verified via zkTLS |
+| **Witness** | The authorized signer (controlled by FreeFlo Protocol) that validates zkTLS proofs and signs attestations |
+| **RTPN** | Real-Time Payment Network: an off-chain payment network with near-instant settlement (e.g., Revolut, Wise...) |
+| **Nullifier** | A unique payment identifier preventing double-claims, derived from the provider's transaction ID |
 
-### Transaction Flow
+## System Architecture
 
-```
-User                                                           Solver
-  │                                                               │
-  │  1. Create Intent (deposit USDC)                              │
-  │──────────────────────────────────▶                            │
-  │                                                               │
-  │                                     2. Submit Quote           │
-  │                                 ◀──────────────────────────────│
-  │                                                               │
-  │  3. Select Quote                                              │
-  │──────────────────────────────────▶                            │
-  │                                                               │
-  │                                     4. Send SEPA Instant      │
-  │                                     5. Generate TLSNotary proof
-  │                                     6. Get attestation        │
-  │                                     7. Fulfill on-chain       │
-  │                                 ◀──────────────────────────────│
-  │                                                               │
-  │  8. EUR received in bank account                              │
-  │◀──────────────────────────────────                            │
-```
+![System Diagram](https://github.com/user-attachments/assets/d2147c16-79e0-45f5-8579-3f465663c38e)
+
+
+### Component Overview
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| **OffRampV3** | [`contracts/src/OffRampV3.sol`](./contracts/src/OffRampV3.sol) | Intent lifecycle, USDC escrow, quote management |
+| **PaymentVerifier** | [`contracts/src/PaymentVerifier.sol`](./contracts/src/PaymentVerifier.sol) | EIP-712 verification, witness registry, nullifier tracking |
+| **Attestation Service** | [`attestation/`](./attestation/) | zkTLS proof validation, on-chain state verification, attestation signing |
+| **Solver** | [`solver/`](./solver/) | Quote API, fiat execution, proof generation, intent monitoring |
+| **Prover** | [`providers/prover/`](./providers/prover/) | TLSNotary proof generation per RTPN |
+| **Frontend** | [`frontend/`](./frontend/) | Web application for users |
+
+## Intent Lifecycle
+
+1. **PENDING_QUOTE** — User calls `createIntent()`, deposits USDC. Solvers call `submitQuote()` with competing offers.
+
+2. **COMMITTED** — User calls `selectQuote()`, locks funds to chosen solver. Solver has fulfillment window to complete.
+
+3. **FULFILLED** — Solver sends fiat, proves via zkTLS, calls `fulfillIntentWithProof()`. Contract verifies attestation, releases USDC to solver.
+
+4. **CANCELLED / EXPIRED** — Timeout reached without fulfillment. User calls `cancelIntent()`, USDC returned.
+
+## Security Model
+
+FreeFlo separates concerns between untrusted solvers and trusted infrastructure:
+
+| Actor | Trust | Responsibility |
+|-------|-------|----------------|
+| Solver | Untrusted | Execute fiat transfers, generate proofs |
+| Attestation Service | Trusted (FreeFlo) | Validate proofs, verify on-chain state, sign attestations |
+| Smart Contracts | Trustless | Verify signatures, enforce time windows, release funds |
+
+### Solver Protections
+
+Solvers **cannot**:
+- **Forge payment proofs** : TLSNotary proofs are cryptographically bound to the TLS session
+- **Claim without valid attestation** : On-chain signature verification required
+- **Double-claim payments** : Nullifier (payment ID) tracked on-chain
+- **Claim for wrong intent** : Attestation includes intent hash
+
+### User Protections
+
+Users are protected against:
+- **Solver non-fulfillment** : Funds auto-release after timeout via `cancelIntent()`
+- **Quote manipulation** : Committed quote amount verified in attestation
+- **Incorrect payment amount** : Attestation service validates proof amount ≥ committed amount
+
+### Risk Considerations
+
+| Risk | Mitigation |
+|------|------------|
+| **Attestation service downtime** | Solvers cannot claim, but user funds remain safe. Timeout allows cancellation. |
+| **Proof-generation failure** | No mitigation yet but leaning towards extension of fulfillment window and optimistic settlement ( requires slashing) |
+| **Solver commits but never sends fiat** | Commitment timeout returns funds to user automatically. |
+| **Solver underpayment** | Attestation service validates on-chain committed amount against proof. |
+| **Witness key compromise** | Single point of failure. Future: threshold signatures or TEE. |
+
 
 ## Quick Start
 
@@ -102,15 +138,34 @@ cd frontend && npm run dev       # Terminal 2: Frontend
 
 See [Solver Onboarding Guide](docs/SOLVER_ONBOARDING.md) for production deployment.
 
-## Components
+## Extending FreeFlo
 
-| Component | Description | Stack |
-|-----------|-------------|-------|
-| [`/contracts`](contracts/) | Intent management and payment verification | Solidity, Foundry |
-| [`/solver`](solver/) | Quote API and fulfillment orchestrator | TypeScript, Node.js |
-| [`/attestation-service`](attestation-service/) | TLSNotary proof verification and EIP-712 signing | Rust, Axum |
-| [`/frontend`](frontend/) | Web application for users | Next.js, React |
-| [`/tlsn`](tlsn/) | TLSNotary prover for Qonto | Rust |
+FreeFlo is designed to support any RTPN with API capability.
+
+### Adding a New Payment Provider
+
+1. **Implement the Prover** — Create a TLSNotary prover in `providers/prover/adapters/<provider>/`:
+   ```rust
+   // Must generate a Presentation proving:
+   // - Transaction ID
+   // - Amount in cents
+   // - Beneficiary identifier (IBAN, account number, etc.)
+   ```
+
+2. **Register the Server** — Add the provider's API domain to `ALLOWED_SERVERS` in attestation config
+
+3. **Implement Solver Integration** — Add provider execution logic in `solver/src/providers/<provider>.ts`:
+   ```typescript
+   // Must implement:
+   // - OAuth/auth flow
+   // - Transfer execution
+   // - Prover invocation
+   ```
+
+4. **Register RTPN On-Chain** — Solvers declare supported RTPNs via `setSolverRtpn()`
+
+See [`providers/README.md`](./providers/README.md) for detailed integration guide.
+
 
 ## Deployed Contracts
 
@@ -120,15 +175,13 @@ See [Solver Onboarding Guide](docs/SOLVER_ONBOARDING.md) for production deployme
 |----------|---------|
 | OffRampV3 | [`0x34249F4AB741F0661A38651A08213DDe1469b60f`](https://sepolia.basescan.org/address/0x34249F4AB741F0661A38651A08213DDe1469b60f) |
 | PaymentVerifier | [`0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe`](https://sepolia.basescan.org/address/0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe) |
-| USDC | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](docs/ARCHITECTURE.md) | System design and security model |
+| [Providers](./providers/README.md) | Supported providers |
 | [Solver Onboarding](docs/SOLVER_ONBOARDING.md) | Run your own solver |
-| [Attestation Separation](docs/ATTESTATION_SEPARATION_SPEC.md) | Security architecture |
 | [Operations Runbook](docs/OPERATIONS_RUNBOOK.md) | Production operations |
 
 ## Development
@@ -138,7 +191,7 @@ See [Solver Onboarding Guide](docs/SOLVER_ONBOARDING.md) for production deployme
 ```bash
 cd contracts && forge build
 cd solver && npm run build
-cd attestation-service && cargo build --release
+cd attestation && cargo build --release
 cd frontend && npm run build
 ```
 
@@ -147,6 +200,7 @@ cd frontend && npm run build
 ```bash
 cd contracts && forge test -vvv
 cd solver && npm test
+cd attestation && cargo test
 ```
 
 ### Lint
@@ -156,34 +210,6 @@ cd contracts && forge fmt --check
 cd solver && npm run lint
 ```
 
-## Docker Deployment
-
-```bash
-# Configure
-cp env.production.example .env
-# Edit .env with your values
-
-# Start
-docker compose up -d
-
-# Verify
-curl http://localhost:8080/health    # Solver
-curl http://localhost:4001/health    # Attestation
-```
-
-## Security
-
-FreeFlo uses a separated trust model where the attestation service (controlled by FreeFlo infrastructure) validates TLSNotary proofs before signing EIP-712 attestations. Solvers cannot forge payment proofs.
-
-For security concerns, see [SECURITY.md](docs/SECURITY.md). Do not open public issues for vulnerabilities.
-
-## Contributing
-
-Contributions welcome. Please open an issue to discuss significant changes before submitting a PR.
-
-- [Open Issues](https://github.com/MontaguSandwich/FreeFlo/issues)
-- [Pull Requests](https://github.com/MontaguSandwich/FreeFlo/pulls)
-
 ## License
 
 MIT License. See [LICENSE](LICENSE).
@@ -191,5 +217,5 @@ MIT License. See [LICENSE](LICENSE).
 ## Acknowledgments
 
 - [TLSNotary](https://tlsnotary.org) — Privacy-preserving TLS proofs
-- [ZKP2P](https://zkp2p.xyz) — Research and inspiration
-- [Across Protocol](https://across.to) — Intent-based architecture patterns
+- [OIF](https://zkp2p.xyz) — Research and inspiration
+- [OIF](https://openintents.xyz) — Research, inspiration and Intent-based architecture

@@ -33,7 +33,9 @@ impl From<u8> for IntentStatus {
 pub struct OnChainIntent {
     pub owner: Address,
     pub solver: Address,
-    pub amount: U256,
+    pub usdc_amount: U256,
+    /// The fiat amount the solver committed to pay (2 decimals, in cents)
+    pub selected_fiat_amount: U256,
     pub status: IntentStatus,
 }
 
@@ -125,7 +127,13 @@ impl ChainClient {
         // createdAt at base+128..base+160
         // committedAt at base+160..base+192
         let selected_solver = Address::from_slice(&result[base + 192 + 12..base + 224]);
-        // selectedFiatAmount at base+256..base+288
+        // selectedRtpn at base+224..base+256 (not needed for validation)
+        // selectedFiatAmount at base+256..base+288 (this is in cents, 2 decimals)
+        let selected_fiat_amount = if result.len() >= base + 288 {
+            U256::from_be_slice(&result[base + 256..base + 288])
+        } else {
+            U256::ZERO
+        };
 
         // Check if intent exists (depositor is not zero)
         if depositor == Address::ZERO {
@@ -135,7 +143,8 @@ impl ChainClient {
         Ok(Some(OnChainIntent {
             owner: depositor,
             solver: selected_solver,
-            amount: usdc_amount,
+            usdc_amount,
+            selected_fiat_amount,
             status,
         }))
     }
@@ -266,17 +275,27 @@ pub async fn validate_intent(
     // The selectedSolver check above is sufficient to verify the solver
     // is authorized to fulfill this specific intent
 
-    // Check amount matches (convert from wei to cents if needed)
-    // Note: This assumes intent.amount is in the same units as expected_amount_cents
-    // In practice, you may need to convert based on your contract's denomination
-    let intent_amount_cents = intent.amount.to::<u128>() as i64;
-    if expected_amount_cents > 0 && intent_amount_cents != expected_amount_cents {
-        // Allow some flexibility - the on-chain amount might be in different units
-        // Just log a warning for now
+    // Validate fiat amount: the proof amount must be >= the committed fiat amount
+    // Both values are in cents (2 decimals)
+    let committed_fiat_cents = intent.selected_fiat_amount.to::<u128>() as i64;
+
+    if expected_amount_cents > 0 && committed_fiat_cents > 0 {
+        if expected_amount_cents < committed_fiat_cents {
+            return Err(format!(
+                "Amount mismatch: proof shows {} cents paid, but solver committed to {} cents on-chain",
+                expected_amount_cents, committed_fiat_cents
+            ));
+        }
+
         debug!(
-            intent_amount = %intent_amount_cents,
-            expected_amount = %expected_amount_cents,
-            "Amount validation skipped (may be different units)"
+            proof_amount_cents = %expected_amount_cents,
+            committed_fiat_cents = %committed_fiat_cents,
+            "Fiat amount validated: proof >= committed"
+        );
+    } else if committed_fiat_cents == 0 {
+        // Intent may not have a selected quote yet, or legacy data
+        warn!(
+            "No committed fiat amount on-chain (selectedFiatAmount=0), skipping amount validation"
         );
     }
 
