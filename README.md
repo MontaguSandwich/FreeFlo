@@ -28,14 +28,14 @@ MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 | Term | Definition |
 |------|------------|
-| **Intent** | A user's request to convert USDC to fiat at a specified destination: RTPN, fiat currency, and recipient details |
-| **Solver** | An entity that fulfills intents by sending fiat and proving payment. Permissionless—anyone can run a solver |
+| **Intent** | A user's request to convert USDC to fiat at a specified destination: RTPN, fiat currency, and recipient details. |
+| **Solver** | An entity that fulfills intents by sending fiat and proving payment. |
 | **Quote** | A solver's offer to fulfill an intent, specifying the amount to be sent in the requested fiat currency |
 | **Commitment** | User's selection of a specific quote, locking USDC for the duration of the fulfillment window |
-| **Fulfillment** | Completing an intent: sending fiat, generating proof, submitting on-chain, and claiming USDC |
+| **Fulfillment** | Completing an intent: sending fiat, generating proof, submitting it on-chain, and claiming USDC |
 | **Attestation** | An EIP-712 signed statement from an authorized witness confirming payment was verified via zkTLS |
-| **Witness** | The authorized signer (controlled by FreeFlo) that validates zkTLS proofs and signs attestations |
-| **RTPN** | Real-Time Payment Network — a payment network with near-instant settlement (e.g., SEPA Instant) |
+| **Witness** | The authorized signer (controlled by FreeFlo Protocol) that validates zkTLS proofs and signs attestations |
+| **RTPN** | Real-Time Payment Network: an off-chain payment network with near-instant settlement (e.g., Revolut, Wise...) |
 | **Nullifier** | A unique payment identifier preventing double-claims, derived from the provider's transaction ID |
 
 ## System Architecture
