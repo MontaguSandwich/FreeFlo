@@ -5,7 +5,10 @@ Permissionless, intent-based on-chain ↔ off-chain interoperability.
 [![CI Status](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml/badge.svg)](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Note**: FreeFlo is currently on MVP stage and only deployed on Base Sepolia testnet.
+> **FreeFlo is currently on MVP stage. Meaning that some trade-offs had to be made to prove this actually works:**
+> - The current provider for Instant SEPA transfers doesn't allow for API execution of payment for non-trusted beneficiaries. Receiver's details have to be stored with the provider pre-transfer.
+> - Attestation Service is running on a dedicated server creating a single point of failure. The goal is to have this running on a TEE.
+> - The current Solver implementation allows solvers to set their own ForEx rate. Future implementation will have an enshrined oracle for each currency.
 
 ## Overview
 
@@ -15,6 +18,7 @@ Unlike cross-chain protocols where both input and output occur on-chain, FreeFlo
 
 FreeFlo's MVP currently supports just the one RTPN: Instant SEPA which enables real-time EURO payments across european banks.
 
+Note:
 MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 ### Key Properties
@@ -56,30 +60,6 @@ MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 ## Intent Lifecycle
 
-```
-┌──────────────┐    timeout    ┌───────────┐
-│              │──────────────►│           │
-│ PENDING_QUOTE│               │  EXPIRED  │
-│              │◄──────────────│           │
-└──────┬───────┘   user cancel └───────────┘
-       │
-       │ selectQuote()
-       ▼
-┌──────────────┐    timeout    ┌───────────┐
-│              │──────────────►│           │
-│  COMMITTED   │               │ CANCELLED │
-│              │               │           │
-└──────┬───────┘               └───────────┘
-       │
-       │ fulfillIntentWithProof()
-       ▼
-┌──────────────┐
-│              │
-│  FULFILLED   │
-│              │
-└──────────────┘
-```
-
 1. **PENDING_QUOTE** — User calls `createIntent()`, deposits USDC. Solvers call `submitQuote()` with competing offers.
 
 2. **COMMITTED** — User calls `selectQuote()`, locks funds to chosen solver. Solver has fulfillment window to complete.
@@ -101,29 +81,27 @@ FreeFlo separates concerns between untrusted solvers and trusted infrastructure:
 ### Solver Protections
 
 Solvers **cannot**:
-- **Forge payment proofs** — TLSNotary proofs are cryptographically bound to the TLS session
-- **Claim without valid attestation** — On-chain signature verification required
-- **Double-claim payments** — Nullifier (payment ID) tracked on-chain
-- **Claim for wrong intent** — Attestation includes intent hash
+- **Forge payment proofs** : TLSNotary proofs are cryptographically bound to the TLS session
+- **Claim without valid attestation** : On-chain signature verification required
+- **Double-claim payments** : Nullifier (payment ID) tracked on-chain
+- **Claim for wrong intent** : Attestation includes intent hash
 
 ### User Protections
 
 Users are protected against:
-- **Solver non-fulfillment** — Funds auto-release after timeout via `cancelIntent()`
-- **Quote manipulation** — Committed quote amount verified in attestation
-- **Incorrect payment amount** — Attestation service validates proof amount ≥ committed amount
+- **Solver non-fulfillment** : Funds auto-release after timeout via `cancelIntent()`
+- **Quote manipulation** : Committed quote amount verified in attestation
+- **Incorrect payment amount** : Attestation service validates proof amount ≥ committed amount
 
 ### Risk Considerations
 
 | Risk | Mitigation |
 |------|------------|
 | **Attestation service downtime** | Solvers cannot claim, but user funds remain safe. Timeout allows cancellation. |
-| **Quote window front-running** | Short quote windows (5 min). Future: commit-reveal scheme. |
+| **Proof-generation failure** | No mitigation yet but leaning towards extension of fulfillment window and optimistic settlement ( requires slashing) |
 | **Solver commits but never sends fiat** | Commitment timeout returns funds to user automatically. |
-| **Malicious solver underpayment** | Attestation service validates on-chain committed amount against proof. |
+| **Solver underpayment** | Attestation service validates on-chain committed amount against proof. |
 | **Witness key compromise** | Single point of failure. Future: threshold signatures or TEE. |
-
-For security concerns, see [SECURITY.md](docs/SECURITY.md). Do not open public issues for vulnerabilities.
 
 ## Quick Start
 
@@ -195,15 +173,13 @@ See [`providers/README.md`](./providers/README.md) for detailed integration guid
 |----------|---------|
 | OffRampV3 | [`0x34249F4AB741F0661A38651A08213DDe1469b60f`](https://sepolia.basescan.org/address/0x34249F4AB741F0661A38651A08213DDe1469b60f) |
 | PaymentVerifier | [`0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe`](https://sepolia.basescan.org/address/0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe) |
-| USDC | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](docs/ARCHITECTURE.md) | System design and security model |
+| [Providers](https://github.com/MontaguSandwich/FreeFlo/blob/claude/readme-improvements-Xb1Cy/providers/README.md) | Supported providers |
 | [Solver Onboarding](docs/SOLVER_ONBOARDING.md) | Run your own solver |
-| [Attestation Separation](docs/ATTESTATION_SEPARATION_SPEC.md) | Security architecture |
 | [Operations Runbook](docs/OPERATIONS_RUNBOOK.md) | Production operations |
 
 ## Development
@@ -232,21 +208,6 @@ cd contracts && forge fmt --check
 cd solver && npm run lint
 ```
 
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-For major changes, please open an issue first to discuss the proposed change.
-
-- [Open Issues](https://github.com/MontaguSandwich/FreeFlo/issues)
-- [Pull Requests](https://github.com/MontaguSandwich/FreeFlo/pulls)
-
 ## License
 
 MIT License. See [LICENSE](LICENSE).
@@ -254,5 +215,5 @@ MIT License. See [LICENSE](LICENSE).
 ## Acknowledgments
 
 - [TLSNotary](https://tlsnotary.org) — Privacy-preserving TLS proofs
-- [ZKP2P](https://zkp2p.xyz) — Research and inspiration
-- [Across Protocol](https://across.to) — Intent-based architecture patterns
+- [OIF](https://zkp2p.xyz) — Research and inspiration
+- [OIF](https://openintents.xyz) — Research, inspiration and Intent-based architecture
