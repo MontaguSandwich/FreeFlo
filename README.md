@@ -40,10 +40,8 @@ MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 ## System Architecture
 
-```
-<img width="4812" height="2184" alt="System Diagram" src="https://github.com/user-attachments/assets/ce2f87c1-9e9e-4878-bce3-b2558ba954bd" />
+![System Diagram](https://github.com/user-attachments/assets/d2147c16-79e0-45f5-8579-3f465663c38e)
 
-```
 
 ### Component Overview
 
