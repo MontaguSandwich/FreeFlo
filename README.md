@@ -15,7 +15,7 @@ Unlike cross-chain protocols where both input and output occur on-chain, FreeFlo
 
 FreeFlo's MVP currently supports just the one RTPN: Instant SEPA which enables real-time EURO payments across european banks.
 
-End-to-end settlement: **~10-15 seconds**. 
+MVP end-to-end settlement ( testnetUSDC <> EURO swap): **~10-15 seconds**.
 
 ### Key Properties
 
