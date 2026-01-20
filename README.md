@@ -103,6 +103,7 @@ Users are protected against:
 | **Solver underpayment** | Attestation service validates on-chain committed amount against proof. |
 | **Witness key compromise** | Single point of failure. Future: threshold signatures or TEE. |
 
+
 ## Quick Start
 
 ### Prerequisites
@@ -165,6 +166,7 @@ FreeFlo is designed to support any RTPN with API capability.
 
 See [`providers/README.md`](./providers/README.md) for detailed integration guide.
 
+
 ## Deployed Contracts
 
 ### Base Sepolia (Testnet)
@@ -178,7 +180,7 @@ See [`providers/README.md`](./providers/README.md) for detailed integration guid
 
 | Document | Description |
 |----------|-------------|
-| [Providers](https://github.com/MontaguSandwich/FreeFlo/blob/claude/readme-improvements-Xb1Cy/providers/README.md) | Supported providers |
+| [Providers](./providers/README.md) | Supported providers |
 | [Solver Onboarding](docs/SOLVER_ONBOARDING.md) | Run your own solver |
 | [Operations Runbook](docs/OPERATIONS_RUNBOOK.md) | Production operations |
 
