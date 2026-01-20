@@ -5,22 +5,24 @@ Permissionless, intent-based on-chain ↔ off-chain interoperability.
 [![CI Status](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml/badge.svg)](https://github.com/MontaguSandwich/FreeFlo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Note**: FreeFlo is currently deployed on Base Sepolia testnet.
+> **Note**: FreeFlo is currently on MVP stage and only deployed on Base Sepolia testnet.
 
 ## Overview
 
-FreeFlo is a modular, intent-based off-ramp protocol enabling USDC ↔ Fiat swaps.
+FreeFlo is a trust-minimized, intent-powered off-ramp protocol enabling USDC ↔ Fiat swaps.
 
-Unlike cross-chain protocols where both input and output occur on-chain, FreeFlo settles the output leg off-chain via real-time payment networks (SEPA Instant), with fulfillment proven cryptographically using [TLSNotary](https://tlsnotary.org).
+Unlike cross-chain protocols where both input and output occur on-chain, FreeFlo settles the output leg off-chain via real-time payment networks (RTPNs), with fulfillment proven cryptographically using [TLSNotary](https://tlsnotary.org).
 
-End-to-end settlement: **~10-15 seconds**.
+FreeFlo's MVP currently supports just the one RTPN: Instant SEPA which enables real-time EURO payments across european banks.
+
+End-to-end settlement: **~10-15 seconds**. 
 
 ### Key Properties
 
-- **Permissionless**: Anyone can run a solver—no whitelisting required
-- **Trust-minimized**: Payment verification via zkTLS proofs, not trusted oracles
-- **Non-custodial**: Users retain control until payment is cryptographically proven
-- **RTPN-agnostic**: Extensible to any real-time payment network with API capability
+- **Permissionless**: Anyone with an account form supported RTPNs can run a solver.
+- **Trust-minimized**: Payment verification via zkTLS proofs, not trusted third-parties required.
+- **Non-custodial**: Users crypto is escrowed in smart contracts and only released if off-chain payment is cryptographically proven.
+- **RTPN-agnostic**: Extensible to any real-time payment network with API ( for automation) and TLS ( for proof generation) capabilities.
 
 ## Dictionary
 
