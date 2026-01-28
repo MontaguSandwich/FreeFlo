@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useWatchContractEvent } from "wagmi";
-import { parseUnits, formatUnits, type Address } from "viem";
+import { parseUnits, formatUnits, decodeEventLog, type Address } from "viem";
 import { QuoteCard, QuoteCardSkeleton } from "./QuoteCard";
 import {
   Currency,
@@ -58,7 +58,7 @@ export function OffRampV2() {
   const { writeContract: approve, data: approveHash, isPending: isApproving } = useWriteContract();
   const { writeContract: selectQuote, data: selectQuoteHash, isPending: isSelectingQuote } = useWriteContract();
 
-  const { isLoading: isCreateConfirming, isSuccess: isCreateConfirmed } =
+  const { isLoading: isCreateConfirming, isSuccess: isCreateConfirmed, data: createReceipt } =
     useWaitForTransactionReceipt({ hash: createIntentHash });
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } =
     useWaitForTransactionReceipt({ hash: approveHash });
@@ -80,7 +80,36 @@ export function OffRampV2() {
     args: address ? [address, OFFRAMP_V2_ADDRESS] : undefined,
   });
 
-  // Watch for IntentCreated events to get intentId
+  // Extract intentId from transaction receipt (more reliable than event watching)
+  useEffect(() => {
+    if (createReceipt && isCreateConfirmed && !intentId) {
+      try {
+        for (const log of createReceipt.logs) {
+          try {
+            const decoded = decodeEventLog({
+              abi: OFFRAMP_V2_ABI,
+              data: log.data,
+              topics: log.topics,
+            });
+            if (decoded.eventName === 'IntentCreated') {
+              const args = decoded.args as { intentId: `0x${string}`; depositor: Address };
+              if (args.depositor?.toLowerCase() === address?.toLowerCase()) {
+                console.log('Intent created (from receipt):', args.intentId);
+                setIntentId(args.intentId);
+                break;
+              }
+            }
+          } catch {
+            // Not our event, skip
+          }
+        }
+      } catch (err) {
+        console.error('Error parsing receipt logs:', err);
+      }
+    }
+  }, [createReceipt, isCreateConfirmed, intentId, address]);
+
+  // Watch for IntentCreated events (backup, also used for external intents)
   useWatchContractEvent({
     address: OFFRAMP_V2_ADDRESS,
     abi: OFFRAMP_V2_ABI,
@@ -89,7 +118,7 @@ export function OffRampV2() {
       for (const log of logs) {
         const args = log.args as { intentId: `0x${string}`; depositor: Address };
         if (args.depositor?.toLowerCase() === address?.toLowerCase()) {
-          console.log('Intent created:', args.intentId);
+          console.log('Intent created (from event):', args.intentId);
           setIntentId(args.intentId);
         }
       }
