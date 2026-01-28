@@ -13,18 +13,18 @@ contract DeployMainnetScript is Script {
     // ZKP2P Orchestrator on Base Mainnet
     address constant ZKP2P_ORCHESTRATOR = 0x88888883Ed048FF0a415271B28b2F52d431810D0;
 
+    // FreeFlo attestation service witness
+    address constant WITNESS_ADDRESS = 0x343830917E4e5F6291146af68f76eADa08631a27;
+
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address witnessAddress = vm.envAddress("WITNESS_ADDRESS");
-
-        require(witnessAddress != address(0), "WITNESS_ADDRESS not set");
 
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy PaymentVerifier
-        PaymentVerifier verifier = new PaymentVerifier(witnessAddress);
+        PaymentVerifier verifier = new PaymentVerifier(WITNESS_ADDRESS);
         console.log("PaymentVerifier deployed at:", address(verifier));
-        console.log("  Witness:", witnessAddress);
+        console.log("  Witness:", WITNESS_ADDRESS);
 
         // 2. Deploy OffRampV3
         OffRampV3 offRamp = new OffRampV3(USDC_BASE_MAINNET, address(verifier));
