@@ -9,15 +9,14 @@ contract DeployRouterScript is Script {
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address constant OFFRAMP_V3_BASE_SEPOLIA = 0x34249F4AB741F0661A38651A08213DDe1469b60f;
 
-    // ZKP2P Orchestrator address on Base Mainnet (placeholder - update before mainnet deploy)
-    // TODO: Get actual address from ZKP2P team
-    address constant ZKP2P_ORCHESTRATOR_BASE_SEPOLIA = address(0); // UPDATE THIS
+    // ZKP2P Orchestrator address on Base
+    address constant ZKP2P_ORCHESTRATOR = 0x88888883Ed048FF0a415271B28b2F52d431810D0;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
         // Allow override via env vars
-        address zkp2pOrchestrator = vm.envOr("ZKP2P_ORCHESTRATOR", ZKP2P_ORCHESTRATOR_BASE_SEPOLIA);
+        address zkp2pOrchestrator = vm.envOr("ZKP2P_ORCHESTRATOR", ZKP2P_ORCHESTRATOR);
         address offRampV3 = vm.envOr("OFFRAMP_V3_ADDRESS", OFFRAMP_V3_BASE_SEPOLIA);
         address usdc = vm.envOr("USDC_ADDRESS", USDC_BASE_SEPOLIA);
 
