@@ -1,12 +1,15 @@
 // OffRampV3 contract configuration and ABI
 
-export const OFFRAMP_V3_ADDRESS = "0x34249F4AB741F0661A38651A08213DDe1469b60f" as const;
+// Base Mainnet
+export const OFFRAMP_V3_ADDRESS = "0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D" as const;
+export const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+
+// Base Sepolia (uncomment to use testnet)
+// export const OFFRAMP_V3_ADDRESS = "0x34249F4AB741F0661A38651A08213DDe1469b60f" as const;
+// export const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as const;
 
 // Legacy V2 address (deprecated)
 export const OFFRAMP_V2_ADDRESS = OFFRAMP_V3_ADDRESS;
-
-// Base Sepolia USDC
-export const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as const;
 
 // Enums matching contract
 export enum Currency {
