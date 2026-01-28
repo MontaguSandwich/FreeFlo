@@ -235,7 +235,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         }
 
         // Approve OffRampV3 to pull USDC
-        usdc.safeApprove(address(offRamp), transfer.usdcAmount);
+        usdc.forceApprove(address(offRamp), transfer.usdcAmount);
 
         // Select quote and commit (Router is depositor, so we can call this)
         offRamp.selectQuoteAndCommit(
@@ -247,7 +247,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         );
 
         // Reset approval
-        usdc.safeApprove(address(offRamp), 0);
+        usdc.forceApprove(address(offRamp), 0);
 
         // Update status
         transfer.status = TransferStatus.COMMITTED;
