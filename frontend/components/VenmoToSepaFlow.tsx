@@ -624,7 +624,7 @@ export function VenmoToSepaFlow() {
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold text-white mb-1">Confirm Order</h2>
-              <p className="text-zinc-400 text-sm">Lock the maker's USDC for your transfer</p>
+              <p className="text-zinc-400 text-sm">Lock the maker&apos;s USDC for your transfer</p>
             </div>
             <div className="bg-zinc-800/30 rounded-xl p-4 space-y-3">
               <div className="flex justify-between">
@@ -678,7 +678,7 @@ export function VenmoToSepaFlow() {
               onClick={handleVenmoSent}
               className="w-full py-4 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors"
             >
-              I've Sent the Payment
+              I&apos;ve Sent the Payment
             </button>
           </div>
         )}
