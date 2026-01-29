@@ -7,7 +7,8 @@ Trustless USDC-to-fiat offramp using zkTLS. User deposits USDC, solver sends fia
 ```
 frontend/           Next.js on Vercel (free-flo.vercel.app)
 ├── app/api/quote/  Proxy to solver Quote API (avoids CORS)
-├── components/     OffRampForm.tsx is the main wizard
+├── app/venmo-to-sepa/  Venmo USD → SEPA EUR page
+├── components/     OffRampForm.tsx (main wizard), VenmoToSepaFlow.tsx
 └── lib/quotes.ts   Quote fetching logic
 
 solver/             TypeScript service on VPS (95.217.235.164:8080-8081)
@@ -18,7 +19,8 @@ solver/             TypeScript service on VPS (95.217.235.164:8080-8081)
 
 contracts/          Solidity (Foundry)
 ├── src/OffRampV3.sol       Intent/quote/fulfillment (permissionless)
-└── src/PaymentVerifier.sol EIP-712 verification
+├── src/PaymentVerifier.sol EIP-712 verification
+└── src/VenmoToSepaRouter.sol  ZKP2P → FreeFlo bridge (PostIntentHook)
 
 attestation/        Rust service on FreeFlo infrastructure (:4001)
 └── src/            Verifies TLSNotary proofs, validates on-chain, signs attestations
@@ -30,7 +32,16 @@ providers/          Payment provider implementations
 └── qonto/          Qonto provider docs
 ```
 
-## Contracts (Base Sepolia)
+## Contracts (Base Mainnet)
+
+```
+OffRampV3:            0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
+PaymentVerifier:      0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
+VenmoToSepaRouter:    0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8
+USDC:                 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+```
+
+### Base Sepolia (testnet)
 
 ```
 OffRampV3:        0x34249F4AB741F0661A38651A08213DDe1469b60f
@@ -57,6 +68,23 @@ Solver (Untrusted)          FreeFlo (Trusted)           On-Chain
                      ◄────── 7. Return signature
 8. Submit to contract ─────────────────────────────────► 9. Verify & release USDC
 ```
+
+## Venmo → SEPA Flow (Cross-Border)
+
+VenmoToSepaRouter bridges ZKP2P (Venmo USD → USDC) and FreeFlo (USDC → SEPA EUR) in a single user flow.
+
+```
+User                    ZKP2P                   VenmoToSepaRouter         FreeFlo (OffRampV3)
+────                    ─────                   ─────────────────         ───────────────────
+1. Send Venmo USD
+2. Prove payment ────► 3. Release USDC
+                       4. PostIntentHook ──────► 5. Receive USDC
+                                                 6. createIntent() ──────► 7. Deposit USDC
+                                                                           8. Solver sends EUR
+                                                                           9. User receives SEPA
+```
+
+ZKP2P Orchestrator (Base Mainnet): `0x88888883Ed048FF0a415271B28b2F52d431810D0`
 
 ## Run & Test
 
@@ -87,8 +115,8 @@ cargo build --release --bin qonto_prove_transfer
 ```
 name: "WisePaymentVerifier"
 version: "1"
-chainId: 84532
-verifyingContract: 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
+chainId: 8453
+verifyingContract: 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
 ```
 Mismatch → `NotAuthorizedWitness` error.
 
@@ -135,10 +163,10 @@ SOLVER_API_URL=http://95.217.235.164:8081
 ### Attestation Service (FreeFlo-managed)
 ```bash
 WITNESS_PRIVATE_KEY=0x...                                 # FreeFlo controls this
-CHAIN_ID=84532
-VERIFIER_CONTRACT=0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
-RPC_URL=https://base-sepolia-rpc.publicnode.com
-OFFRAMP_CONTRACT=0x34249F4AB741F0661A38651A08213DDe1469b60f
+CHAIN_ID=8453
+VERIFIER_CONTRACT=0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
+RPC_URL=https://mainnet.base.org
+OFFRAMP_CONTRACT=0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
 SOLVER_API_KEYS=key1:solver1_addr,key2:solver2_addr       # Registered solvers
 ```
 
@@ -146,13 +174,13 @@ SOLVER_API_KEYS=key1:solver1_addr,key2:solver2_addr       # Registered solvers
 
 ```bash
 # Check witness authorized
-cast call 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe "authorizedWitnesses(address)" $WITNESS --rpc-url https://base-sepolia-rpc.publicnode.com
+cast call 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905 "authorizedWitnesses(address)" $WITNESS --rpc-url https://mainnet.base.org
 
 # Check domain separator
-cast call 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe "DOMAIN_SEPARATOR()" --rpc-url https://base-sepolia-rpc.publicnode.com
+cast call 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905 "DOMAIN_SEPARATOR()" --rpc-url https://mainnet.base.org
 
 # Check intent status
-cast call 0x34249F4AB741F0661A38651A08213DDe1469b60f "getIntent(bytes32)" $INTENT_ID --rpc-url https://base-sepolia-rpc.publicnode.com
+cast call 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D "getIntent(bytes32)" $INTENT_ID --rpc-url https://mainnet.base.org
 
 # Clear solver state
 rm -rf solver/data/ solver/*.db solver/proofs/ && pm2 restart zkp2p-solver
