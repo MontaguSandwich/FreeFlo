@@ -1,217 +1,249 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import Link from "next/link";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import Card from "@mui/material/Card";
+import Chip from "@mui/material/Chip";
+import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
+import { Background } from "@/components/Background";
 import { VenmoToSepaFlow } from "@/components/VenmoToSepaFlow";
 
 export default function VenmoToSepaPage() {
   return (
-    <main className="min-h-screen relative overflow-hidden">
-      {/* Background */}
-      <div className="fixed inset-0 bg-[#08080a]">
-        {/* Gradient orbs - blue to emerald theme for cross-border */}
-        <div className="absolute top-[-30%] left-[-15%] w-[800px] h-[800px] rounded-full bg-blue-600/8 blur-[150px]" />
-        <div className="absolute bottom-[-30%] right-[-15%] w-[700px] h-[700px] rounded-full bg-emerald-600/8 blur-[130px]" />
-        <div className="absolute top-[30%] right-[10%] w-[400px] h-[400px] rounded-full bg-teal-600/5 blur-[100px]" />
+    <Box
+      component="main"
+      sx={{
+        minHeight: "100vh",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <Background variant="blue" />
 
-        {/* Subtle grid */}
-        <div
-          className="absolute inset-0 opacity-[0.03]"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)
-            `,
-            backgroundSize: '60px 60px'
-          }}
-        />
-      </div>
-
-      {/* Content */}
-      <div className="relative z-10 min-h-screen flex flex-col">
-        {/* Header */}
-        <header className="w-full px-8 py-5 border-b border-zinc-800/50">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            {/* Logo */}
-            <div className="flex items-center gap-6">
-              <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold text-white tracking-tight">Ramp</h1>
-                </div>
-              </Link>
-
-              {/* Nav Links */}
-              <nav className="hidden md:flex items-center gap-1 ml-4 pl-4 border-l border-zinc-800">
-                <Link
-                  href="/"
-                  className="px-3 py-1.5 text-sm text-zinc-400 hover:text-white transition-colors rounded-lg hover:bg-zinc-800/50"
-                >
-                  USDC Offramp
-                </Link>
-                <Link
-                  href="/venmo-to-sepa"
-                  className="px-3 py-1.5 text-sm text-white bg-zinc-800/50 rounded-lg"
-                >
-                  Venmo to SEPA
-                </Link>
-              </nav>
-            </div>
-
-            {/* Connect Button */}
-            <ConnectButton.Custom>
-              {({
-                account,
-                chain,
-                openAccountModal,
-                openChainModal,
-                openConnectModal,
-                mounted,
-              }) => {
-                const ready = mounted;
-                const connected = ready && account && chain;
-
-                return (
-                  <div
-                    {...(!ready && {
-                      'aria-hidden': true,
-                      style: {
-                        opacity: 0,
-                        pointerEvents: 'none',
-                        userSelect: 'none',
-                      },
-                    })}
-                  >
-                    {(() => {
-                      if (!connected) {
-                        return (
-                          <button
-                            onClick={openConnectModal}
-                            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-emerald-500 text-white font-semibold text-sm hover:opacity-90 transition-opacity shadow-lg shadow-blue-500/20"
-                          >
-                            Connect Wallet
-                          </button>
-                        );
-                      }
-
-                      if (chain.unsupported) {
-                        return (
-                          <button
-                            onClick={openChainModal}
-                            className="px-5 py-2.5 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 font-semibold text-sm hover:bg-red-500/30 transition-colors"
-                          >
-                            Wrong Network
-                          </button>
-                        );
-                      }
-
-                      return (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={openChainModal}
-                            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-800/50 border border-zinc-700/50 hover:bg-zinc-800 transition-colors"
-                          >
-                            {chain.hasIcon && chain.iconUrl && (
-                              <img
-                                alt={chain.name ?? 'Chain'}
-                                src={chain.iconUrl}
-                                className="w-5 h-5 rounded-full"
-                              />
-                            )}
-                            <span className="text-sm text-zinc-300">{chain.name}</span>
-                          </button>
-
-                          <button
-                            onClick={openAccountModal}
-                            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800/50 border border-zinc-700/50 hover:bg-zinc-800 transition-colors"
-                          >
-                            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-emerald-500" />
-                            <span className="text-sm font-medium text-white">
-                              {account.displayName}
-                            </span>
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              }}
-            </ConnectButton.Custom>
-          </div>
-        </header>
+      <Box
+        sx={{
+          position: "relative",
+          zIndex: 10,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: "100vh",
+        }}
+      >
+        <Header />
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col justify-center px-8 py-10">
-          <div className="max-w-lg mx-auto w-full">
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            px: 4,
+            py: 5,
+          }}
+        >
+          <Box sx={{ maxWidth: "lg", mx: "auto", width: "100%" }}>
             {/* Hero */}
-            <div className="text-center mb-8">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full mb-4">
-                <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-                <span className="text-xs text-blue-400 font-medium">Powered by ZKP2P + FreeFlo</span>
-              </div>
-              <h2 className="text-3xl md:text-4xl font-bold text-white mb-3 tracking-tight">
-                <span className="bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">Venmo</span> to <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">SEPA</span>
-              </h2>
-              <p className="text-zinc-400 text-base max-w-md mx-auto">
-                Send USD from Venmo and receive EUR in any European bank account. Trustless, fast, and low-cost.
-              </p>
-            </div>
+            <Box sx={{ textAlign: "center", mb: 4 }}>
+              <Chip
+                label={
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        bgcolor: "#60a5fa",
+                        borderRadius: "50%",
+                        animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+                        "@keyframes pulse": {
+                          "0%, 100%": { opacity: 1 },
+                          "50%": { opacity: 0.5 },
+                        },
+                      }}
+                    />
+                    <Typography
+                      component="span"
+                      sx={{
+                        fontSize: "0.75rem",
+                        color: "#60a5fa",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Powered by ZKP2P + FreeFlo
+                    </Typography>
+                  </Box>
+                }
+                sx={{
+                  bgcolor: "rgba(59, 130, 246, 0.1)",
+                  border: "1px solid rgba(59, 130, 246, 0.2)",
+                  borderRadius: "9999px",
+                  mb: 2,
+                  height: "auto",
+                  "& .MuiChip-label": {
+                    px: 1.5,
+                    py: 0.75,
+                  },
+                }}
+              />
 
-            {/* Main Card */}
+              <Typography
+                variant="h3"
+                sx={{
+                  fontWeight: 700,
+                  color: "white",
+                  mb: 1.5,
+                  letterSpacing: "-0.02em",
+                  fontSize: { xs: "1.875rem", md: "2.25rem" },
+                }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    background: "linear-gradient(to right, #60a5fa, #34d399)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}
+                >
+                  Venmo
+                </Box>
+                {" to "}
+                <Box
+                  component="span"
+                  sx={{
+                    background: "linear-gradient(to right, #34d399, #2dd4bf)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}
+                >
+                  SEPA
+                </Box>
+              </Typography>
+
+              <Typography
+                sx={{
+                  color: "#a1a1aa",
+                  fontSize: "1rem",
+                  maxWidth: 448,
+                  mx: "auto",
+                }}
+              >
+                Send USD from Venmo and receive EUR in any European bank account.
+                Trustless, fast, and low-cost.
+              </Typography>
+            </Box>
+
+            {/* VenmoToSepaFlow */}
             <VenmoToSepaFlow />
 
             {/* Info Cards */}
-            <div className="grid grid-cols-2 gap-4 mt-6">
-              <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                    <span className="text-blue-400 font-bold text-sm">1</span>
-                  </div>
-                  <span className="text-sm font-medium text-white">ZKP2P</span>
-                </div>
-                <p className="text-xs text-zinc-500">
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 2,
+                mt: 3,
+              }}
+            >
+              <Card
+                sx={{
+                  bgcolor: "rgba(24, 24, 27, 0.5)",
+                  border: "1px solid",
+                  borderColor: "#27272a",
+                  borderRadius: 3,
+                  p: 2,
+                  boxShadow: "none",
+                }}
+              >
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                  <Box
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 2,
+                      bgcolor: "rgba(59, 130, 246, 0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        color: "#60a5fa",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
+                      }}
+                    >
+                      1
+                    </Typography>
+                  </Box>
+                  <Typography
+                    sx={{
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: "white",
+                    }}
+                  >
+                    ZKP2P
+                  </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "0.75rem", color: "#71717a" }}>
                   Convert Venmo USD to USDC using zero-knowledge proofs
-                </p>
-              </div>
-              <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                    <span className="text-emerald-400 font-bold text-sm">2</span>
-                  </div>
-                  <span className="text-sm font-medium text-white">FreeFlo</span>
-                </div>
-                <p className="text-xs text-zinc-500">
-                  Convert USDC to EUR via SEPA Instant in ~15 seconds
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+                </Typography>
+              </Card>
 
-        {/* Footer */}
-        <footer className="w-full px-8 py-6 border-t border-zinc-800/50">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-6 text-xs text-zinc-600">
-              <span>Cross-border RTPN bridge</span>
-              <span className="hidden md:inline text-zinc-700">|</span>
-              <span className="hidden md:inline">Venmo (US) → SEPA (EU)</span>
-            </div>
-            <div className="flex items-center gap-6">
-              <a href="https://zkp2p.xyz" target="_blank" rel="noopener noreferrer" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-                ZKP2P
-              </a>
-              <a href="https://github.com/MontaguSandwich/FreeFlo" target="_blank" rel="noopener noreferrer" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-                FreeFlo
-              </a>
-              <a href="#" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Docs</a>
-            </div>
-          </div>
-        </footer>
-      </div>
-    </main>
+              <Card
+                sx={{
+                  bgcolor: "rgba(24, 24, 27, 0.5)",
+                  border: "1px solid",
+                  borderColor: "#27272a",
+                  borderRadius: 3,
+                  p: 2,
+                  boxShadow: "none",
+                }}
+              >
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                  <Box
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 2,
+                      bgcolor: "rgba(16, 185, 129, 0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        color: "#34d399",
+                        fontWeight: 700,
+                        fontSize: "0.875rem",
+                      }}
+                    >
+                      2
+                    </Typography>
+                  </Box>
+                  <Typography
+                    sx={{
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: "white",
+                    }}
+                  >
+                    FreeFlo
+                  </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "0.75rem", color: "#71717a" }}>
+                  Convert USDC to EUR via SEPA Instant in ~15 seconds
+                </Typography>
+              </Card>
+            </Box>
+          </Box>
+        </Box>
+
+        <Footer variant="venmo" />
+      </Box>
+    </Box>
   );
 }
