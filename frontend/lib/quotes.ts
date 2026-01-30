@@ -306,11 +306,11 @@ export async function fetchQuotesByRtpn(
       }
     }
   } catch (err) {
-    console.warn('Failed to fetch from solver API, using mock quotes:', err);
+    console.warn('Failed to fetch from solver API:', err);
   }
 
-  // Fallback to mock quotes if solver API is unavailable
-  return fetchMockQuotes(usdcAmount, currency);
+  // No fallback — return empty array when solver API is unavailable
+  return [];
 }
 
 // Mock quote generation (fallback)

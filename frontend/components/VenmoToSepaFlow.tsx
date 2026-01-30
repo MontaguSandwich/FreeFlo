@@ -24,6 +24,16 @@ import {
   type PendingTransfer,
 } from "@/lib/router-contracts";
 
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import Button from "@mui/material/Button";
+import TextField from "@mui/material/TextField";
+import CircularProgress from "@mui/material/CircularProgress";
+import LinearProgress from "@mui/material/LinearProgress";
+import Alert from "@mui/material/Alert";
+import Card from "@mui/material/Card";
+import IconButton from "@mui/material/IconButton";
+
 // Flow steps - simplified with Router
 type FlowStep =
   // Initial input (collect ALL info upfront)
@@ -397,410 +407,767 @@ export function VenmoToSepaFlow() {
 
   if (!isConnected) {
     return (
-      <div className="bg-zinc-900/50 backdrop-blur-xl rounded-3xl border border-zinc-800 p-8 text-center">
-        <h2 className="text-2xl font-bold text-white mb-4">Connect Wallet</h2>
-        <p className="text-zinc-400">Please connect your wallet to continue</p>
-      </div>
+      <Card
+        sx={{
+          bgcolor: 'rgba(24,24,27,0.5)',
+          backdropFilter: 'blur(20px)',
+          borderRadius: 6,
+          border: '1px solid #27272a',
+          p: 4,
+          textAlign: 'center',
+        }}
+      >
+        <Typography variant="h5" sx={{ fontWeight: 700, color: 'white', mb: 2 }}>
+          Connect Wallet
+        </Typography>
+        <Typography sx={{ color: '#a1a1aa' }}>
+          Please connect your wallet to continue
+        </Typography>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-zinc-900/50 backdrop-blur-xl rounded-3xl border border-zinc-800 overflow-hidden">
+    <Box
+      sx={{
+        bgcolor: 'rgba(24,24,27,0.5)',
+        backdropFilter: 'blur(20px)',
+        borderRadius: 6,
+        border: '1px solid #27272a',
+        overflow: 'hidden',
+      }}
+    >
       {/* Progress Header */}
       {step !== "select_flow" && step !== "success" && (
-        <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-900/30">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-zinc-400">
+        <Box sx={{ px: 3, py: 2, borderBottom: '1px solid #27272a', bgcolor: 'rgba(24,24,27,0.3)' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 500, color: '#a1a1aa' }}>
               Stage {progress.stage} of 2: {progress.label}
-            </span>
-            <span className="text-xs text-zinc-500">{Math.round(progress.percent)}%</span>
-          </div>
-          <div className="flex gap-2">
-            <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-500 rounded-full transition-all duration-500"
-                style={{ width: progress.stage === 1 ? `${progress.percent}%` : "100%" }}
+            </Typography>
+            <Typography variant="caption" sx={{ color: '#71717a' }}>
+              {Math.round(progress.percent)}%
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Box sx={{ flex: 1, height: 6, bgcolor: '#27272a', borderRadius: '9999px', overflow: 'hidden' }}>
+              <Box
+                sx={{
+                  height: '100%',
+                  bgcolor: '#3b82f6',
+                  borderRadius: '9999px',
+                  transition: 'all 500ms',
+                  width: progress.stage === 1 ? `${progress.percent}%` : '100%',
+                }}
               />
-            </div>
-            <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                style={{ width: progress.stage === 2 ? `${progress.percent}%` : "0%" }}
+            </Box>
+            <Box sx={{ flex: 1, height: 6, bgcolor: '#27272a', borderRadius: '9999px', overflow: 'hidden' }}>
+              <Box
+                sx={{
+                  height: '100%',
+                  bgcolor: '#10b981',
+                  borderRadius: '9999px',
+                  transition: 'all 500ms',
+                  width: progress.stage === 2 ? `${progress.percent}%` : '0%',
+                }}
               />
-            </div>
-          </div>
-          <div className="flex justify-between mt-2 text-xs text-zinc-500">
-            <span>ZKP2P (Venmo)</span>
-            <span>FreeFlo (SEPA)</span>
-          </div>
-        </div>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
+            <Typography variant="caption" sx={{ color: '#71717a' }}>ZKP2P (Venmo)</Typography>
+            <Typography variant="caption" sx={{ color: '#71717a' }}>FreeFlo (SEPA)</Typography>
+          </Box>
+        </Box>
       )}
 
       {/* Error Display */}
       {error && (
-        <div className="mx-6 mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-          <p className="text-red-400 text-sm">{error}</p>
-          <button onClick={() => setError(null)} className="text-xs text-red-400/60 hover:text-red-400 mt-1">
-            Dismiss
-          </button>
-        </div>
+        <Box sx={{ mx: 3, mt: 2 }}>
+          <Alert
+            severity="error"
+            sx={{
+              bgcolor: 'rgba(239,68,68,0.1)',
+              border: '1px solid rgba(239,68,68,0.2)',
+              borderRadius: 3,
+              color: '#f87171',
+              '& .MuiAlert-icon': { color: '#f87171' },
+            }}
+            action={
+              <Button
+                onClick={() => setError(null)}
+                sx={{ color: 'rgba(248,113,113,0.6)', fontSize: '0.75rem', textTransform: 'none', '&:hover': { color: '#f87171' } }}
+              >
+                Dismiss
+              </Button>
+            }
+          >
+            <Typography variant="body2">{error}</Typography>
+          </Alert>
+        </Box>
       )}
 
       {/* Main Content */}
-      <div className="p-6">
+      <Box sx={{ p: 3 }}>
         {/* Flow Selection */}
         {step === "select_flow" && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-white mb-2">Cross-Border Transfer</h2>
-              <p className="text-zinc-400">Send money from Venmo (US) to SEPA (Europe)</p>
-            </div>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box sx={{ textAlign: 'center' }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+                Cross-Border Transfer
+              </Typography>
+              <Typography sx={{ color: '#a1a1aa' }}>
+                Send money from Venmo (US) to SEPA (Europe)
+              </Typography>
+            </Box>
 
-            <button
+            <Button
               onClick={handleStart}
-              className="w-full p-6 bg-gradient-to-br from-blue-500/10 to-emerald-500/10 border border-blue-500/20 rounded-2xl hover:border-blue-500/40 transition-all group"
+              sx={{
+                width: '100%',
+                p: 3,
+                background: 'linear-gradient(to bottom right, rgba(59,130,246,0.1), rgba(16,185,129,0.1))',
+                border: '1px solid rgba(59,130,246,0.2)',
+                borderRadius: 4,
+                textTransform: 'none',
+                '&:hover': { borderColor: 'rgba(59,130,246,0.4)' },
+                transition: 'all 0.2s',
+                display: 'block',
+                textAlign: 'left',
+              }}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                    <span className="text-2xl">V</span>
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-lg font-semibold text-white">Venmo USD</h3>
-                    <p className="text-sm text-zinc-400">US Payment Network</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <svg className="w-6 h-6 text-zinc-600 group-hover:text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Box
+                    sx={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 3,
+                      bgcolor: 'rgba(59,130,246,0.2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Typography variant="h5" sx={{ color: 'white' }}>V</Typography>
+                  </Box>
+                  <Box sx={{ textAlign: 'left' }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'white' }}>
+                      Venmo USD
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                      US Payment Network
+                    </Typography>
+                  </Box>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M13 7l5 5m0 0l-5 5m5-5H6" />
                   </svg>
-                  <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                    <span className="text-2xl">€</span>
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-lg font-semibold text-white">SEPA EUR</h3>
-                    <p className="text-sm text-zinc-400">European Bank</p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 pt-4 border-t border-zinc-800 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Estimated time</span>
-                  <span className="text-zinc-300">2-5 minutes</span>
-                </div>
-                <div className="flex justify-between mt-1">
-                  <span className="text-zinc-500">Powered by</span>
-                  <span className="text-zinc-300">ZKP2P + FreeFlo</span>
-                </div>
-              </div>
-            </button>
-          </div>
+                  <Box
+                    sx={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 3,
+                      bgcolor: 'rgba(16,185,129,0.2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Typography variant="h5" sx={{ color: 'white' }}>€</Typography>
+                  </Box>
+                  <Box sx={{ textAlign: 'left' }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'white' }}>
+                      SEPA EUR
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                      European Bank
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #27272a', fontSize: '0.875rem' }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography variant="body2" sx={{ color: '#71717a' }}>Estimated time</Typography>
+                  <Typography variant="body2" sx={{ color: '#d4d4d8' }}>2-5 minutes</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+                  <Typography variant="body2" sx={{ color: '#71717a' }}>Powered by</Typography>
+                  <Typography variant="body2" sx={{ color: '#d4d4d8' }}>ZKP2P + FreeFlo</Typography>
+                </Box>
+              </Box>
+            </Button>
+          </Box>
         )}
 
         {/* Input All (Amount + IBAN + Name) */}
         {step === "input_all" && (
-          <div className="space-y-5">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Transfer Details</h2>
-              <p className="text-zinc-400 text-sm">Enter amount and destination</p>
-            </div>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Transfer Details
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Enter amount and destination
+              </Typography>
+            </Box>
 
             {/* Amount */}
-            <div className="bg-zinc-800/50 rounded-2xl p-4">
-              <label className="text-xs text-zinc-500 uppercase tracking-wider">You send</label>
-              <div className="flex items-center gap-3 mt-2">
-                <span className="text-3xl text-zinc-400">$</span>
-                <input
+            <Box sx={{ bgcolor: 'rgba(39,39,42,0.5)', borderRadius: 4, p: 2 }}>
+              <Typography
+                variant="caption"
+                sx={{ color: '#71717a', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+              >
+                You send
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1 }}>
+                <Typography sx={{ fontSize: '1.875rem', color: '#a1a1aa' }}>$</Typography>
+                <Box
+                  component="input"
                   type="number"
                   value={usdInput}
-                  onChange={(e) => setUsdInput(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsdInput(e.target.value)}
                   placeholder="0.00"
-                  className="flex-1 bg-transparent text-3xl font-semibold text-white outline-none"
+                  sx={{
+                    flex: 1,
+                    bgcolor: 'transparent',
+                    fontSize: '1.875rem',
+                    fontWeight: 600,
+                    color: 'white',
+                    outline: 'none',
+                    border: 'none',
+                    '&::placeholder': { color: '#52525b' },
+                  }}
                 />
-                <span className="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm font-medium">USD</span>
-              </div>
-            </div>
+                <Box
+                  sx={{
+                    px: 1.5,
+                    py: 0.75,
+                    bgcolor: 'rgba(59,130,246,0.2)',
+                    color: '#60a5fa',
+                    borderRadius: 2,
+                    fontSize: '0.875rem',
+                    fontWeight: 500,
+                  }}
+                >
+                  USD
+                </Box>
+              </Box>
+            </Box>
 
             {/* IBAN */}
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">Recipient IBAN</label>
-              <input
+            <Box>
+              <Typography variant="body2" sx={{ color: '#a1a1aa', mb: 1 }}>
+                Recipient IBAN
+              </Typography>
+              <Box
+                component="input"
                 type="text"
                 value={ibanInput}
-                onChange={(e) => setIbanInput(e.target.value.toUpperCase())}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setIbanInput(e.target.value.toUpperCase())}
                 placeholder="DE89 3704 0044 0532 0130 00"
-                className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-xl text-white placeholder-zinc-600 focus:border-emerald-500/50 focus:outline-none"
+                sx={{
+                  width: '100%',
+                  px: 2,
+                  py: 1.5,
+                  bgcolor: 'rgba(39,39,42,0.5)',
+                  border: '1px solid #3f3f46',
+                  borderRadius: 3,
+                  color: 'white',
+                  outline: 'none',
+                  fontSize: '1rem',
+                  '&::placeholder': { color: '#52525b' },
+                  '&:focus': { borderColor: 'rgba(16,185,129,0.5)' },
+                  boxSizing: 'border-box',
+                }}
               />
-            </div>
+            </Box>
 
             {/* Recipient Name */}
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">Recipient Name</label>
-              <input
+            <Box>
+              <Typography variant="body2" sx={{ color: '#a1a1aa', mb: 1 }}>
+                Recipient Name
+              </Typography>
+              <Box
+                component="input"
                 type="text"
                 value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNameInput(e.target.value)}
                 placeholder="John Doe"
-                className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-xl text-white placeholder-zinc-600 focus:border-emerald-500/50 focus:outline-none"
+                sx={{
+                  width: '100%',
+                  px: 2,
+                  py: 1.5,
+                  bgcolor: 'rgba(39,39,42,0.5)',
+                  border: '1px solid #3f3f46',
+                  borderRadius: 3,
+                  color: 'white',
+                  outline: 'none',
+                  fontSize: '1rem',
+                  '&::placeholder': { color: '#52525b' },
+                  '&:focus': { borderColor: 'rgba(16,185,129,0.5)' },
+                  boxSizing: 'border-box',
+                }}
               />
-            </div>
+            </Box>
 
             {/* Estimate */}
             {usdInput && parseFloat(usdInput) >= 10 && (
-              <div className="bg-zinc-800/30 rounded-xl p-4">
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Estimated EUR received</span>
-                  <span className="text-emerald-400 font-semibold">
+              <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ color: '#a1a1aa' }}>Estimated EUR received</Typography>
+                  <Typography sx={{ color: '#34d399', fontWeight: 600 }}>
                     {formatEur(calculateEstimatedEur(parseFloat(usdInput)))}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm mt-1">
-                  <span className="text-zinc-500">Slippage tolerance</span>
-                  <span className="text-zinc-400">{slippagePercent}%</span>
-                </div>
-              </div>
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+                  <Typography variant="body2" sx={{ color: '#71717a' }}>Slippage tolerance</Typography>
+                  <Typography variant="body2" sx={{ color: '#a1a1aa' }}>{slippagePercent}%</Typography>
+                </Box>
+              </Box>
             )}
 
-            <button
+            <Button
               onClick={handleInputSubmit}
               disabled={!usdInput || parseFloat(usdInput) < 10 || !ibanInput || !nameInput}
-              className="w-full py-4 rounded-xl bg-gradient-to-r from-blue-500 to-emerald-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
+              sx={{
+                width: '100%',
+                py: 2,
+                borderRadius: 3,
+                background: 'linear-gradient(to right, #3b82f6, #10b981)',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:disabled': { opacity: 0.5, cursor: 'not-allowed' },
+                '&:hover': { opacity: 0.9 },
+              }}
             >
               Find Makers
-            </button>
-            <p className="text-center text-xs text-zinc-500">Minimum: $10</p>
-          </div>
+            </Button>
+            <Typography variant="caption" sx={{ textAlign: 'center', color: '#71717a', display: 'block' }}>
+              Minimum: $10
+            </Typography>
+          </Box>
         )}
 
         {/* Finding Quotes */}
         {step === "finding_quotes" && (
-          <div className="text-center py-12">
-            <div className="w-12 h-12 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Finding Makers</h2>
-            <p className="text-zinc-400">Searching for Venmo liquidity providers...</p>
-          </div>
+          <Box sx={{ textAlign: 'center', py: 6 }}>
+            <CircularProgress size={48} sx={{ color: '#3b82f6', mb: 2 }} />
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+              Finding Makers
+            </Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>
+              Searching for Venmo liquidity providers...
+            </Typography>
+          </Box>
         )}
 
         {/* Select Maker */}
         {step === "select_maker" && (
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Select a Maker</h2>
-              <p className="text-zinc-400 text-sm">Choose who to exchange with for {formatUsd(flowData.usdAmount)}</p>
-            </div>
-            <div className="space-y-3">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Select a Maker
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Choose who to exchange with for {formatUsd(flowData.usdAmount)}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {zkp2pQuotes.map((quote) => {
                 const usdcOut = calculateUsdcFromUsd(flowData.usdAmount, quote.usdRate);
                 return (
-                  <button
+                  <Button
                     key={quote.depositId}
                     onClick={() => handleSelectMaker(quote)}
-                    className="w-full p-4 bg-zinc-800/50 border border-zinc-700 rounded-xl hover:border-blue-500/50 transition-all text-left"
+                    sx={{
+                      width: '100%',
+                      p: 2,
+                      bgcolor: 'rgba(39,39,42,0.5)',
+                      border: '1px solid #3f3f46',
+                      borderRadius: 3,
+                      textTransform: 'none',
+                      textAlign: 'left',
+                      '&:hover': { borderColor: 'rgba(59,130,246,0.5)' },
+                      transition: 'all 0.2s',
+                    }}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-semibold">
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Box
+                          sx={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: '50%',
+                            bgcolor: 'rgba(59,130,246,0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#60a5fa',
+                            fontWeight: 600,
+                          }}
+                        >
                           {quote.maker.slice(2, 4).toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="text-white font-medium">Maker {quote.maker.slice(0, 8)}...</p>
-                          <p className="text-sm text-zinc-400">Rate: ${quote.usdRate.toFixed(4)} per USDC</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-emerald-400 font-semibold">{formatUsdc(usdcOut)}</p>
-                        <p className="text-xs text-zinc-500">Available: {formatUsdc(quote.availableUsdc)}</p>
-                      </div>
-                    </div>
-                  </button>
+                        </Box>
+                        <Box>
+                          <Typography sx={{ color: 'white', fontWeight: 500 }}>
+                            Maker {quote.maker.slice(0, 8)}...
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                            Rate: ${quote.usdRate.toFixed(4)} per USDC
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Box sx={{ textAlign: 'right' }}>
+                        <Typography sx={{ color: '#34d399', fontWeight: 600 }}>
+                          {formatUsdc(usdcOut)}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#71717a' }}>
+                          Available: {formatUsdc(quote.availableUsdc)}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Button>
                 );
               })}
-            </div>
-          </div>
+            </Box>
+          </Box>
         )}
 
         {/* Signal ZKP2P Intent */}
         {step === "zkp2p_signal" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Confirm Order</h2>
-              <p className="text-zinc-400 text-sm">Lock the maker&apos;s USDC for your transfer</p>
-            </div>
-            <div className="bg-zinc-800/30 rounded-xl p-4 space-y-3">
-              <div className="flex justify-between">
-                <span className="text-zinc-400">You send</span>
-                <span className="text-white">{formatUsd(flowData.usdAmount)} via Venmo</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">You receive</span>
-                <span className="text-emerald-400">{formatUsdc(flowData.usdcAmount)} → ~{formatEur(flowData.minEurAmount)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Destination</span>
-                <span className="text-white font-mono text-xs">{flowData.eurIban.slice(0, 12)}...</span>
-              </div>
-            </div>
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 text-sm text-blue-300">
-              Your SEPA details are encoded in the ZKP2P intent. After verification, USDC will automatically flow to FreeFlo.
-            </div>
-            <button
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Confirm Order
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Lock the maker&apos;s USDC for your transfer
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>You send</Typography>
+                <Typography sx={{ color: 'white' }}>{formatUsd(flowData.usdAmount)} via Venmo</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>You receive</Typography>
+                <Typography sx={{ color: '#34d399' }}>
+                  {formatUsdc(flowData.usdcAmount)} → ~{formatEur(flowData.minEurAmount)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>Destination</Typography>
+                <Typography sx={{ color: 'white', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                  {flowData.eurIban.slice(0, 12)}...
+                </Typography>
+              </Box>
+            </Box>
+            <Alert
+              severity="info"
+              sx={{
+                bgcolor: 'rgba(59,130,246,0.1)',
+                border: '1px solid rgba(59,130,246,0.2)',
+                borderRadius: 3,
+                color: '#93c5fd',
+                '& .MuiAlert-icon': { color: '#93c5fd' },
+              }}
+            >
+              <Typography variant="body2">
+                Your SEPA details are encoded in the ZKP2P intent. After verification, USDC will automatically flow to FreeFlo.
+              </Typography>
+            </Alert>
+            <Button
               onClick={handleSignalIntent}
-              className="w-full py-4 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors"
+              sx={{
+                width: '100%',
+                py: 2,
+                borderRadius: 3,
+                bgcolor: '#3b82f6',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:hover': { bgcolor: '#2563eb' },
+              }}
             >
               Signal Intent
-            </button>
-          </div>
+            </Button>
+          </Box>
         )}
 
         {/* Send Venmo */}
         {step === "zkp2p_send_venmo" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Send Venmo Payment</h2>
-              <p className="text-zinc-400 text-sm">Send exactly {formatUsd(flowData.usdAmount)} to the maker</p>
-            </div>
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                  <span className="text-xl text-blue-400">V</span>
-                </div>
-                <div>
-                  <p className="text-white font-semibold">Venmo</p>
-                  <p className="text-sm text-zinc-400">Send to: {flowData.venmoRecipient}</p>
-                </div>
-              </div>
-              <div className="bg-zinc-900/50 rounded-lg p-3">
-                <p className="text-xs text-zinc-500 uppercase mb-1">Amount</p>
-                <p className="text-2xl font-bold text-white">{formatUsd(flowData.usdAmount)}</p>
-              </div>
-            </div>
-            <button
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Send Venmo Payment
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Send exactly {formatUsd(flowData.usdAmount)} to the maker
+              </Typography>
+            </Box>
+            <Box
+              sx={{
+                bgcolor: 'rgba(59,130,246,0.1)',
+                border: '1px solid rgba(59,130,246,0.2)',
+                borderRadius: 3,
+                p: 2,
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+                <Box
+                  sx={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 3,
+                    bgcolor: 'rgba(59,130,246,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Typography variant="h6" sx={{ color: '#60a5fa' }}>V</Typography>
+                </Box>
+                <Box>
+                  <Typography sx={{ color: 'white', fontWeight: 600 }}>Venmo</Typography>
+                  <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                    Send to: {flowData.venmoRecipient}
+                  </Typography>
+                </Box>
+              </Box>
+              <Box sx={{ bgcolor: 'rgba(24,24,27,0.5)', borderRadius: 2, p: 1.5 }}>
+                <Typography variant="caption" sx={{ color: '#71717a', textTransform: 'uppercase', mb: 0.5, display: 'block' }}>
+                  Amount
+                </Typography>
+                <Typography variant="h5" sx={{ fontWeight: 700, color: 'white' }}>
+                  {formatUsd(flowData.usdAmount)}
+                </Typography>
+              </Box>
+            </Box>
+            <Button
               onClick={handleVenmoSent}
-              className="w-full py-4 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors"
+              sx={{
+                width: '100%',
+                py: 2,
+                borderRadius: 3,
+                bgcolor: '#3b82f6',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:hover': { bgcolor: '#2563eb' },
+              }}
             >
               I&apos;ve Sent the Payment
-            </button>
-          </div>
+            </Button>
+          </Box>
         )}
 
         {/* Verify with ZKP2P */}
         {step === "zkp2p_verify" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Verify Payment</h2>
-              <p className="text-zinc-400 text-sm">Use ZKP2P extension to prove your payment</p>
-            </div>
-            <div className="bg-zinc-800/50 rounded-xl p-6 text-center">
-              <div className="w-16 h-16 bg-zinc-700/50 rounded-2xl mx-auto mb-4 flex items-center justify-center">
-                <svg className="w-8 h-8 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Verify Payment
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Use ZKP2P extension to prove your payment
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: 'rgba(39,39,42,0.5)', borderRadius: 3, p: 3, textAlign: 'center' }}>
+              <Box
+                sx={{
+                  width: 64,
+                  height: 64,
+                  bgcolor: 'rgba(63,63,70,0.5)',
+                  borderRadius: 4,
+                  mx: 'auto',
+                  mb: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
-              </div>
-              <p className="text-zinc-400 text-sm">ZKP2P verifies your Venmo payment confirmation</p>
-              <p className="text-xs text-zinc-500 mt-2">Zero-knowledge proof - your email stays private</p>
-            </div>
-            <button
+              </Box>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                ZKP2P verifies your Venmo payment confirmation
+              </Typography>
+              <Typography variant="caption" sx={{ color: '#71717a', mt: 1, display: 'block' }}>
+                Zero-knowledge proof - your email stays private
+              </Typography>
+            </Box>
+            <Button
               onClick={handleVerifyPayment}
-              className="w-full py-4 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors"
+              sx={{
+                width: '100%',
+                py: 2,
+                borderRadius: 3,
+                bgcolor: '#3b82f6',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:hover': { bgcolor: '#2563eb' },
+              }}
             >
               Verify with ZKP2P
-            </button>
-          </div>
+            </Button>
+          </Box>
         )}
 
         {/* ZKP2P Fulfilling */}
         {step === "zkp2p_fulfilling" && (
-          <div className="text-center py-12">
-            <div className="w-12 h-12 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Completing ZKP2P Transfer</h2>
-            <p className="text-zinc-400">Releasing USDC and creating SEPA intent...</p>
-          </div>
+          <Box sx={{ textAlign: 'center', py: 6 }}>
+            <CircularProgress size={48} sx={{ color: '#3b82f6', mb: 2 }} />
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+              Completing ZKP2P Transfer
+            </Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>
+              Releasing USDC and creating SEPA intent...
+            </Typography>
+          </Box>
         )}
 
         {/* Router Waiting for Quotes */}
         {step === "router_waiting" && (
-          <div className="text-center py-12">
-            <div className="w-12 h-12 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Waiting for SEPA Quote</h2>
-            <p className="text-zinc-400">FreeFlo solver is preparing your quote...</p>
-          </div>
+          <Box sx={{ textAlign: 'center', py: 6 }}>
+            <CircularProgress size={48} sx={{ color: '#10b981', mb: 2 }} />
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+              Waiting for SEPA Quote
+            </Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>
+              FreeFlo solver is preparing your quote...
+            </Typography>
+          </Box>
         )}
 
         {/* Router Commit */}
         {step === "router_commit" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-white mb-1">Confirm SEPA Transfer</h2>
-              <p className="text-zinc-400 text-sm">Review and commit to the quote</p>
-            </div>
-            <div className="bg-zinc-800/30 rounded-xl p-4 space-y-3">
-              <div className="flex justify-between">
-                <span className="text-zinc-400">USDC deposited</span>
-                <span className="text-white">{formatUsdc(flowData.usdcAmount)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">EUR to receive</span>
-                <span className="text-emerald-400 font-semibold">{formatEur(flowData.quotedEurAmount)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Destination</span>
-                <span className="text-white font-mono text-xs">{flowData.eurIban}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Recipient</span>
-                <span className="text-white">{flowData.recipientName}</span>
-              </div>
-            </div>
-            <button
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>
+                Confirm SEPA Transfer
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>
+                Review and commit to the quote
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>USDC deposited</Typography>
+                <Typography sx={{ color: 'white' }}>{formatUsdc(flowData.usdcAmount)}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>EUR to receive</Typography>
+                <Typography sx={{ color: '#34d399', fontWeight: 600 }}>{formatEur(flowData.quotedEurAmount)}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>Destination</Typography>
+                <Typography sx={{ color: 'white', fontFamily: 'monospace', fontSize: '0.75rem' }}>{flowData.eurIban}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>Recipient</Typography>
+                <Typography sx={{ color: 'white' }}>{flowData.recipientName}</Typography>
+              </Box>
+            </Box>
+            <Button
               onClick={handleRouterCommit}
-              className="w-full py-4 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors"
+              sx={{
+                width: '100%',
+                py: 2,
+                borderRadius: 3,
+                bgcolor: '#10b981',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:hover': { bgcolor: '#059669' },
+              }}
             >
               Confirm & Send EUR
-            </button>
-          </div>
+            </Button>
+          </Box>
         )}
 
         {/* FreeFlo Pending */}
         {step === "freeflo_pending" && (
-          <div className="text-center py-12">
-            <div className="w-12 h-12 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Sending SEPA Transfer</h2>
-            <p className="text-zinc-400">FreeFlo solver is sending EUR to your bank...</p>
-            <p className="text-sm text-zinc-500 mt-2">This usually takes 10-15 seconds</p>
-          </div>
+          <Box sx={{ textAlign: 'center', py: 6 }}>
+            <CircularProgress size={48} sx={{ color: '#10b981', mb: 2 }} />
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+              Sending SEPA Transfer
+            </Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>
+              FreeFlo solver is sending EUR to your bank...
+            </Typography>
+            <Typography variant="body2" sx={{ color: '#71717a', mt: 1 }}>
+              This usually takes 10-15 seconds
+            </Typography>
+          </Box>
         )}
 
         {/* Success */}
         {step === "success" && (
-          <div className="text-center py-8">
-            <div className="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-full mx-auto mb-6 flex items-center justify-center">
-              <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <Box sx={{ textAlign: 'center', py: 4 }}>
+            <Box
+              sx={{
+                width: 80,
+                height: 80,
+                background: 'linear-gradient(to bottom right, #10b981, #14b8a6)',
+                borderRadius: '50%',
+                mx: 'auto',
+                mb: 3,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 13l4 4L19 7" />
               </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Transfer Complete!</h2>
-            <p className="text-zinc-400 mb-6">Your money is on its way</p>
+            </Box>
+            <Typography variant="h5" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>
+              Transfer Complete!
+            </Typography>
+            <Typography sx={{ color: '#a1a1aa', mb: 3 }}>
+              Your money is on its way
+            </Typography>
 
-            <div className="bg-zinc-800/30 rounded-xl p-6 text-left space-y-4">
-              <div className="flex justify-between pb-4 border-b border-zinc-700">
-                <span className="text-zinc-400">You sent</span>
-                <span className="text-white font-semibold">{formatUsd(flowData.usdAmount)} via Venmo</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Recipient receives</span>
-                <span className="text-emerald-400 font-semibold">{formatEur(flowData.quotedEurAmount)} via SEPA</span>
-              </div>
-            </div>
+            <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 3, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', pb: 2, borderBottom: '1px solid #3f3f46' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>You sent</Typography>
+                <Typography sx={{ color: 'white', fontWeight: 600 }}>{formatUsd(flowData.usdAmount)} via Venmo</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Typography sx={{ color: '#a1a1aa' }}>Recipient receives</Typography>
+                <Typography sx={{ color: '#34d399', fontWeight: 600 }}>{formatEur(flowData.quotedEurAmount)} via SEPA</Typography>
+              </Box>
+            </Box>
 
-            <button
+            <Button
               onClick={resetFlow}
-              className="mt-6 px-6 py-3 rounded-xl bg-zinc-800 text-white font-medium hover:bg-zinc-700 transition-colors"
+              sx={{
+                mt: 3,
+                px: 3,
+                py: 1.5,
+                borderRadius: 3,
+                bgcolor: '#27272a',
+                color: 'white',
+                fontWeight: 500,
+                fontSize: '1rem',
+                textTransform: 'none',
+                '&:hover': { bgcolor: '#3f3f46' },
+              }}
             >
               Start New Transfer
-            </button>
-          </div>
+            </Button>
+          </Box>
         )}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }
