@@ -47,7 +47,7 @@ function ask(question) {
 
 async function exchangeCodeForToken(code) {
   console.log("\n📤 Exchanging code for token...\n");
-  
+
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: CLIENT_ID,
@@ -57,17 +57,25 @@ async function exchangeCodeForToken(code) {
   });
 
   console.log("Request body:", body.toString().replace(CLIENT_SECRET, "***"));
+  console.log("Token URL:", QONTO_TOKEN_URL);
+
+  const headers = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  if (STAGING_TOKEN) {
+    headers["X-Qonto-Staging-Token"] = STAGING_TOKEN;
+  }
 
   const response = await fetch(QONTO_TOKEN_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
+    headers,
     body: body,
   });
 
   const text = await response.text();
-  
+  console.log("Response status:", response.status);
+  console.log("Response body (first 500 chars):", text.substring(0, 500));
+
   if (!response.ok) {
     throw new Error(`Token exchange failed: ${response.status} - ${text}`);
   }
