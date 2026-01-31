@@ -14,7 +14,8 @@ import readline from "readline";
 // ============ CONFIGURATION ============
 const CLIENT_ID = process.env.QONTO_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.QONTO_CLIENT_SECRET || "";
-const REDIRECT_URI = "http://localhost:3456/callback";
+const REDIRECT_URI = process.env.QONTO_REDIRECT_URI || "http://localhost:3000/callback";
+const CALLBACK_PORT = parseInt(new URL(REDIRECT_URI).port || "3000");
 const USE_SANDBOX = process.env.QONTO_SANDBOX === "true";
 
 const QONTO_AUTH_URL = USE_SANDBOX
@@ -97,7 +98,7 @@ async function getOrganization(accessToken) {
 async function startCallbackServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url || "", "http://localhost:3456");
+      const url = new URL(req.url || "", `http://localhost:${CALLBACK_PORT}`);
       
       if (url.pathname === "/callback") {
         const code = url.searchParams.get("code");
@@ -131,8 +132,8 @@ async function startCallbackServer() {
       res.end("Not found");
     });
     
-    server.listen(3456, () => {
-      console.log("🌐 Callback server listening on http://localhost:3456/callback\n");
+    server.listen(CALLBACK_PORT, () => {
+      console.log(`🌐 Callback server listening on ${REDIRECT_URI}\n`);
     });
     
     // Timeout after 5 minutes
