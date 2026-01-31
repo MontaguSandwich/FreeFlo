@@ -488,13 +488,13 @@ export function getReceivingInfoLabel(rtpn: RTPN): string {
 // ============ ON-CHAIN QUOTE FETCHING ============
 
 import { createPublicClient, http, type Address, type Hex } from 'viem';
-import { baseSepolia } from 'viem/chains';
+import { NETWORK_CHAIN, NETWORK_RPC_URL } from './network';
 import { OFFRAMP_V2_ADDRESS, OFFRAMP_V2_ABI } from './contracts';
 
-// Create a public client for reading from chain
+// Create a public client for reading from chain (network-aware)
 const publicClient = createPublicClient({
-  chain: baseSepolia,
-  transport: http('https://base-sepolia-rpc.publicnode.com'),
+  chain: NETWORK_CHAIN,
+  transport: http(NETWORK_RPC_URL),
 });
 
 // Note: CONTRACT_RTPN_TO_STRING is already exported above

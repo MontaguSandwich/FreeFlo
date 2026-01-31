@@ -3,16 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useWatchContractEvent } from "wagmi";
 import { parseUnits, formatUnits, encodeAbiParameters, parseAbiParameters } from "viem";
-import { base, baseSepolia } from "viem/chains";
 import {
   ZKP2PPaymentMethod,
-  USDC_MAINNET_ADDRESS,
   calculateUsdcFromUsd,
   type ZKP2PQuote,
 } from "@/lib/zkp2p-contracts";
 import {
   OFFRAMP_V3_ADDRESS,
-  USDC_ADDRESS as USDC_SEPOLIA_ADDRESS,
   IntentStatus,
   OFFRAMP_V2_ABI,
   ERC20_ABI,

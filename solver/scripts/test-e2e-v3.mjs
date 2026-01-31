@@ -12,14 +12,15 @@
 
 import { createPublicClient, createWalletClient, http, parseUnits, formatUnits } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia } from 'viem/chains';
+import { baseSepolia, base } from 'viem/chains';
 import { config } from 'dotenv';
 
 config();
 
-// Contract addresses
-const OFFRAMP_V3 = '0x34249F4AB741F0661A38651A08213DDe1469b60f';
-const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+// Contract addresses - read from env vars, default to Base Sepolia testnet
+const OFFRAMP_V3 = process.env.OFFRAMP_V3_ADDRESS || '0x34249F4AB741F0661A38651A08213DDe1469b60f';
+const USDC = process.env.USDC_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const CHAIN_ID = parseInt(process.env.CHAIN_ID || '84532');
 
 // Minimal ABIs
 const OFFRAMP_V3_ABI = [
@@ -164,20 +165,23 @@ async function main() {
     process.exit(1);
   }
 
-  // Setup clients
+  // Setup clients - select chain based on CHAIN_ID env var
+  const chain = CHAIN_ID === 8453 ? base : baseSepolia;
   const account = privateKeyToAccount(userPrivateKey);
   const publicClient = createPublicClient({
-    chain: baseSepolia,
+    chain,
     transport: http(rpcUrl),
   });
   const walletClient = createWalletClient({
     account,
-    chain: baseSepolia,
+    chain,
     transport: http(rpcUrl),
   });
 
-  console.log(`\n📍 User address: ${account.address}`);
+  console.log(`\n📍 Network:      ${chain.name} (${CHAIN_ID})`);
+  console.log(`📍 User address: ${account.address}`);
   console.log(`📍 OffRamp V3:   ${OFFRAMP_V3}`);
+  console.log(`📍 USDC:         ${USDC}`);
   console.log(`📍 Test IBAN:    ${testIban}`);
   console.log(`📍 Amount:       ${testAmount} USDC`);
 
