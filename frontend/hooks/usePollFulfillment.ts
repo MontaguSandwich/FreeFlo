@@ -1,17 +1,19 @@
 import { useEffect, useRef } from "react";
 import { useReadContract, useWatchContractEvent } from "wagmi";
-import { OFFRAMP_V2_ADDRESS, OFFRAMP_V2_ABI, IntentStatus } from "@/lib/contracts";
+import { OFFRAMP_V2_ABI, IntentStatus } from "@/lib/contracts";
+import { useNetworkAddresses } from "./useNetworkAddresses";
 
 export function usePollFulfillment(
   intentId: `0x${string}` | null,
   enabled: boolean,
   onFulfilled: () => void
 ) {
+  const { OFFRAMP_V3: offrampAddress } = useNetworkAddresses();
   const fulfilledRef = useRef(false);
 
   // Read intent status from contract
   const { refetch: refetchIntent } = useReadContract({
-    address: OFFRAMP_V2_ADDRESS,
+    address: offrampAddress,
     abi: OFFRAMP_V2_ABI,
     functionName: "getIntent",
     args: intentId ? [intentId] : undefined,
@@ -20,7 +22,7 @@ export function usePollFulfillment(
 
   // Watch for IntentFulfilled events
   useWatchContractEvent({
-    address: OFFRAMP_V2_ADDRESS,
+    address: offrampAddress,
     abi: OFFRAMP_V2_ABI,
     eventName: "IntentFulfilled",
     onLogs(logs) {

@@ -1,21 +1,23 @@
 import { useCallback } from "react";
 import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { parseUnits, type Address } from "viem";
-import { OFFRAMP_V2_ADDRESS, USDC_ADDRESS, ERC20_ABI } from "@/lib/contracts";
+import { ERC20_ABI } from "@/lib/contracts";
+import { useNetworkAddresses } from "./useNetworkAddresses";
 
 export function useApproveUSDC(userAddress?: Address) {
+  const { OFFRAMP_V3: offrampAddress, USDC: usdcAddress } = useNetworkAddresses();
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
-    address: USDC_ADDRESS,
+    address: usdcAddress,
     abi: ERC20_ABI,
     functionName: "allowance",
-    args: userAddress ? [userAddress, OFFRAMP_V2_ADDRESS] : undefined,
+    args: userAddress ? [userAddress, offrampAddress] : undefined,
   });
 
   const { data: balance } = useReadContract({
-    address: USDC_ADDRESS,
+    address: usdcAddress,
     abi: ERC20_ABI,
     functionName: "balanceOf",
     args: userAddress ? [userAddress] : undefined,
@@ -25,13 +27,13 @@ export function useApproveUSDC(userAddress?: Address) {
     (amount: string) => {
       const usdcAmountWei = parseUnits(amount, 6);
       writeContract({
-        address: USDC_ADDRESS,
+        address: usdcAddress,
         abi: ERC20_ABI,
         functionName: "approve",
-        args: [OFFRAMP_V2_ADDRESS, usdcAmountWei],
+        args: [offrampAddress, usdcAmountWei],
       });
     },
-    [writeContract]
+    [writeContract, usdcAddress, offrampAddress]
   );
 
   const needsApproval = (amount: string): boolean => {
