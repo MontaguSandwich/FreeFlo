@@ -487,15 +487,23 @@ export function getReceivingInfoLabel(rtpn: RTPN): string {
 
 // ============ ON-CHAIN QUOTE FETCHING ============
 
-import { createPublicClient, http, type Address, type Hex } from 'viem';
-import { NETWORK_CHAIN, NETWORK_RPC_URL } from './network';
-import { OFFRAMP_V2_ADDRESS, OFFRAMP_V2_ABI } from './contracts';
+import { createPublicClient, http, type Address, type Hex, type PublicClient } from 'viem';
+import { getAddressesForChain, getChainForChainId, getRpcUrlForChain } from './network';
+import { OFFRAMP_V2_ABI } from './contracts';
 
-// Create a public client for reading from chain (network-aware)
-const publicClient = createPublicClient({
-  chain: NETWORK_CHAIN,
-  transport: http(NETWORK_RPC_URL),
-});
+// Cache public clients per chain to avoid recreating on every call
+const clientCache = new Map<number, PublicClient>();
+
+function getPublicClient(chainId: number | undefined): PublicClient {
+  const id = chainId ?? 8453;
+  if (!clientCache.has(id)) {
+    clientCache.set(id, createPublicClient({
+      chain: getChainForChainId(id),
+      transport: http(getRpcUrlForChain(id)),
+    }));
+  }
+  return clientCache.get(id)!;
+}
 
 // Note: CONTRACT_RTPN_TO_STRING is already exported above
 
@@ -515,16 +523,21 @@ interface OnChainQuote {
 }
 
 /**
- * Fetch real quotes from the blockchain for a given intent
+ * Fetch real quotes from the blockchain for a given intent.
+ * @param chainId - The chain ID of the connected wallet (determines addresses + RPC).
  */
 export async function fetchOnChainQuotes(
   intentId: Hex,
-  usdcAmount: number
+  usdcAmount: number,
+  chainId?: number
 ): Promise<RTPNQuote[]> {
+  const client = getPublicClient(chainId);
+  const { OFFRAMP_V3: offrampAddress } = getAddressesForChain(chainId);
+
   try {
     // Step 1: Get list of all quotes for this intent
-    const quoteRefs = await publicClient.readContract({
-      address: OFFRAMP_V2_ADDRESS,
+    const quoteRefs = await client.readContract({
+      address: offrampAddress,
       abi: OFFRAMP_V2_ABI,
       functionName: 'getIntentQuotes',
       args: [intentId],
@@ -542,8 +555,8 @@ export async function fetchOnChainQuotes(
     
     for (const ref of quoteRefs) {
       try {
-        const quote = await publicClient.readContract({
-          address: OFFRAMP_V2_ADDRESS,
+        const quote = await client.readContract({
+          address: offrampAddress,
           abi: OFFRAMP_V2_ABI,
           functionName: 'getQuote',
           args: [intentId, ref.solver, ref.rtpn],
@@ -580,8 +593,8 @@ export async function fetchOnChainQuotes(
         // Get solver info (optional, for display)
         let solverName = `Solver ${ref.solver.slice(0, 6)}...${ref.solver.slice(-4)}`;
         try {
-          const solverInfo = await publicClient.readContract({
-            address: OFFRAMP_V2_ADDRESS,
+          const solverInfo = await client.readContract({
+            address: offrampAddress,
             abi: OFFRAMP_V2_ABI,
             functionName: 'solverInfo',
             args: [ref.solver],

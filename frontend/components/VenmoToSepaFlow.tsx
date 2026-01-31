@@ -9,11 +9,11 @@ import {
   type ZKP2PQuote,
 } from "@/lib/zkp2p-contracts";
 import {
-  OFFRAMP_V3_ADDRESS,
   IntentStatus,
   OFFRAMP_V2_ABI,
   ERC20_ABI,
 } from "@/lib/contracts";
+import { useNetworkAddresses } from "@/hooks/useNetworkAddresses";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
   VENMO_TO_SEPA_ROUTER_ABI,
@@ -92,6 +92,7 @@ const MOCK_ZKP2P_QUOTES: ZKP2PQuote[] = [
 ];
 
 export function VenmoToSepaFlow() {
+  const { OFFRAMP_V3: OFFRAMP_V3_ADDRESS } = useNetworkAddresses();
   const { address, isConnected } = useAccount();
 
   // Flow state

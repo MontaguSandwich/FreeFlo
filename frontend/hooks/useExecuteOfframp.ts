@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useChainId } from "wagmi";
 import { type Address } from "viem";
 import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
@@ -11,6 +11,7 @@ import { fetchOnChainQuotes, type RTPNQuote } from "@/lib/quotes";
 
 export function useExecuteOfframp() {
   const { address } = useAccount();
+  const chainId = useChainId();
   const { amount, currency, receivingInfo, recipientName, selectedQuote } = useFormStore();
   const {
     view,
@@ -57,7 +58,7 @@ export function useExecuteOfframp() {
 
         const pollForQuotes = async () => {
           try {
-            const realQuotes = await fetchOnChainQuotes(createIntentHook.intentId!, usdcAmount);
+            const realQuotes = await fetchOnChainQuotes(createIntentHook.intentId!, usdcAmount, chainId);
             if (realQuotes.length > 0) {
               // Found quotes — proceed to approve
               const matchingQuote = selectedQuote

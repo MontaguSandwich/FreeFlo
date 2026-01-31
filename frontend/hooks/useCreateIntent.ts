@@ -1,10 +1,12 @@
 import { useCallback } from "react";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseUnits, decodeEventLog, type Address } from "viem";
-import { OFFRAMP_V2_ADDRESS, OFFRAMP_V2_ABI, USDC_ADDRESS, ERC20_ABI } from "@/lib/contracts";
+import { OFFRAMP_V2_ABI } from "@/lib/contracts";
 import { CURRENCY_TO_CONTRACT, type Currency } from "@/lib/quotes";
+import { useNetworkAddresses } from "./useNetworkAddresses";
 
 export function useCreateIntent() {
+  const { OFFRAMP_V3: offrampAddress } = useNetworkAddresses();
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
@@ -12,13 +14,13 @@ export function useCreateIntent() {
     (amount: string, currency: Currency) => {
       const usdcAmountWei = parseUnits(amount, 6);
       writeContract({
-        address: OFFRAMP_V2_ADDRESS,
+        address: offrampAddress,
         abi: OFFRAMP_V2_ABI,
         functionName: "createIntent",
         args: [usdcAmountWei, CURRENCY_TO_CONTRACT[currency]],
       });
     },
-    [writeContract]
+    [writeContract, offrampAddress]
   );
 
   // Parse intentId from receipt
