@@ -45,10 +45,12 @@ export class QontoScaRequiredError extends Error {
   }
 }
 
-const OAUTH_TOKEN_URL = "https://oauth.qonto.com/oauth2/token";
+const PRODUCTION_OAUTH_TOKEN_URL = "https://oauth.qonto.com/oauth2/token";
+const SANDBOX_OAUTH_TOKEN_URL = "https://oauth-sandbox.staging.qonto.co/oauth2/token";
 
 export class QontoClient {
   private baseUrl: string;
+  private oauthTokenUrl: string;
   private authMethod: 'api_key' | 'oauth';
   private apiKeyLogin?: string;
   private apiKeySecret?: string;
@@ -64,6 +66,7 @@ export class QontoClient {
 
   constructor(config: QontoProviderConfig) {
     this.baseUrl = config.useSandbox ? SANDBOX_BASE_URL : PRODUCTION_BASE_URL;
+    this.oauthTokenUrl = config.useSandbox ? SANDBOX_OAUTH_TOKEN_URL : PRODUCTION_OAUTH_TOKEN_URL;
     this.authMethod = config.authMethod;
     this.apiKeyLogin = config.apiKeyLogin;
     this.apiKeySecret = config.apiKeySecret;
@@ -123,11 +126,16 @@ export class QontoClient {
         refresh_token: this.refreshToken,
       });
 
-      const response = await fetch(OAUTH_TOKEN_URL, {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/x-www-form-urlencoded",
+      };
+      if (this.stagingToken) {
+        headers["X-Qonto-Staging-Token"] = this.stagingToken;
+      }
+
+      const response = await fetch(this.oauthTokenUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+        headers,
         body: body,
       });
 
