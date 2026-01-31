@@ -15,10 +15,18 @@ import readline from "readline";
 const CLIENT_ID = process.env.QONTO_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.QONTO_CLIENT_SECRET || "";
 const REDIRECT_URI = "http://localhost:3456/callback";
+const USE_SANDBOX = process.env.QONTO_SANDBOX === "true";
 
-const QONTO_AUTH_URL = "https://oauth.qonto.com/oauth2/auth";
-const QONTO_TOKEN_URL = "https://oauth.qonto.com/oauth2/token";
-const QONTO_API_URL = "https://thirdparty.qonto.com";
+const QONTO_AUTH_URL = USE_SANDBOX
+  ? "https://oauth.sandbox.qonto.com/oauth2/auth"
+  : "https://oauth.qonto.com/oauth2/auth";
+const QONTO_TOKEN_URL = USE_SANDBOX
+  ? "https://oauth.sandbox.qonto.com/oauth2/token"
+  : "https://oauth.qonto.com/oauth2/token";
+const QONTO_API_URL = USE_SANDBOX
+  ? "https://thirdparty-sandbox.staging.qonto.co"
+  : "https://thirdparty.qonto.com";
+const STAGING_TOKEN = process.env.QONTO_STAGING_TOKEN || "";
 
 const SCOPES = ["offline_access", "organization.read", "payment.write"];
 const STATE = "solver_oauth_" + Math.random().toString(36).substring(2, 15);
@@ -67,10 +75,14 @@ async function exchangeCodeForToken(code) {
 }
 
 async function getOrganization(accessToken) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+  };
+  if (STAGING_TOKEN) {
+    headers["X-Qonto-Staging-Token"] = STAGING_TOKEN;
+  }
   const response = await fetch(`${QONTO_API_URL}/v2/organization`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -132,7 +144,7 @@ async function startCallbackServer() {
 }
 
 async function main() {
-  console.log("\n🏦 Qonto OAuth Setup (Simple Mode)\n");
+  console.log(`\n🏦 Qonto OAuth Setup (${USE_SANDBOX ? "SANDBOX" : "PRODUCTION"})\n`);
   console.log("=".repeat(60));
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
