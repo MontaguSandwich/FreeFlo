@@ -9,6 +9,8 @@ frontend/           Next.js on Vercel (free-flo.vercel.app)
 ├── app/api/quote/  Proxy to solver Quote API (avoids CORS)
 ├── app/venmo-to-sepa/  Venmo USD → SEPA EUR page
 ├── components/     OffRampForm.tsx (main wizard), VenmoToSepaFlow.tsx
+├── hooks/useNetworkAddresses.ts  Runtime chain detection hook
+├── lib/network.ts  Central address/RPC config per chain ID
 └── lib/quotes.ts   Quote fetching logic
 
 solver/             TypeScript service on VPS (95.217.235.164:8080-8081)
@@ -22,8 +24,9 @@ contracts/          Solidity (Foundry)
 ├── src/PaymentVerifier.sol EIP-712 verification
 └── src/VenmoToSepaRouter.sol  ZKP2P → FreeFlo bridge (PostIntentHook)
 
-attestation/        Rust service on FreeFlo infrastructure (:4001)
-└── src/            Verifies TLSNotary proofs, validates on-chain, signs attestations
+attestation/        Rust service on FreeFlo infrastructure (:4001 mainnet, :4002 testnet)
+├── src/            Verifies TLSNotary proofs, validates on-chain, signs attestations
+└── env.testnet.example  Template for testnet dual-deployment
 
 providers/          Payment provider implementations
 ├── README.md       Provider overview and how to add new providers
@@ -109,6 +112,61 @@ cd providers/prover
 cargo build --release --bin qonto_prove_transfer
 ```
 
+## Dual Deployment (Mainnet + Testnet)
+
+Both mainnet and testnet run simultaneously across all components.
+
+### Frontend (Runtime Chain Detection)
+
+The frontend auto-switches contract addresses based on the wallet's connected chain (no rebuild needed). `frontend/lib/network.ts` maps chain IDs to addresses. `frontend/hooks/useNetworkAddresses.ts` reads `useChainId()` from wagmi. All hooks (`useCreateIntent`, `useApproveUSDC`, `useCommitQuote`, `usePollFulfillment`) use dynamic addresses.
+
+### Solver (Two PM2 Instances)
+
+| | Mainnet | Testnet |
+|---|---|---|
+| PM2 name | `zkp2p-solver` | `zkp2p-solver-testnet` |
+| Health port | 8080 | 8082 |
+| Quote API port | 8081 | 8083 |
+| Env file | `.env` | `.env.testnet` |
+| Database | `solver.db` | `solver-testnet.db` |
+| Qonto | Production | Sandbox (`thirdparty-sandbox.staging.qonto.co`) |
+
+```bash
+# Start testnet solver (source env before node so dotenv doesn't override)
+pm2 start bash --name zkp2p-solver-testnet -- -c \
+  "cd /opt/zkp2p-offramp/solver && set -a && source .env.testnet && set +a && exec node dist/index-v3.js"
+```
+
+### Attestation (Two Processes)
+
+| | Mainnet | Testnet |
+|---|---|---|
+| Port | 4001 | 4002 |
+| Env file | `/etc/freeflo/attestation.env` | `/etc/freeflo/attestation-testnet.env` |
+| Chain ID | 8453 | 84532 |
+| ALLOWED_SERVERS | `thirdparty.qonto.com` | `thirdparty-sandbox.staging.qonto.co` |
+
+```bash
+# Start testnet attestation
+set -a && source /etc/freeflo/attestation-testnet.env && set +a
+/opt/freeflo/attestation-service/target/release/attestation-service &
+```
+
+### Qonto Sandbox
+
+Testnet uses Qonto sandbox to avoid conflicts with production OAuth tokens. Sandbox OAuth runs through `oauth-sandbox.staging.qonto.co` and requires the `X-Qonto-Staging-Token` header. To obtain sandbox tokens:
+
+```bash
+cd solver
+QONTO_SANDBOX=true QONTO_STAGING_TOKEN=<token> \
+  QONTO_CLIENT_ID=<id> QONTO_CLIENT_SECRET=<secret> \
+  node scripts/qonto-oauth-simple.mjs
+```
+
+### Witness
+
+Same witness key (`0x343830917e4e5f6291146af68f76eada08631a27`) is authorized on both mainnet and testnet PaymentVerifier contracts.
+
 ## Critical Invariants
 
 **EIP-712 domain MUST match** between attestation service and PaymentVerifier:
@@ -190,12 +248,11 @@ rm -rf solver/data/ solver/*.db solver/proofs/ && pm2 restart zkp2p-solver
 
 **Branches**:
 - `main` - stable, production-ready
-- `preprod-with-claude` - pre-prod experimentation (servers track this)
 
-| Server | IP | Code Path |
-|--------|-----|-----------|
-| Solver | 95.217.235.164 | `/opt/zkp2p-offramp/` |
-| Attestation | 77.42.68.242 | `/opt/freeflo/attestation/` |
+| Server | IP | Code Path | Env Files |
+|--------|-----|-----------|-----------|
+| Solver | 95.217.235.164 | `/opt/zkp2p-offramp/` | `solver/.env`, `solver/.env.testnet` |
+| Attestation | 77.42.68.242 | `/opt/freeflo/attestation-service/` (binary only) | `/etc/freeflo/attestation.env`, `/etc/freeflo/attestation-testnet.env` |
 
 To update servers, see `docs/OPERATIONS_RUNBOOK.md`.
 
