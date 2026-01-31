@@ -202,6 +202,7 @@ Mismatch → `NotAuthorizedWitness` error.
 - **Intent detection**: Solver event watchers only start after historical sync. Wait for "V3 Orchestrator started" log before creating intents.
 - **tlsn dependency**: Both attestation service and prover use git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.13). Versions must match or deserialization fails.
 - **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service.
+- **Attestation server has no repo checkout**: Only the compiled binary exists at `/opt/freeflo/attestation-service/target/release/attestation-service`. Env files live at `/etc/freeflo/attestation.env` (mainnet) and `/etc/freeflo/attestation-testnet.env` (testnet). Do NOT look for source code or config templates on that server.
 
 ## Environment Variables
 
