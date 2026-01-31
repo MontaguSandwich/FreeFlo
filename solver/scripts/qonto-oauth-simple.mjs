@@ -18,10 +18,10 @@ const REDIRECT_URI = "http://localhost:3456/callback";
 const USE_SANDBOX = process.env.QONTO_SANDBOX === "true";
 
 const QONTO_AUTH_URL = USE_SANDBOX
-  ? "https://oauth.sandbox.qonto.com/oauth2/auth"
+  ? "https://oauth-sandbox.staging.qonto.co/oauth2/auth"
   : "https://oauth.qonto.com/oauth2/auth";
 const QONTO_TOKEN_URL = USE_SANDBOX
-  ? "https://oauth.sandbox.qonto.com/oauth2/token"
+  ? "https://oauth-sandbox.staging.qonto.co/oauth2/token"
   : "https://oauth.qonto.com/oauth2/token";
 const QONTO_API_URL = USE_SANDBOX
   ? "https://thirdparty-sandbox.staging.qonto.co"
