@@ -1,7 +1,11 @@
 import { config as loadEnv } from "dotenv";
 import type { Address, Hex } from "viem";
 
-loadEnv();
+// Load env file with override: true to prevent inherited shell env var contamination
+// (critical for dual-deployment where testnet/mainnet pm2 instances share a shell)
+// Set ENV_FILE=.env.testnet to load testnet config instead of default .env
+const envFile = process.env.ENV_FILE || ".env";
+loadEnv({ path: envFile, override: true });
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -18,7 +22,7 @@ function optionalEnv(name: string, defaultValue: string): string {
 export const config = {
   // Chain
   rpcUrl: requireEnv("RPC_URL"),
-  chainId: parseInt(optionalEnv("CHAIN_ID", "84532")), // Base Sepolia default
+  chainId: parseInt(requireEnv("CHAIN_ID")), // 8453 (Base) or 84532 (Base Sepolia)
 
   // Contract (V2 - legacy, optional for V3-only deployments)
   offRampAddress: optionalEnv("OFFRAMP_V2_ADDRESS", "") as Address,
