@@ -7,7 +7,7 @@ export function useQuotes(amount: string, currency: Currency) {
 
   const loadQuotes = useCallback(async () => {
     const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount < 1) {
+    if (isNaN(numAmount) || numAmount < 0.1) {
       setQuotes([]);
       return;
     }
@@ -26,7 +26,7 @@ export function useQuotes(amount: string, currency: Currency) {
   // Debounced fetch on amount/currency change
   useEffect(() => {
     const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount < 1) {
+    if (isNaN(numAmount) || numAmount < 0.1) {
       setQuotes([]);
       return;
     }
