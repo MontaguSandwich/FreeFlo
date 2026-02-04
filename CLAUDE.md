@@ -132,10 +132,16 @@ The frontend auto-switches contract addresses based on the wallet's connected ch
 | Qonto | Production | Sandbox (`thirdparty-sandbox.staging.qonto.co`) |
 
 ```bash
-# Start testnet solver (source env before node so dotenv doesn't override)
+# Start mainnet solver (default: loads .env)
+pm2 start bash --name zkp2p-solver -- -c \
+  "cd /opt/zkp2p-offramp/solver && exec node dist/index-v3.js"
+
+# Start testnet solver (ENV_FILE tells dotenv to load .env.testnet instead)
 pm2 start bash --name zkp2p-solver-testnet -- -c \
-  "cd /opt/zkp2p-offramp/solver && set -a && source .env.testnet && set +a && exec node dist/index-v3.js"
+  "cd /opt/zkp2p-offramp/solver && ENV_FILE=.env.testnet exec node dist/index-v3.js"
 ```
+
+**Important**: The solver uses `dotenv` with `override: true`, so the `.env` file always wins over inherited shell env vars. Use `ENV_FILE` to specify which env file to load (defaults to `.env`). `CHAIN_ID` is required — the solver will crash immediately if it's missing, preventing silent misconfiguration.
 
 ### Attestation (Two Processes)
 
@@ -201,7 +207,8 @@ Mismatch → `NotAuthorizedWitness` error.
 - **Quote API 404**: Ensure `SOLVER_API_URL` is set in Vercel env vars.
 - **Intent detection**: Solver event watchers only start after historical sync. Wait for "V3 Orchestrator started" log before creating intents.
 - **tlsn dependency**: Both attestation service and prover use git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.13). Versions must match or deserialization fails.
-- **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service.
+- **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service (Rust). The solver (Node) uses `ENV_FILE` instead — do NOT use `set -a && source` for the solver as dotenv handles it with `override: true`.
+- **Solver env contamination**: With dual pm2 instances, shell env vars can bleed between processes. The solver's `override: true` dotenv config prevents this. Always use `ENV_FILE=.env.testnet` for testnet, never `source .env.testnet`.
 - **Attestation server has no repo checkout**: Only the compiled binary exists at `/opt/freeflo/attestation-service/target/release/attestation-service`. Env files live at `/etc/freeflo/attestation.env` (mainnet) and `/etc/freeflo/attestation-testnet.env` (testnet). Do NOT look for source code or config templates on that server.
 
 ## Environment Variables
