@@ -521,12 +521,13 @@ export class QontoProvider extends BaseProvider {
  * Persist refreshed OAuth tokens to .env file
  * This ensures tokens survive solver restarts
  */
-function persistTokensToEnv(accessToken: string, refreshToken: string): void {
+function persistTokensToEnv(accessToken: string, refreshToken: string, useSandbox: boolean = false): void {
   try {
-    // Find .env file - check current directory and parent
-    let envPath = path.join(process.cwd(), ".env");
+    // Find correct .env file - use .env.testnet for sandbox mode
+    const envFileName = useSandbox ? ".env.testnet" : ".env";
+    let envPath = path.join(process.cwd(), envFileName);
     if (!fs.existsSync(envPath)) {
-      envPath = path.join(process.cwd(), "solver", ".env");
+      envPath = path.join(process.cwd(), "solver", envFileName);
     }
     if (!fs.existsSync(envPath)) {
       log.warn("Could not find .env file to persist tokens");
@@ -623,21 +624,22 @@ export function createQontoProvider(
   }
 
   // Set up token refresh callback to persist new tokens
+  const isSandbox = env.QONTO_USE_SANDBOX === "true";
   const onTokenRefresh = (accessToken: string, refreshToken: string) => {
     // Update environment variables in memory
     process.env.QONTO_ACCESS_TOKEN = accessToken;
     process.env.QONTO_REFRESH_TOKEN = refreshToken;
-    
+
     log.info(
-      { 
+      {
         accessTokenPrefix: accessToken.substring(0, 20) + "...",
         refreshTokenPrefix: refreshToken.substring(0, 20) + "...",
       },
       "🔄 Tokens refreshed"
     );
-    
-    // Persist to .env file
-    persistTokensToEnv(accessToken, refreshToken);
+
+    // Persist to correct .env file (.env.testnet for sandbox)
+    persistTokensToEnv(accessToken, refreshToken, isSandbox);
   };
 
   const config: QontoProviderConfig = {
