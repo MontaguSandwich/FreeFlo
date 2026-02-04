@@ -72,7 +72,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
 
   // ---- Derived values --------------------------------------------------
   const numAmount = parseFloat(amount);
-  const hasValidAmount = !isNaN(numAmount) && numAmount >= 1;
+  const hasValidAmount = !isNaN(numAmount) && numAmount >= 0.1;
 
   const formattedBalance =
     balance !== undefined ? formatUnits(balance, 6) : undefined;
@@ -95,7 +95,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
       return { label: "Connect wallet to continue", disabled: true };
     }
     if (!hasValidAmount) {
-      return { label: "Enter at least 1 USDC", disabled: true };
+      return { label: "Enter at least 0.1 USDC", disabled: true };
     }
     if (
       balance !== undefined &&
