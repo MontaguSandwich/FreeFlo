@@ -239,57 +239,73 @@ export class ChainClientV3 {
   // Uses getContractEvents (eth_getLogs) instead of watchContractEvent (eth_newFilter)
   // because public RPCs don't support server-side filters.
 
+  private async pollEvents(
+    eventName: string,
+    fromBlock: bigint,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onEvent: (eventLog: any) => void,
+    stopped: { value: boolean }
+  ): Promise<void> {
+    // Start a few blocks behind to avoid load balancer inconsistency
+    let lastBlock = fromBlock > 5n ? fromBlock - 5n : 0n;
+
+    while (!stopped.value) {
+      try {
+        const currentBlock = await this.publicClient.getBlockNumber();
+        // Safety margin: query up to 3 blocks behind tip to ensure all
+        // load-balanced nodes have the data
+        const safeBlock = currentBlock > 3n ? currentBlock - 3n : currentBlock;
+
+        if (safeBlock > lastBlock) {
+          const logs = await this.publicClient.getContractEvents({
+            address: this.offRampAddress,
+            abi: OFFRAMP_V3_ABI,
+            eventName,
+            fromBlock: lastBlock + 1n,
+            toBlock: safeBlock,
+          });
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const eventLog of logs as any[]) {
+            onEvent(eventLog);
+          }
+
+          lastBlock = safeBlock;
+        }
+      } catch (error) {
+        log.error(
+          { error: error instanceof Error ? error.message : error },
+          `${eventName} watcher error`
+        );
+      }
+      await new Promise(resolve => setTimeout(resolve, 4_000));
+    }
+  }
+
   watchIntentCreated(
     fromBlock: bigint,
     onIntent: (event: IntentCreatedEvent, blockNumber: bigint) => void
   ): () => void {
     log.info({ fromBlock: fromBlock.toString() }, "Starting IntentCreated watcher (V3)");
 
-    let lastBlock = fromBlock;
-    let stopped = false;
+    const stopped = { value: false };
 
-    const poll = async () => {
-      while (!stopped) {
-        try {
-          // Omit toBlock to use "latest" — avoids load balancer inconsistency
-          // where getBlockNumber returns a block one node has but another doesn't
-          const logs = await this.publicClient.getContractEvents({
-            address: this.offRampAddress,
-            abi: OFFRAMP_V3_ABI,
-            eventName: "IntentCreated",
-            fromBlock: lastBlock + 1n,
-          });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.pollEvents("IntentCreated", fromBlock, (eventLog: any) => {
+      const args = eventLog.args as unknown as IntentCreatedEvent;
+      log.info(
+        {
+          intentId: args.intentId,
+          depositor: args.depositor,
+          usdcAmount: args.usdcAmount.toString(),
+          currency: args.currency,
+        },
+        "New intent detected (V3)"
+      );
+      onIntent(args, eventLog.blockNumber);
+    }, stopped);
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          for (const eventLog of logs as any[]) {
-            const args = eventLog.args as unknown as IntentCreatedEvent;
-            log.info(
-              {
-                intentId: args.intentId,
-                depositor: args.depositor,
-                usdcAmount: args.usdcAmount.toString(),
-                currency: args.currency,
-              },
-              "New intent detected (V3)"
-            );
-            onIntent(args, eventLog.blockNumber);
-          }
-
-          // Update lastBlock after successful query
-          const currentBlock = await this.publicClient.getBlockNumber();
-          if (currentBlock > lastBlock) {
-            lastBlock = currentBlock;
-          }
-        } catch (error) {
-          log.error({ error: error instanceof Error ? error.message : error }, "IntentCreated watcher error");
-        }
-        await new Promise(resolve => setTimeout(resolve, 4_000));
-      }
-    };
-
-    poll();
-
-    return () => { stopped = true; };
+    return () => { stopped.value = true; };
   }
 
   watchQuoteSelected(
@@ -298,48 +314,24 @@ export class ChainClientV3 {
   ): () => void {
     log.info({ fromBlock: fromBlock.toString() }, "Starting QuoteSelected watcher (V3)");
 
-    let lastBlock = fromBlock;
-    let stopped = false;
+    const stopped = { value: false };
 
-    const poll = async () => {
-      while (!stopped) {
-        try {
-          const logs = await this.publicClient.getContractEvents({
-            address: this.offRampAddress,
-            abi: OFFRAMP_V3_ABI,
-            eventName: "QuoteSelected",
-            fromBlock: lastBlock + 1n,
-          });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.pollEvents("QuoteSelected", fromBlock, (eventLog: any) => {
+      const args = eventLog.args as unknown as QuoteSelectedEvent;
+      log.info(
+        {
+          intentId: args.intentId,
+          solver: args.solver,
+          rtpn: args.rtpn,
+          fiatAmount: args.fiatAmount.toString(),
+        },
+        "Quote selected (V3)"
+      );
+      onQuoteSelected(args, eventLog.blockNumber);
+    }, stopped);
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          for (const eventLog of logs as any[]) {
-            const args = eventLog.args as unknown as QuoteSelectedEvent;
-            log.info(
-              {
-                intentId: args.intentId,
-                solver: args.solver,
-                rtpn: args.rtpn,
-                fiatAmount: args.fiatAmount.toString(),
-              },
-              "Quote selected (V3)"
-            );
-            onQuoteSelected(args, eventLog.blockNumber);
-          }
-
-          const currentBlock = await this.publicClient.getBlockNumber();
-          if (currentBlock > lastBlock) {
-            lastBlock = currentBlock;
-          }
-        } catch (error) {
-          log.error({ error: error instanceof Error ? error.message : error }, "QuoteSelected watcher error");
-        }
-        await new Promise(resolve => setTimeout(resolve, 4_000));
-      }
-    };
-
-    poll();
-
-    return () => { stopped = true; };
+    return () => { stopped.value = true; };
   }
 
   // ============ Historical Events ============
