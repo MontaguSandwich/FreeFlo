@@ -1,7 +1,8 @@
 // VenmoToSepaRouter contract configuration
+import { encodeAbiParameters, parseAbiParameters } from "viem";
 
-// Placeholder - update after deployment
-export const VENMO_TO_SEPA_ROUTER_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+// Base Mainnet deployment
+export const VENMO_TO_SEPA_ROUTER_ADDRESS = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8" as const;
 
 // Transfer status enum matching contract
 export enum RouterTransferStatus {
@@ -181,10 +182,6 @@ export function encodeHookPayload(
   recipientName: string,
   minEurAmount: bigint
 ): `0x${string}` {
-  // ABI encode the HookPayload struct
-  // struct HookPayload { string iban; string recipientName; uint256 minEurAmount; }
-  const { encodeAbiParameters, parseAbiParameters } = require("viem");
-
   return encodeAbiParameters(
     parseAbiParameters("string, string, uint256"),
     [iban, recipientName, minEurAmount]

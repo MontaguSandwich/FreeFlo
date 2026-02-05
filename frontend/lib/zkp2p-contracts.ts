@@ -5,10 +5,8 @@
 export const USDC_MAINNET_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
 // ZKP2P V3 Contracts on Base Mainnet
-// Note: These are placeholder addresses - need to be updated with actual deployed addresses
-// from https://github.com/zkp2p/zkp2p-contracts/tree/main/deployments/base
-export const ZKP2P_ESCROW_ADDRESS = "0x0000000000000000000000000000000000000000" as const; // TODO: Get from ZKP2P team
-export const ZKP2P_ORCHESTRATOR_ADDRESS = "0x0000000000000000000000000000000000000000" as const; // TODO: Get from ZKP2P team
+// Orchestrator is the main entry point; Escrow resolved at runtime via SDK
+export const ZKP2P_ORCHESTRATOR_ADDRESS = "0x88888883Ed048FF0a415271B28b2F52d431810D0" as const;
 
 // Payment methods enum matching ZKP2P contract
 export enum ZKP2PPaymentMethod {
