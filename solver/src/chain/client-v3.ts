@@ -247,6 +247,7 @@ export class ChainClientV3 {
       address: this.offRampAddress,
       abi: OFFRAMP_V3_ABI,
       eventName: "IntentCreated",
+      pollingInterval: 4_000,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       onLogs: (logs: any[]) => {
         for (const eventLog of logs) {
@@ -263,6 +264,9 @@ export class ChainClientV3 {
           onIntent(args, eventLog.blockNumber);
         }
       },
+      onError: (error: Error) => {
+        log.error({ error: error.message }, "IntentCreated watcher error");
+      },
     });
 
     return unwatch;
@@ -278,6 +282,7 @@ export class ChainClientV3 {
       address: this.offRampAddress,
       abi: OFFRAMP_V3_ABI,
       eventName: "QuoteSelected",
+      pollingInterval: 4_000,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       onLogs: (logs: any[]) => {
         for (const eventLog of logs) {
@@ -293,6 +298,9 @@ export class ChainClientV3 {
           );
           onQuoteSelected(args, eventLog.blockNumber);
         }
+      },
+      onError: (error: Error) => {
+        log.error({ error: error.message }, "QuoteSelected watcher error");
       },
     });
 
