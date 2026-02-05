@@ -251,31 +251,33 @@ export class ChainClientV3 {
     const poll = async () => {
       while (!stopped) {
         try {
+          // Omit toBlock to use "latest" — avoids load balancer inconsistency
+          // where getBlockNumber returns a block one node has but another doesn't
+          const logs = await this.publicClient.getContractEvents({
+            address: this.offRampAddress,
+            abi: OFFRAMP_V3_ABI,
+            eventName: "IntentCreated",
+            fromBlock: lastBlock + 1n,
+          });
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const eventLog of logs as any[]) {
+            const args = eventLog.args as unknown as IntentCreatedEvent;
+            log.info(
+              {
+                intentId: args.intentId,
+                depositor: args.depositor,
+                usdcAmount: args.usdcAmount.toString(),
+                currency: args.currency,
+              },
+              "New intent detected (V3)"
+            );
+            onIntent(args, eventLog.blockNumber);
+          }
+
+          // Update lastBlock after successful query
           const currentBlock = await this.publicClient.getBlockNumber();
           if (currentBlock > lastBlock) {
-            const logs = await this.publicClient.getContractEvents({
-              address: this.offRampAddress,
-              abi: OFFRAMP_V3_ABI,
-              eventName: "IntentCreated",
-              fromBlock: lastBlock + 1n,
-              toBlock: currentBlock,
-            });
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            for (const eventLog of logs as any[]) {
-              const args = eventLog.args as unknown as IntentCreatedEvent;
-              log.info(
-                {
-                  intentId: args.intentId,
-                  depositor: args.depositor,
-                  usdcAmount: args.usdcAmount.toString(),
-                  currency: args.currency,
-                },
-                "New intent detected (V3)"
-              );
-              onIntent(args, eventLog.blockNumber);
-            }
-
             lastBlock = currentBlock;
           }
         } catch (error) {
@@ -302,31 +304,30 @@ export class ChainClientV3 {
     const poll = async () => {
       while (!stopped) {
         try {
+          const logs = await this.publicClient.getContractEvents({
+            address: this.offRampAddress,
+            abi: OFFRAMP_V3_ABI,
+            eventName: "QuoteSelected",
+            fromBlock: lastBlock + 1n,
+          });
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const eventLog of logs as any[]) {
+            const args = eventLog.args as unknown as QuoteSelectedEvent;
+            log.info(
+              {
+                intentId: args.intentId,
+                solver: args.solver,
+                rtpn: args.rtpn,
+                fiatAmount: args.fiatAmount.toString(),
+              },
+              "Quote selected (V3)"
+            );
+            onQuoteSelected(args, eventLog.blockNumber);
+          }
+
           const currentBlock = await this.publicClient.getBlockNumber();
           if (currentBlock > lastBlock) {
-            const logs = await this.publicClient.getContractEvents({
-              address: this.offRampAddress,
-              abi: OFFRAMP_V3_ABI,
-              eventName: "QuoteSelected",
-              fromBlock: lastBlock + 1n,
-              toBlock: currentBlock,
-            });
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            for (const eventLog of logs as any[]) {
-              const args = eventLog.args as unknown as QuoteSelectedEvent;
-              log.info(
-                {
-                  intentId: args.intentId,
-                  solver: args.solver,
-                  rtpn: args.rtpn,
-                  fiatAmount: args.fiatAmount.toString(),
-                },
-                "Quote selected (V3)"
-              );
-              onQuoteSelected(args, eventLog.blockNumber);
-            }
-
             lastBlock = currentBlock;
           }
         } catch (error) {
