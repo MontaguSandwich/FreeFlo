@@ -235,7 +235,9 @@ export class ChainClientV3 {
     return hash;
   }
 
-  // ============ Event Watching ============
+  // ============ Event Watching (eth_getLogs polling) ============
+  // Uses getContractEvents (eth_getLogs) instead of watchContractEvent (eth_newFilter)
+  // because public RPCs don't support server-side filters.
 
   watchIntentCreated(
     fromBlock: bigint,
@@ -243,33 +245,49 @@ export class ChainClientV3 {
   ): () => void {
     log.info({ fromBlock: fromBlock.toString() }, "Starting IntentCreated watcher (V3)");
 
-    const unwatch = this.publicClient.watchContractEvent({
-      address: this.offRampAddress,
-      abi: OFFRAMP_V3_ABI,
-      eventName: "IntentCreated",
-      pollingInterval: 4_000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      onLogs: (logs: any[]) => {
-        for (const eventLog of logs) {
-          const args = eventLog.args as unknown as IntentCreatedEvent;
-          log.info(
-            {
-              intentId: args.intentId,
-              depositor: args.depositor,
-              usdcAmount: args.usdcAmount.toString(),
-              currency: args.currency,
-            },
-            "New intent detected (V3)"
-          );
-          onIntent(args, eventLog.blockNumber);
-        }
-      },
-      onError: (error: Error) => {
-        log.error({ error: error.message }, "IntentCreated watcher error");
-      },
-    });
+    let lastBlock = fromBlock;
+    let stopped = false;
 
-    return unwatch;
+    const poll = async () => {
+      while (!stopped) {
+        try {
+          const currentBlock = await this.publicClient.getBlockNumber();
+          if (currentBlock > lastBlock) {
+            const logs = await this.publicClient.getContractEvents({
+              address: this.offRampAddress,
+              abi: OFFRAMP_V3_ABI,
+              eventName: "IntentCreated",
+              fromBlock: lastBlock + 1n,
+              toBlock: currentBlock,
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const eventLog of logs as any[]) {
+              const args = eventLog.args as unknown as IntentCreatedEvent;
+              log.info(
+                {
+                  intentId: args.intentId,
+                  depositor: args.depositor,
+                  usdcAmount: args.usdcAmount.toString(),
+                  currency: args.currency,
+                },
+                "New intent detected (V3)"
+              );
+              onIntent(args, eventLog.blockNumber);
+            }
+
+            lastBlock = currentBlock;
+          }
+        } catch (error) {
+          log.error({ error: error instanceof Error ? error.message : error }, "IntentCreated watcher error");
+        }
+        await new Promise(resolve => setTimeout(resolve, 4_000));
+      }
+    };
+
+    poll();
+
+    return () => { stopped = true; };
   }
 
   watchQuoteSelected(
@@ -278,33 +296,49 @@ export class ChainClientV3 {
   ): () => void {
     log.info({ fromBlock: fromBlock.toString() }, "Starting QuoteSelected watcher (V3)");
 
-    const unwatch = this.publicClient.watchContractEvent({
-      address: this.offRampAddress,
-      abi: OFFRAMP_V3_ABI,
-      eventName: "QuoteSelected",
-      pollingInterval: 4_000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      onLogs: (logs: any[]) => {
-        for (const eventLog of logs) {
-          const args = eventLog.args as unknown as QuoteSelectedEvent;
-          log.info(
-            {
-              intentId: args.intentId,
-              solver: args.solver,
-              rtpn: args.rtpn,
-              fiatAmount: args.fiatAmount.toString(),
-            },
-            "Quote selected (V3)"
-          );
-          onQuoteSelected(args, eventLog.blockNumber);
-        }
-      },
-      onError: (error: Error) => {
-        log.error({ error: error.message }, "QuoteSelected watcher error");
-      },
-    });
+    let lastBlock = fromBlock;
+    let stopped = false;
 
-    return unwatch;
+    const poll = async () => {
+      while (!stopped) {
+        try {
+          const currentBlock = await this.publicClient.getBlockNumber();
+          if (currentBlock > lastBlock) {
+            const logs = await this.publicClient.getContractEvents({
+              address: this.offRampAddress,
+              abi: OFFRAMP_V3_ABI,
+              eventName: "QuoteSelected",
+              fromBlock: lastBlock + 1n,
+              toBlock: currentBlock,
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const eventLog of logs as any[]) {
+              const args = eventLog.args as unknown as QuoteSelectedEvent;
+              log.info(
+                {
+                  intentId: args.intentId,
+                  solver: args.solver,
+                  rtpn: args.rtpn,
+                  fiatAmount: args.fiatAmount.toString(),
+                },
+                "Quote selected (V3)"
+              );
+              onQuoteSelected(args, eventLog.blockNumber);
+            }
+
+            lastBlock = currentBlock;
+          }
+        } catch (error) {
+          log.error({ error: error instanceof Error ? error.message : error }, "QuoteSelected watcher error");
+        }
+        await new Promise(resolve => setTimeout(resolve, 4_000));
+      }
+    };
+
+    poll();
+
+    return () => { stopped = true; };
   }
 
   // ============ Historical Events ============
