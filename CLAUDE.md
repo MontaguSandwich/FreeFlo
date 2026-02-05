@@ -205,7 +205,7 @@ Mismatch → `NotAuthorizedWitness` error.
 - **Qonto tokens**: Expire in 1 hour. Solver auto-refreshes on 401.
 - **Duplicate prevention**: Solver saves `provider_transfer_id` after fiat transfer. On retry, skips transfer if ID exists.
 - **Quote API 404**: Ensure `SOLVER_API_URL` is set in Vercel env vars.
-- **Intent detection**: Solver event watchers only start after historical sync. Wait for "V3 Orchestrator started" log before creating intents.
+- **Intent detection**: Solver event watchers use `eth_getLogs` polling (not `eth_newFilter`/`watchContractEvent`) because public RPCs don't support server-side filters. Watchers query with a 3-block safety margin to handle load balancer inconsistency. Wait for "V3 Orchestrator started" log before creating intents.
 - **tlsn dependency**: Both attestation service and prover use git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.13). Versions must match or deserialization fails.
 - **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service (Rust). The solver (Node) uses `ENV_FILE` instead — do NOT use `set -a && source` for the solver as dotenv handles it with `override: true`.
 - **Solver env contamination**: With dual pm2 instances, shell env vars can bleed between processes. The solver's `override: true` dotenv config prevents this. Always use `ENV_FILE=.env.testnet` for testnet, never `source .env.testnet`.
