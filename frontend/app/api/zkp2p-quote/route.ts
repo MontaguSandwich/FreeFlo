@@ -2,7 +2,7 @@
  * ZKP2P Quote API Proxy
  *
  * Proxies quote requests to ZKP2P API to avoid CORS issues.
- * The ZKP2P SDK makes direct browser requests which get blocked by CORS.
+ * The ZKP2P API expects POST requests with JSON body.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,10 +21,10 @@ export async function GET(request: NextRequest) {
   const destinationToken = searchParams.get('destinationToken');
 
   // Optional parameters
-  const paymentPlatforms = searchParams.get('paymentPlatforms') || 'venmo';
-  const isExactFiat = searchParams.get('isExactFiat') || 'true';
-  const includeNearbyQuotes = searchParams.get('includeNearbyQuotes') || 'true';
-  const nearbySearchRange = searchParams.get('nearbySearchRange') || '20';
+  const paymentPlatformsParam = searchParams.get('paymentPlatforms') || 'wise';
+  const isExactFiat = searchParams.get('isExactFiat') !== 'false';
+  const includeNearbyQuotes = searchParams.get('includeNearbyQuotes') !== 'false';
+  const nearbySearchRange = parseInt(searchParams.get('nearbySearchRange') || '20', 10);
 
   if (!amount || !user || !recipient || !destinationChainId || !destinationToken) {
     return NextResponse.json(
@@ -33,28 +33,42 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // paymentPlatforms can be comma-separated
+  const paymentPlatforms = paymentPlatformsParam.split(',').map(p => p.trim());
+
   try {
-    // Build query params for ZKP2P API
-    const queryParams = new URLSearchParams({
+    // ZKP2P API expects POST with JSON body
+    // When isExactFiat=true, use exactFiatAmount instead of amount
+    const endpoint = isExactFiat ? 'exact-fiat' : 'exact-token';
+    const url = `${ZKP2P_API_BASE}/v2/quote/${endpoint}`;
+
+    const requestBody: Record<string, unknown> = {
       paymentPlatforms,
       fiatCurrency,
       user,
       recipient,
-      destinationChainId,
+      destinationChainId: parseInt(destinationChainId, 10),
       destinationToken,
-      amount,
-      isExactFiat,
       includeNearbyQuotes,
       nearbySearchRange,
-    });
+    };
 
-    const url = `${ZKP2P_API_BASE}/v1/quote/exact-fiat?${queryParams.toString()}`;
+    // SDK uses exactFiatAmount or exactTokenAmount based on isExactFiat
+    if (isExactFiat) {
+      requestBody.exactFiatAmount = amount;
+    } else {
+      requestBody.exactTokenAmount = amount;
+    }
+
+    console.log('ZKP2P API request:', url, JSON.stringify(requestBody, null, 2));
 
     const response = await fetch(url, {
+      method: 'POST',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(15000),
     });
 
@@ -72,6 +86,7 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json();
+    console.log('ZKP2P API response:', JSON.stringify(data, null, 2).slice(0, 500));
     return NextResponse.json(data);
 
   } catch (error) {
