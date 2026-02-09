@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
       nearbySearchRange,
     });
 
-    const url = `${ZKP2P_API_BASE}/v2/quote/exact-fiat?${queryParams.toString()}`;
+    const url = `${ZKP2P_API_BASE}/v1/quote/exact-fiat?${queryParams.toString()}`;
 
     const response = await fetch(url, {
       headers: {
