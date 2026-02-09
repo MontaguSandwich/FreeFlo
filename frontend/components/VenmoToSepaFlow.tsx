@@ -16,7 +16,7 @@ import {
   parseAbiItem,
   type Log,
 } from "viem";
-import { Zkp2pClient, type QuoteResponse, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL } from "@zkp2p/sdk";
+import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL } from "@zkp2p/sdk";
 import { useSignalIntent } from "@zkp2p/sdk/react";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
@@ -312,29 +312,37 @@ export function VenmoToSepaFlow() {
     return Math.floor(eurEstimate * 100) / 100;
   }, []);
 
-  // Fetch ZKP2P quotes via SDK
+  // Fetch ZKP2P quotes via proxy (avoids CORS)
   const fetchZkp2pQuotes = useCallback(async (usdAmount: number) => {
-    if (!zkp2pClient || !address) return [];
+    if (!address) return [];
 
     try {
-      const response: QuoteResponse = await zkp2pClient.getQuote({
-        paymentPlatforms: ["venmo"],
+      const params = new URLSearchParams({
+        paymentPlatforms: "venmo",
         fiatCurrency: "USD",
         user: address,
         recipient: address,
-        destinationChainId: chainId,
+        destinationChainId: chainId.toString(),
         destinationToken: USDC_MAINNET_ADDRESS,
         amount: usdAmount.toFixed(2),
-        isExactFiat: true,
-        includeNearbyQuotes: true,
-        nearbySearchRange: 20,
+        isExactFiat: "true",
+        includeNearbyQuotes: "true",
+        nearbySearchRange: "20",
       });
 
-      if (!response.success || !response.responseObject?.quotes) {
+      const response = await fetch(`/api/zkp2p-quote?${params.toString()}`);
+      if (!response.ok) {
+        console.error("ZKP2P proxy error:", response.status);
         return [];
       }
 
-      const mapped: ZkpQuote[] = response.responseObject.quotes.map((q) => ({
+      const data = await response.json();
+
+      if (!data.success || !data.responseObject?.quotes) {
+        return [];
+      }
+
+      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string }) => ({
         depositId: q.intent.depositId,
         escrowAddress: q.intent.escrowAddress,
         processorName: q.intent.processorName,
@@ -356,7 +364,7 @@ export function VenmoToSepaFlow() {
       console.error("ZKP2P quote fetch failed:", err);
       return [];
     }
-  }, [zkp2pClient, address, chainId]);
+  }, [address, chainId]);
 
   // Fetch FreeFlo solver quotes
   const fetchFreefloQuotes = useCallback(async (usdcAmount: bigint) => {
