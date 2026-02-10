@@ -493,6 +493,10 @@ export function VenmoToSepaFlow() {
       BigInt(Math.floor(flowData.minEurAmount * 100)), // EUR cents
     );
 
+    // Debug: log SDK client config
+    console.log("ZKP2P Client exists:", !!zkp2pClient);
+    console.log("API Key set:", !!process.env.NEXT_PUBLIC_ZKP2P_API_KEY);
+
     try {
       // Build params - only include gating fields if they exist
       const signalParams: Parameters<typeof signalIntent>[0] = {
@@ -506,6 +510,8 @@ export function VenmoToSepaFlow() {
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
       };
+
+      console.log("Signal params:", signalParams);
 
       // Only add gating fields if they exist (SDK auto-fetches if missing)
       if (quote.gatingServiceSignature) {
@@ -523,6 +529,7 @@ export function VenmoToSepaFlow() {
       }
     } catch (err: any) {
       console.error("Signal intent failed:", err);
+      console.error("Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
       setError(`Failed to signal intent: ${err.message || "Unknown error"}`);
     }
   };
