@@ -16,7 +16,7 @@ import {
   parseAbiItem,
   type Log,
 } from "viem";
-import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL } from "@zkp2p/sdk";
+import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getContracts, getPaymentMethodsCatalog } from "@zkp2p/sdk";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
   VENMO_TO_SEPA_ROUTER_ABI,
@@ -498,18 +498,24 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
-    // Build the request body - gating API only needs core intent fields
-    // postIntentHook and data are only used on-chain, not for gating check
+    // Get contract addresses and payment method hash from SDK
+    const { addresses } = getContracts(chainId, 'production');
+    const catalog = getPaymentMethodsCatalog(chainId, 'production');
+    const paymentMethodHash = catalog[params.processorName]?.paymentMethodHash;
+
+    // Build the request body matching SDK's apiSignIntentV2 format exactly
     const requestBody = {
+      processorName: params.processorName,
+      payeeDetails: params.payeeDetails,
       depositId: params.depositId.toString(),
       amount: params.amount.toString(),
       toAddress: params.toAddress,
-      processorName: params.processorName,
-      payeeDetails: params.payeeDetails,
-      fiatCurrencyCode: params.fiatCurrencyCode,
+      paymentMethod: paymentMethodHash,
+      fiatCurrency: params.fiatCurrencyCode, // Already a bytes32 hash from quote
       conversionRate: params.conversionRate.toString(),
-      escrowAddress: params.escrowAddress,
       chainId: chainId.toString(),
+      orchestratorAddress: addresses.orchestrator,
+      escrowAddress: params.escrowAddress,
     };
 
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
