@@ -498,20 +498,18 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
-    // Build the request body matching the SDK's expected format
+    // Build the request body - gating API only needs core intent fields
+    // postIntentHook and data are only used on-chain, not for gating check
     const requestBody = {
-      depositId: params.depositId,
-      amount: params.amount,
+      depositId: params.depositId.toString(),
+      amount: params.amount.toString(),
       toAddress: params.toAddress,
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
       fiatCurrencyCode: params.fiatCurrencyCode,
-      conversionRate: params.conversionRate,
+      conversionRate: params.conversionRate.toString(),
       escrowAddress: params.escrowAddress,
       chainId: chainId.toString(),
-      // Only include hook fields if set
-      ...(params.postIntentHook && { postIntentHook: params.postIntentHook }),
-      ...(params.data && { data: params.data }),
     };
 
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
