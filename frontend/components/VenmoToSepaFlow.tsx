@@ -29,6 +29,15 @@ import {
 } from "@/lib/contracts";
 import { useNetworkAddresses } from "@/hooks/useNetworkAddresses";
 import { USDC_MAINNET_ADDRESS } from "@/lib/zkp2p-contracts";
+import {
+  PLATFORMS,
+  CURRENCIES,
+  QUICK_AMOUNTS,
+  getPlatformCurrencies,
+  getDefaultCurrency,
+  type Platform,
+  type Currency,
+} from "@/lib/platforms";
 
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -228,6 +237,22 @@ export function VenmoToSepaFlow() {
   const [nameInput, setNameInput] = useState("");
   const [slippagePercent] = useState(2);
 
+  // Platform and currency selection
+  const [selectedPlatform, setSelectedPlatform] = useState<string>("venmo");
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("USD");
+  const availableCurrencies = useMemo(() => getPlatformCurrencies(selectedPlatform), [selectedPlatform]);
+
+  // Update currency when platform changes (if current currency not supported)
+  useEffect(() => {
+    const platformCurrencies = getPlatformCurrencies(selectedPlatform);
+    if (!platformCurrencies.find(c => c.code === selectedCurrency)) {
+      const defaultCurrency = getDefaultCurrency(selectedPlatform);
+      if (defaultCurrency) {
+        setSelectedCurrency(defaultCurrency.code);
+      }
+    }
+  }, [selectedPlatform, selectedCurrency]);
+
   // ZKP2P quotes
   const [zkp2pQuotes, setZkp2pQuotes] = useState<ZkpQuote[]>([]);
 
@@ -313,18 +338,18 @@ export function VenmoToSepaFlow() {
   }, []);
 
   // Fetch ZKP2P quotes via server-side proxy (their API has no CORS headers)
-  const fetchZkp2pQuotes = useCallback(async (usdAmount: number) => {
+  const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
     if (!address) return [];
 
     try {
       const params = new URLSearchParams({
-        paymentPlatforms: "venmo,wise,revolut,cashapp,paypal",
-        fiatCurrency: "USD",
+        paymentPlatforms: platform,
+        fiatCurrency: currency,
         user: address,
         recipient: address,
         destinationChainId: chainId.toString(),
         destinationToken: USDC_MAINNET_ADDRESS,
-        amount: usdAmount.toFixed(2),
+        amount: fiatAmount.toFixed(2),
         isExactFiat: "true",
         includeNearbyQuotes: "true",
         nearbySearchRange: "20",
@@ -428,11 +453,12 @@ export function VenmoToSepaFlow() {
     setStep("finding_quotes");
     setError(null);
 
-    const quotes = await fetchZkp2pQuotes(amount);
+    const quotes = await fetchZkp2pQuotes(amount, selectedPlatform, selectedCurrency);
     if (quotes.length > 0) {
       setStep("select_maker");
     } else {
-      setError("No Venmo makers available for this amount. Try a different amount.");
+      const platformName = PLATFORMS[selectedPlatform]?.name || selectedPlatform;
+      setError(`No ${platformName} makers available for this amount. Try a different amount or platform.`);
       setStep("input_all");
     }
   };
@@ -581,6 +607,8 @@ export function VenmoToSepaFlow() {
     setUsdInput("");
     setIbanInput("");
     setNameInput("");
+    setSelectedPlatform("venmo");
+    setSelectedCurrency("USD");
     setError(null);
   };
 
@@ -721,26 +749,100 @@ export function VenmoToSepaFlow() {
           </Box>
         )}
 
-        {/* Input All (Amount + IBAN + Name) */}
+        {/* Input All (Amount + Platform + Currency + IBAN + Name) */}
         {step === "input_all" && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Transfer Details</Typography>
-              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Enter amount and destination</Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Select platform, currency, and amount</Typography>
             </Box>
 
-            {/* Amount */}
+            {/* Platform & Currency Selectors */}
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              {/* Platform Selector */}
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: '#a1a1aa', mb: 1 }}>Payment Platform</Typography>
+                <Box
+                  component="select"
+                  value={selectedPlatform}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedPlatform(e.target.value)}
+                  sx={{
+                    width: '100%', px: 2, py: 1.5,
+                    bgcolor: 'rgba(39,39,42,0.5)', border: '1px solid #3f3f46', borderRadius: 3,
+                    color: 'white', outline: 'none', fontSize: '1rem', cursor: 'pointer',
+                    '&:focus': { borderColor: 'rgba(59,130,246,0.5)' },
+                    appearance: 'none',
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M2 4l4 4 4-4'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: 'no-repeat',
+                    backgroundPosition: 'right 12px center',
+                  }}
+                >
+                  {Object.values(PLATFORMS).map((platform) => (
+                    <option key={platform.id} value={platform.id} style={{ backgroundColor: '#27272a' }}>
+                      {platform.icon} {platform.name}
+                    </option>
+                  ))}
+                </Box>
+              </Box>
+
+              {/* Currency Selector */}
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: '#a1a1aa', mb: 1 }}>Currency</Typography>
+                <Box
+                  component="select"
+                  value={selectedCurrency}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedCurrency(e.target.value)}
+                  sx={{
+                    width: '100%', px: 2, py: 1.5,
+                    bgcolor: 'rgba(39,39,42,0.5)', border: '1px solid #3f3f46', borderRadius: 3,
+                    color: 'white', outline: 'none', fontSize: '1rem', cursor: 'pointer',
+                    '&:focus': { borderColor: 'rgba(59,130,246,0.5)' },
+                    appearance: 'none',
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M2 4l4 4 4-4'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: 'no-repeat',
+                    backgroundPosition: 'right 12px center',
+                  }}
+                >
+                  {availableCurrencies.map((currency) => (
+                    <option key={currency.code} value={currency.code} style={{ backgroundColor: '#27272a' }}>
+                      {currency.flag} {currency.code} - {currency.name}
+                    </option>
+                  ))}
+                </Box>
+              </Box>
+            </Box>
+
+            {/* Amount Input */}
             <Box sx={{ bgcolor: 'rgba(39,39,42,0.5)', borderRadius: 4, p: 2 }}>
               <Typography variant="caption" sx={{ color: '#71717a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>You send</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1 }}>
-                <Typography sx={{ fontSize: '1.875rem', color: '#a1a1aa' }}>$</Typography>
+                <Typography sx={{ fontSize: '1.875rem', color: '#a1a1aa' }}>{CURRENCIES[selectedCurrency]?.symbol || '$'}</Typography>
                 <Box
                   component="input" type="number" value={usdInput}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsdInput(e.target.value)}
                   placeholder="0.00"
                   sx={{ flex: 1, bgcolor: 'transparent', fontSize: '1.875rem', fontWeight: 600, color: 'white', outline: 'none', border: 'none', '&::placeholder': { color: '#52525b' } }}
                 />
-                <Box sx={{ px: 1.5, py: 0.75, bgcolor: 'rgba(59,130,246,0.2)', color: '#60a5fa', borderRadius: 2, fontSize: '0.875rem', fontWeight: 500 }}>USD</Box>
+                <Box sx={{ px: 1.5, py: 0.75, bgcolor: 'rgba(59,130,246,0.2)', color: '#60a5fa', borderRadius: 2, fontSize: '0.875rem', fontWeight: 500 }}>{selectedCurrency}</Box>
+              </Box>
+
+              {/* Quick Amount Buttons */}
+              <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
+                {QUICK_AMOUNTS.map((amount) => (
+                  <Button
+                    key={amount}
+                    onClick={() => setUsdInput(amount.toString())}
+                    sx={{
+                      flex: 1, minWidth: '60px', py: 1,
+                      bgcolor: usdInput === amount.toString() ? 'rgba(59,130,246,0.3)' : 'rgba(63,63,70,0.5)',
+                      border: usdInput === amount.toString() ? '1px solid rgba(59,130,246,0.5)' : '1px solid transparent',
+                      borderRadius: 2, color: 'white', fontSize: '0.875rem', fontWeight: 500, textTransform: 'none',
+                      '&:hover': { bgcolor: 'rgba(59,130,246,0.2)' },
+                    }}
+                  >
+                    {CURRENCIES[selectedCurrency]?.symbol || '$'}{amount}
+                  </Button>
+                ))}
               </Box>
             </Box>
 
@@ -790,9 +892,9 @@ export function VenmoToSepaFlow() {
                 '&:disabled': { opacity: 0.5, cursor: 'not-allowed' }, '&:hover': { opacity: 0.9 },
               }}
             >
-              Find Makers
+              View Sellers
             </Button>
-            <Typography variant="caption" sx={{ textAlign: 'center', color: '#71717a', display: 'block' }}>Minimum: $10</Typography>
+            <Typography variant="caption" sx={{ textAlign: 'center', color: '#71717a', display: 'block' }}>Minimum: {CURRENCIES[selectedCurrency]?.symbol || '$'}10</Typography>
           </Box>
         )}
 
@@ -800,8 +902,8 @@ export function VenmoToSepaFlow() {
         {step === "finding_quotes" && (
           <Box sx={{ textAlign: 'center', py: 6 }}>
             <CircularProgress size={48} sx={{ color: '#3b82f6', mb: 2 }} />
-            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>Finding Makers</Typography>
-            <Typography sx={{ color: '#a1a1aa' }}>Searching for Venmo liquidity providers...</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>Finding Sellers</Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>Searching for {PLATFORMS[selectedPlatform]?.name || 'payment'} liquidity providers...</Typography>
           </Box>
         )}
 
@@ -809,8 +911,8 @@ export function VenmoToSepaFlow() {
         {step === "select_maker" && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <Box>
-              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Select a Maker</Typography>
-              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Choose who to exchange with for {formatUsd(flowData.usdAmount)}</Typography>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Select a Seller</Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Choose who to exchange with for {CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)} {selectedCurrency}</Typography>
             </Box>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {zkp2pQuotes.map((quote) => (
@@ -853,7 +955,7 @@ export function VenmoToSepaFlow() {
             <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography sx={{ color: '#a1a1aa' }}>You send</Typography>
-                <Typography sx={{ color: 'white' }}>{formatUsd(flowData.usdAmount)} via Venmo</Typography>
+                <Typography sx={{ color: 'white' }}>{CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)} via {PLATFORMS[selectedPlatform]?.name || 'payment'}</Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography sx={{ color: '#a1a1aa' }}>You receive</Typography>
@@ -880,26 +982,26 @@ export function VenmoToSepaFlow() {
           </Box>
         )}
 
-        {/* Send Venmo */}
+        {/* Send Payment */}
         {step === "zkp2p_send_venmo" && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             <Box>
-              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Send Venmo Payment</Typography>
-              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Send exactly {formatUsd(flowData.usdAmount)} to the maker</Typography>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Send {PLATFORMS[selectedPlatform]?.name || 'Payment'}</Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Send exactly {CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)} to the seller</Typography>
             </Box>
             <Box sx={{ bgcolor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 3, p: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                 <Box sx={{ width: 48, height: 48, borderRadius: 3, bgcolor: 'rgba(59,130,246,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Typography variant="h6" sx={{ color: '#60a5fa' }}>V</Typography>
+                  <Typography variant="h6" sx={{ color: '#60a5fa' }}>{PLATFORMS[selectedPlatform]?.icon || '💸'}</Typography>
                 </Box>
                 <Box>
-                  <Typography sx={{ color: 'white', fontWeight: 600 }}>Venmo</Typography>
-                  <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Open Venmo and send payment to the maker</Typography>
+                  <Typography sx={{ color: 'white', fontWeight: 600 }}>{PLATFORMS[selectedPlatform]?.name || 'Payment'}</Typography>
+                  <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Open {PLATFORMS[selectedPlatform]?.name || 'your payment app'} and send payment to the seller</Typography>
                 </Box>
               </Box>
               <Box sx={{ bgcolor: 'rgba(24,24,27,0.5)', borderRadius: 2, p: 1.5 }}>
                 <Typography variant="caption" sx={{ color: '#71717a', textTransform: 'uppercase', mb: 0.5, display: 'block' }}>Amount</Typography>
-                <Typography variant="h5" sx={{ fontWeight: 700, color: 'white' }}>{formatUsd(flowData.usdAmount)}</Typography>
+                <Typography variant="h5" sx={{ fontWeight: 700, color: 'white' }}>{CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)}</Typography>
               </Box>
             </Box>
             <Button
@@ -1033,7 +1135,7 @@ export function VenmoToSepaFlow() {
             <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 3, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', pb: 2, borderBottom: '1px solid #3f3f46' }}>
                 <Typography sx={{ color: '#a1a1aa' }}>You sent</Typography>
-                <Typography sx={{ color: 'white', fontWeight: 600 }}>{formatUsd(flowData.usdAmount)} via Venmo</Typography>
+                <Typography sx={{ color: 'white', fontWeight: 600 }}>{CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)} via {PLATFORMS[selectedPlatform]?.name || 'payment'}</Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography sx={{ color: '#a1a1aa' }}>Recipient receives</Typography>
