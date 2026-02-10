@@ -83,7 +83,7 @@ interface ZkpQuote {
   tokenAmountFormatted: string;
   paymentMethod: string;
   // Gating service fields required for signalIntent
-  gatingServiceSignature?: string;
+  gatingServiceSignature?: `0x${string}`;
   signatureExpiration?: number;
 }
 
@@ -373,7 +373,7 @@ export function VenmoToSepaFlow() {
         return [];
       }
 
-      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: string; signatureExpiration?: number }) => ({
+      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: `0x${string}`; signatureExpiration?: number }) => ({
         depositId: q.intent.depositId,
         escrowAddress: q.intent.escrowAddress,
         processorName: q.intent.processorName,
