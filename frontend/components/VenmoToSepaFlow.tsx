@@ -368,6 +368,7 @@ export function VenmoToSepaFlow() {
 
       const data = await response.json();
       console.log("ZKP2P quote response:", data);
+      console.log("ZKP2P quotes detail:", JSON.stringify(data.responseObject?.quotes, null, 2));
 
       if (!data.success || !data.responseObject?.quotes) {
         return [];
