@@ -426,8 +426,8 @@ export function VenmoToSepaFlow() {
 
   const handleInputSubmit = async () => {
     const amount = parseFloat(usdInput);
-    if (isNaN(amount) || amount < 10) {
-      setError("Minimum amount is $10");
+    if (isNaN(amount) || amount <= 0) {
+      setError("Please enter a valid amount");
       return;
     }
     if (!ibanInput || ibanInput.length < 15) {
@@ -869,7 +869,7 @@ export function VenmoToSepaFlow() {
             </Box>
 
             {/* Estimate */}
-            {usdInput && parseFloat(usdInput) >= 10 && (
+            {usdInput && parseFloat(usdInput) > 0 && (
               <Box sx={{ bgcolor: 'rgba(39,39,42,0.3)', borderRadius: 3, p: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Typography sx={{ color: '#a1a1aa' }}>Estimated EUR received</Typography>
@@ -884,7 +884,7 @@ export function VenmoToSepaFlow() {
 
             <Button
               onClick={handleInputSubmit}
-              disabled={!usdInput || parseFloat(usdInput) < 10 || !ibanInput || !nameInput}
+              disabled={!usdInput || parseFloat(usdInput) <= 0 || !ibanInput || !nameInput}
               sx={{
                 width: '100%', py: 2, borderRadius: 3,
                 background: 'linear-gradient(to right, #3b82f6, #10b981)',
@@ -894,7 +894,6 @@ export function VenmoToSepaFlow() {
             >
               View Sellers
             </Button>
-            <Typography variant="caption" sx={{ textAlign: 'center', color: '#71717a', display: 'block' }}>Minimum: {CURRENCIES[selectedCurrency]?.symbol || '$'}10</Typography>
           </Box>
         )}
 
