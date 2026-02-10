@@ -33,12 +33,9 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // API key is optional - warn if not set but still try the request
   if (!ZKP2P_API_KEY) {
-    console.error('ZKP2P_API_KEY environment variable not set');
-    return NextResponse.json(
-      { success: false, error: 'ZKP2P API key not configured' },
-      { status: 500 }
-    );
+    console.warn('ZKP2P_API_KEY not set - trying request without auth');
   }
 
   // paymentPlatforms can be comma-separated
@@ -72,13 +69,17 @@ export async function GET(request: NextRequest) {
 
     console.log('ZKP2P API request:', url, JSON.stringify(requestBody, null, 2));
 
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+    if (ZKP2P_API_KEY) {
+      headers['x-api-key'] = ZKP2P_API_KEY;
+    }
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'x-api-key': ZKP2P_API_KEY,
-      },
+      headers,
       body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(15000),
     });
