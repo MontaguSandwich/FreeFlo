@@ -17,7 +17,6 @@ import {
   type Log,
 } from "viem";
 import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL } from "@zkp2p/sdk";
-import { useSignalIntent } from "@zkp2p/sdk/react";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
   VENMO_TO_SEPA_ROUTER_ABI,
@@ -270,9 +269,8 @@ export function VenmoToSepaFlow() {
   const { writeContract: routerCommit, data: routerCommitHash } = useWriteContract();
   const { isSuccess: isRouterCommitConfirmed } = useWaitForTransactionReceipt({ hash: routerCommitHash });
 
-  // ZKP2P signalIntent via SDK hook
-  const { signalIntent, isLoading: isSignaling, error: signalError, txHash: signalTxHash } =
-    useSignalIntent({ client: zkp2pClient });
+  // Local state for signaling (we use client directly, not the hook)
+  const [isSignaling, setIsSignaling] = useState(false);
 
   // OffRampV3 deadline countdown (starts when Router creates the FreeFlo intent)
   const deadlineRemaining = useCountdown(flowData.routerIntentCreatedAt, OFFRAMP_DEADLINE_SECONDS);
@@ -497,31 +495,27 @@ export function VenmoToSepaFlow() {
     console.log("ZKP2P Client exists:", !!zkp2pClient);
     console.log("API Key set:", !!process.env.NEXT_PUBLIC_ZKP2P_API_KEY);
 
+    setIsSignaling(true);
+    setError(null);
+
     try {
-      // Build params - only include gating fields if they exist
-      const signalParams: Parameters<typeof signalIntent>[0] = {
-        depositId: quote.depositId,
-        amount: quote.amount,
-        toAddress: address,
+      // Build params for direct client call (bypasses hook which may have validation issues)
+      const signalParams = {
+        depositId: BigInt(quote.depositId),
+        amount: BigInt(quote.amount),
+        toAddress: address as `0x${string}`,
         processorName: quote.processorName,
         payeeDetails: quote.payeeDetails,
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
-        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS as `0x${string}`,
         data: hookPayload,
       };
 
-      console.log("Signal params:", signalParams);
+      console.log("Signal params (using client directly):", signalParams);
 
-      // Only add gating fields if they exist (SDK auto-fetches if missing)
-      if (quote.gatingServiceSignature) {
-        signalParams.gatingServiceSignature = quote.gatingServiceSignature;
-      }
-      if (quote.signatureExpiration) {
-        signalParams.signatureExpiration = quote.signatureExpiration;
-      }
-
-      const hash = await signalIntent(signalParams);
+      // Use client directly instead of hook - should auto-fetch gating signature
+      const hash = await zkp2pClient.signalIntent(signalParams);
 
       if (hash) {
         setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
@@ -531,6 +525,8 @@ export function VenmoToSepaFlow() {
       console.error("Signal intent failed:", err);
       console.error("Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
       setError(`Failed to signal intent: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsSignaling(false);
     }
   };
 
@@ -698,14 +694,14 @@ export function VenmoToSepaFlow() {
       )}
 
       {/* Error Display */}
-      {(error || signalError) && (
+      {error && (
         <Box sx={{ mx: 3, mt: 2 }}>
           <Alert
             severity="error"
             sx={{ bgcolor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 3, color: '#f87171', '& .MuiAlert-icon': { color: '#f87171' } }}
             action={<Button onClick={() => setError(null)} sx={{ color: 'rgba(248,113,113,0.6)', fontSize: '0.75rem', textTransform: 'none', '&:hover': { color: '#f87171' } }}>Dismiss</Button>}
           >
-            <Typography variant="body2">{error || signalError?.message}</Typography>
+            <Typography variant="body2">{error}</Typography>
           </Alert>
         </Box>
       )}
