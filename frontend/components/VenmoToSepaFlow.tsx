@@ -537,15 +537,20 @@ export function VenmoToSepaFlow() {
       }
 
       const result = await response.json();
-      console.log("Gating API response:", result);
+      console.log("Gating API response:", JSON.stringify(result, null, 2));
 
-      if (result.responseObject?.signature && result.responseObject?.expiration) {
+      // SDK expects: signedIntent and intentData.signatureExpiration or signatureExpiration
+      const sig = result?.responseObject?.signedIntent;
+      const expStr = result?.responseObject?.intentData?.signatureExpiration ?? result?.responseObject?.signatureExpiration;
+
+      if (sig && expStr) {
         return {
-          signature: result.responseObject.signature as `0x${string}`,
-          expiration: result.responseObject.expiration.toString(),
+          signature: sig as `0x${string}`,
+          expiration: expStr.toString(),
         };
       }
 
+      console.error("Missing signature or expiration in response:", { sig, expStr });
       return null;
     } catch (err) {
       console.error("Failed to fetch gating signature:", err);
