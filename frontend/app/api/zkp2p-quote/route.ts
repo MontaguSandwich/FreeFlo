@@ -2,18 +2,19 @@
  * ZKP2P Quote API Proxy
  *
  * Proxies quote requests to ZKP2P API to avoid CORS issues.
- * The ZKP2P API expects POST requests with JSON body.
+ * The ZKP2P API expects POST requests with JSON body and x-api-key header.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 
 const ZKP2P_API_BASE = 'https://api.zkp2p.xyz';
+const ZKP2P_API_KEY = process.env.ZKP2P_API_KEY || '';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
 
   // Required parameters
-  const amount = searchParams.get('amount');
+  const amount = searchParams.get('amount'); // e.g., "100.00" for $100
   const fiatCurrency = searchParams.get('fiatCurrency') || 'USD';
   const user = searchParams.get('user');
   const recipient = searchParams.get('recipient');
@@ -21,10 +22,9 @@ export async function GET(request: NextRequest) {
   const destinationToken = searchParams.get('destinationToken');
 
   // Optional parameters
-  const paymentPlatformsParam = searchParams.get('paymentPlatforms') || 'wise';
+  const paymentPlatformsParam = searchParams.get('paymentPlatforms') || 'revolut';
   const isExactFiat = searchParams.get('isExactFiat') !== 'false';
-  const includeNearbyQuotes = searchParams.get('includeNearbyQuotes') !== 'false';
-  const nearbySearchRange = parseInt(searchParams.get('nearbySearchRange') || '20', 10);
+  const quotesToReturn = parseInt(searchParams.get('quotesToReturn') || '10', 10);
 
   if (!amount || !user || !recipient || !destinationChainId || !destinationToken) {
     return NextResponse.json(
@@ -33,14 +33,26 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  if (!ZKP2P_API_KEY) {
+    console.error('ZKP2P_API_KEY environment variable not set');
+    return NextResponse.json(
+      { success: false, error: 'ZKP2P API key not configured' },
+      { status: 500 }
+    );
+  }
+
   // paymentPlatforms can be comma-separated
   const paymentPlatforms = paymentPlatformsParam.split(',').map(p => p.trim());
 
+  // Convert amount to 6 decimal places (like USDC)
+  // e.g., "100.00" -> "100000000"
+  const amountFloat = parseFloat(amount);
+  const amountInSmallestUnit = Math.round(amountFloat * 1_000_000).toString();
+
   try {
     // ZKP2P API expects POST with JSON body
-    // When isExactFiat=true, use exactFiatAmount instead of amount
     const endpoint = isExactFiat ? 'exact-fiat' : 'exact-token';
-    const url = `${ZKP2P_API_BASE}/v2/quote/${endpoint}`;
+    const url = `${ZKP2P_API_BASE}/v2/quote/${endpoint}?quotesToReturn=${quotesToReturn}`;
 
     const requestBody: Record<string, unknown> = {
       paymentPlatforms,
@@ -49,15 +61,13 @@ export async function GET(request: NextRequest) {
       recipient,
       destinationChainId: parseInt(destinationChainId, 10),
       destinationToken,
-      includeNearbyQuotes,
-      nearbySearchRange,
     };
 
-    // SDK uses exactFiatAmount or exactTokenAmount based on isExactFiat
+    // Amount in smallest unit (6 decimals)
     if (isExactFiat) {
-      requestBody.exactFiatAmount = amount;
+      requestBody.exactFiatAmount = amountInSmallestUnit;
     } else {
-      requestBody.exactTokenAmount = amount;
+      requestBody.exactTokenAmount = amountInSmallestUnit;
     }
 
     console.log('ZKP2P API request:', url, JSON.stringify(requestBody, null, 2));
@@ -67,6 +77,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
+        'x-api-key': ZKP2P_API_KEY,
       },
       body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(15000),
