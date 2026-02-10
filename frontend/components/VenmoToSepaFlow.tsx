@@ -493,7 +493,8 @@ export function VenmoToSepaFlow() {
     );
 
     try {
-      const hash = await signalIntent({
+      // Build params - only include gating fields if they exist
+      const signalParams: Parameters<typeof signalIntent>[0] = {
         depositId: quote.depositId,
         amount: quote.amount,
         toAddress: address,
@@ -503,10 +504,17 @@ export function VenmoToSepaFlow() {
         conversionRate: quote.conversionRate,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
-        // Gating service signature required by ZKP2P
-        gatingServiceSignature: quote.gatingServiceSignature,
-        signatureExpiration: quote.signatureExpiration,
-      });
+      };
+
+      // Only add gating fields if they exist (SDK auto-fetches if missing)
+      if (quote.gatingServiceSignature) {
+        signalParams.gatingServiceSignature = quote.gatingServiceSignature;
+      }
+      if (quote.signatureExpiration) {
+        signalParams.signatureExpiration = quote.signatureExpiration;
+      }
+
+      const hash = await signalIntent(signalParams);
 
       if (hash) {
         setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
