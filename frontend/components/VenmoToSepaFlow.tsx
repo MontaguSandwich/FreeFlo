@@ -815,7 +815,7 @@ export function VenmoToSepaFlow() {
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {zkp2pQuotes.map((quote) => (
                 <Button
-                  key={quote.depositId}
+                  key={String(quote.depositId)}
                   onClick={() => handleSelectMaker(quote)}
                   sx={{
                     width: '100%', p: 2, bgcolor: 'rgba(39,39,42,0.5)', border: '1px solid #3f3f46', borderRadius: 3,
@@ -825,10 +825,10 @@ export function VenmoToSepaFlow() {
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                       <Box sx={{ width: 40, height: 40, borderRadius: '50%', bgcolor: 'rgba(59,130,246,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#60a5fa', fontWeight: 600 }}>
-                        {quote.depositId.slice(0, 4)}
+                        {String(quote.depositId).slice(0, 4)}
                       </Box>
                       <Box>
-                        <Typography sx={{ color: 'white', fontWeight: 500 }}>Deposit #{quote.depositId.slice(0, 8)}</Typography>
+                        <Typography sx={{ color: 'white', fontWeight: 500 }}>Deposit #{String(quote.depositId).slice(0, 8)}</Typography>
                         <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Rate: {Number(quote.conversionRate).toFixed(4)}</Typography>
                       </Box>
                     </Box>
