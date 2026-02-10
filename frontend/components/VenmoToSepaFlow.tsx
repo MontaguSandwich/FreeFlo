@@ -488,6 +488,7 @@ export function VenmoToSepaFlow() {
     payeeDetails: string;
     fiatCurrencyCode: string;
     conversionRate: string;
+    escrowAddress: string;
     postIntentHook?: string;
     data?: string;
   }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
@@ -497,6 +498,24 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
+    // Build the request body matching the SDK's expected format
+    const requestBody = {
+      depositId: params.depositId,
+      amount: params.amount,
+      toAddress: params.toAddress,
+      processorName: params.processorName,
+      payeeDetails: params.payeeDetails,
+      fiatCurrencyCode: params.fiatCurrencyCode,
+      conversionRate: params.conversionRate,
+      escrowAddress: params.escrowAddress,
+      chainId: chainId.toString(),
+      // Only include hook fields if set
+      ...(params.postIntentHook && { postIntentHook: params.postIntentHook }),
+      ...(params.data && { data: params.data }),
+    };
+
+    console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
+
     try {
       const response = await fetch("https://api.zkp2p.xyz/v2/verify/intent", {
         method: "POST",
@@ -504,18 +523,7 @@ export function VenmoToSepaFlow() {
           "Content-Type": "application/json",
           "x-api-key": apiKey,
         },
-        body: JSON.stringify({
-          depositId: params.depositId,
-          amount: params.amount,
-          toAddress: params.toAddress,
-          processorName: params.processorName,
-          payeeDetails: params.payeeDetails,
-          fiatCurrencyCode: params.fiatCurrencyCode,
-          conversionRate: params.conversionRate,
-          postIntentHook: params.postIntentHook,
-          data: params.data,
-          chainId: chainId.toString(),
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -571,6 +579,7 @@ export function VenmoToSepaFlow() {
         payeeDetails: quote.payeeDetails,
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
+        escrowAddress: quote.escrowAddress,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
       });
