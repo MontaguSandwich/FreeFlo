@@ -118,6 +118,7 @@ function useZkp2pClient() {
       return new Zkp2pClient({
         walletClient,
         chainId,
+        apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
       });
     } catch {
       return null;
