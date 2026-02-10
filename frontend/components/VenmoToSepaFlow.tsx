@@ -82,6 +82,9 @@ interface ZkpQuote {
   tokenAmount: string;
   tokenAmountFormatted: string;
   paymentMethod: string;
+  // Gating service fields required for signalIntent
+  gatingServiceSignature?: string;
+  signatureExpiration?: number;
 }
 
 interface FlowData {
@@ -370,7 +373,7 @@ export function VenmoToSepaFlow() {
         return [];
       }
 
-      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string }) => ({
+      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: string; signatureExpiration?: number }) => ({
         depositId: q.intent.depositId,
         escrowAddress: q.intent.escrowAddress,
         processorName: q.intent.processorName,
@@ -384,6 +387,8 @@ export function VenmoToSepaFlow() {
         tokenAmount: q.tokenAmount,
         tokenAmountFormatted: q.tokenAmountFormatted,
         paymentMethod: q.paymentMethod,
+        gatingServiceSignature: q.gatingServiceSignature,
+        signatureExpiration: q.signatureExpiration,
       }));
 
       setZkp2pQuotes(mapped);
@@ -497,6 +502,9 @@ export function VenmoToSepaFlow() {
         conversionRate: quote.conversionRate,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
+        // Gating service signature required by ZKP2P
+        gatingServiceSignature: quote.gatingServiceSignature,
+        signatureExpiration: quote.signatureExpiration,
       });
 
       if (hash) {
