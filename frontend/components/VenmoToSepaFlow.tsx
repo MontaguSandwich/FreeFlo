@@ -479,6 +479,68 @@ export function VenmoToSepaFlow() {
     setStep("zkp2p_signal");
   };
 
+  // Fetch gating signature from ZKP2P API
+  const fetchGatingSignature = async (params: {
+    depositId: string;
+    amount: string;
+    toAddress: string;
+    processorName: string;
+    payeeDetails: string;
+    fiatCurrencyCode: string;
+    conversionRate: string;
+    postIntentHook?: string;
+    data?: string;
+  }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
+    const apiKey = process.env.NEXT_PUBLIC_ZKP2P_API_KEY;
+    if (!apiKey) {
+      console.error("No ZKP2P API key configured");
+      return null;
+    }
+
+    try {
+      const response = await fetch("https://api.zkp2p.xyz/v2/verify/intent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          depositId: params.depositId,
+          amount: params.amount,
+          toAddress: params.toAddress,
+          processorName: params.processorName,
+          payeeDetails: params.payeeDetails,
+          fiatCurrencyCode: params.fiatCurrencyCode,
+          conversionRate: params.conversionRate,
+          postIntentHook: params.postIntentHook,
+          data: params.data,
+          chainId: chainId.toString(),
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("Gating API error:", response.status, text);
+        return null;
+      }
+
+      const result = await response.json();
+      console.log("Gating API response:", result);
+
+      if (result.responseObject?.signature && result.responseObject?.expiration) {
+        return {
+          signature: result.responseObject.signature as `0x${string}`,
+          expiration: result.responseObject.expiration.toString(),
+        };
+      }
+
+      return null;
+    } catch (err) {
+      console.error("Failed to fetch gating signature:", err);
+      return null;
+    }
+  };
+
   const handleSignalIntent = async () => {
     if (!address || !flowData.zkp2pQuote || !zkp2pClient) return;
 
@@ -499,7 +561,27 @@ export function VenmoToSepaFlow() {
     setError(null);
 
     try {
-      // Build params for direct client call (bypasses hook which may have validation issues)
+      // First, fetch the gating signature manually since SDK auto-fetch isn't working
+      console.log("Fetching gating signature from ZKP2P API...");
+      const gatingResult = await fetchGatingSignature({
+        depositId: quote.depositId,
+        amount: quote.amount,
+        toAddress: address,
+        processorName: quote.processorName,
+        payeeDetails: quote.payeeDetails,
+        fiatCurrencyCode: quote.fiatCurrencyCode,
+        conversionRate: quote.conversionRate,
+        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        data: hookPayload,
+      });
+
+      if (!gatingResult) {
+        throw new Error("Failed to fetch gating signature from ZKP2P API");
+      }
+
+      console.log("Got gating signature:", gatingResult);
+
+      // Build params with the fetched gating signature
       const signalParams = {
         depositId: BigInt(quote.depositId),
         amount: BigInt(quote.amount),
@@ -510,11 +592,12 @@ export function VenmoToSepaFlow() {
         conversionRate: quote.conversionRate,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS as `0x${string}`,
         data: hookPayload,
+        gatingServiceSignature: gatingResult.signature,
+        signatureExpiration: gatingResult.expiration,
       };
 
-      console.log("Signal params (using client directly):", signalParams);
+      console.log("Signal params (with gating signature):", signalParams);
 
-      // Use client directly instead of hook - should auto-fetch gating signature
       const hash = await zkp2pClient.signalIntent(signalParams);
 
       if (hash) {
