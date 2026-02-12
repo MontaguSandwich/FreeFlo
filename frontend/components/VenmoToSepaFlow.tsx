@@ -107,6 +107,9 @@ interface FlowData {
 
 // ============ Hooks ============
 
+// Use staging environment for ZKP2P (hook is whitelisted there)
+const ZKP2P_ENVIRONMENT = 'staging' as const;
+
 function useZkp2pClient() {
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
@@ -118,6 +121,7 @@ function useZkp2pClient() {
         walletClient,
         chainId,
         apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
+        environment: ZKP2P_ENVIRONMENT,
       });
     } catch {
       return null;
@@ -498,9 +502,9 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
-    // Get contract addresses and payment method hash from SDK
-    const { addresses } = getContracts(chainId, 'production');
-    const catalog = getPaymentMethodsCatalog(chainId, 'production');
+    // Get contract addresses and payment method hash from SDK (using staging)
+    const { addresses } = getContracts(chainId, ZKP2P_ENVIRONMENT);
+    const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
     const paymentMethodHash = catalog[params.processorName]?.paymentMethodHash;
 
     // Build the request body matching SDK's apiSignIntentV2 format exactly
