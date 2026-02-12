@@ -6,11 +6,7 @@ import { encodeAbiParameters, parseAbiParameters } from "viem";
 export const VENMO_TO_SEPA_ROUTER_PRODUCTION = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8" as const;
 
 // Staging router (configured for staging ZKP2P Orchestrator 0xF9b9CD27...)
-// This needs to be deployed and the address updated here
-export const VENMO_TO_SEPA_ROUTER_STAGING = (
-  process.env.NEXT_PUBLIC_VENMO_SEPA_ROUTER_STAGING ||
-  "0x0000000000000000000000000000000000000000"
-) as `0x${string}`;
+export const VENMO_TO_SEPA_ROUTER_STAGING = "0xBe548278A5A852902dd5C743F6AbF735Fc1429F4" as const;
 
 // Currently using staging (hook is whitelisted there)
 export const VENMO_TO_SEPA_ROUTER_ADDRESS = VENMO_TO_SEPA_ROUTER_STAGING;
