@@ -121,7 +121,7 @@ function useZkp2pClient() {
         walletClient,
         chainId,
         apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
-        environment: ZKP2P_ENVIRONMENT,
+        runtimeEnv: ZKP2P_ENVIRONMENT,
       });
     } catch {
       return null;
