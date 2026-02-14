@@ -10,6 +10,9 @@ import { NextRequest, NextResponse } from 'next/server';
 const ZKP2P_API_BASE = 'https://api.zkp2p.xyz';
 const ZKP2P_API_KEY = process.env.ZKP2P_API_KEY || '';
 
+// Staging escrow address - filters quotes to staging deposits only
+const ZKP2P_STAGING_ESCROW = '0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5';
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
 
@@ -58,6 +61,7 @@ export async function GET(request: NextRequest) {
       recipient,
       destinationChainId: parseInt(destinationChainId, 10),
       destinationToken,
+      escrowAddresses: [ZKP2P_STAGING_ESCROW],
     };
 
     // Amount in smallest unit (6 decimals)
