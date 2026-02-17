@@ -5,8 +5,8 @@ import { encodeAbiParameters, parseAbiParameters } from "viem";
 // Production router (configured for production ZKP2P Orchestrator 0x88888883...)
 export const VENMO_TO_SEPA_ROUTER_PRODUCTION = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8" as const;
 
-// Staging router (configured for staging ZKP2P Orchestrator 0x04826F66...)
-export const VENMO_TO_SEPA_ROUTER_STAGING = "0xB5ED2c4b485e1177954fcf2a5Af35E187b1d4B3b" as const;
+// Staging router (configured for staging ZKP2P Orchestrator 0x2466d5B3...)
+export const VENMO_TO_SEPA_ROUTER_STAGING = "0x1b791095Decf7483646d9488041E747102f9f683" as const;
 
 // Currently using staging (permissionless hooks)
 export const VENMO_TO_SEPA_ROUTER_ADDRESS = VENMO_TO_SEPA_ROUTER_STAGING;
