@@ -218,6 +218,7 @@ export function VenmoToSepaFlow() {
   const { OFFRAMP_V3: OFFRAMP_V3_ADDRESS } = useNetworkAddresses();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const publicClient = usePublicClient();
   const zkp2pClient = useZkp2pClient();
 
   // Flow state
@@ -366,42 +367,156 @@ export function VenmoToSepaFlow() {
         console.error("ZKP2P proxy error:", response.status);
         const text = await response.text();
         console.error("ZKP2P proxy response:", text);
+      } else {
+        const data = await response.json();
+        console.log("ZKP2P quote response:", data);
+        console.log("ZKP2P quotes detail:", JSON.stringify(data.responseObject?.quotes, null, 2));
+
+        if (data.success && data.responseObject?.quotes?.length > 0) {
+          const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: `0x${string}`; signatureExpiration?: string | bigint }) => ({
+            depositId: q.intent.depositId,
+            escrowAddress: q.intent.escrowAddress,
+            processorName: q.intent.processorName,
+            amount: q.intent.amount,
+            toAddress: q.intent.toAddress,
+            payeeDetails: q.intent.payeeDetails,
+            fiatCurrencyCode: q.intent.fiatCurrencyCode,
+            conversionRate: q.conversionRate,
+            fiatAmount: q.fiatAmount,
+            fiatAmountFormatted: q.fiatAmountFormatted,
+            tokenAmount: q.tokenAmount,
+            tokenAmountFormatted: q.tokenAmountFormatted,
+            paymentMethod: q.paymentMethod,
+            gatingServiceSignature: q.gatingServiceSignature,
+            signatureExpiration: q.signatureExpiration,
+          }));
+
+          setZkp2pQuotes(mapped);
+          return mapped;
+        }
+      }
+
+      // Fallback: build quote from on-chain staging deposit data
+      // The ZKP2P API may not index staging deposits, so query on-chain
+      console.log("API returned no quotes, trying on-chain staging fallback...");
+      const { addresses } = getContracts(chainId, ZKP2P_ENVIRONMENT);
+      const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
+      const platformKey = platform.toLowerCase();
+      const paymentMethodHash = catalog[platformKey]?.paymentMethodHash;
+
+      if (!paymentMethodHash || !publicClient) {
+        console.error("No payment method hash or public client for fallback");
         return [];
       }
 
-      const data = await response.json();
-      console.log("ZKP2P quote response:", data);
-      console.log("ZKP2P quotes detail:", JSON.stringify(data.responseObject?.quotes, null, 2));
+      const escrowAddress = addresses.escrow as `0x${string}`;
+      const protocolViewerAddress = addresses.protocolViewer as `0x${string}`;
+      const pvAbi = (await import('@zkp2p/contracts-v2/abis/baseStaging/ProtocolViewer.json')).default;
 
-      if (!data.success || !data.responseObject?.quotes) {
-        return [];
+      try {
+        // Get total deposits count from Escrow
+        const depositCount = await publicClient.readContract({
+          address: escrowAddress,
+          abi: [{
+            name: 'depositCounter',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [],
+            outputs: [{ type: 'uint256' }],
+          }],
+          functionName: 'depositCounter',
+        }) as bigint;
+
+        console.log("Staging escrow deposit count:", depositCount.toString());
+
+        if (depositCount === BigInt(0)) return [];
+
+        // Build array of deposit IDs to query (all of them for staging)
+        const count = Number(depositCount);
+        const depositIds = Array.from({ length: count }, (_, i) => BigInt(i));
+
+        // Fetch all deposits via ProtocolViewer
+        const deposits = await publicClient.readContract({
+          address: protocolViewerAddress,
+          abi: pvAbi,
+          functionName: 'getDepositFromIds',
+          args: [depositIds],
+        }) as Array<{
+          depositId: bigint;
+          deposit: {
+            depositor: string;
+            acceptingIntents: boolean;
+            intentAmountRange: { min: bigint; max: bigint };
+          };
+          availableLiquidity: bigint;
+          paymentMethods: Array<{
+            paymentMethod: string;
+            verificationData: { intentGatingService: string; payeeDetails: string; data: string };
+            currencies: Array<{ code: string; minConversionRate: bigint }>;
+          }>;
+        }>;
+
+        console.log("On-chain staging deposits fetched:", deposits.length);
+
+        const currencyUpper = currency.toUpperCase();
+        const fallbackQuotes: ZkpQuote[] = [];
+
+        for (const dep of deposits) {
+          if (!dep.deposit.acceptingIntents) continue;
+          if (dep.availableLiquidity === BigInt(0)) continue;
+
+          for (const pm of dep.paymentMethods) {
+            if (pm.paymentMethod.toLowerCase() !== paymentMethodHash.toLowerCase()) continue;
+
+            for (const cur of pm.currencies) {
+              // minConversionRate is fiat per token (e.g., 0.84 = 840000000000000000)
+              const rate = Number(cur.minConversionRate) / 1e18;
+              if (rate === 0) continue;
+              const tokenAmount = Math.ceil((fiatAmount / rate) * 1e6);
+              const tokenAmountStr = tokenAmount.toString();
+
+              if (BigInt(tokenAmountStr) > dep.availableLiquidity) continue;
+              const { min, max } = dep.deposit.intentAmountRange;
+              if (min > BigInt(0) && BigInt(tokenAmountStr) < min) continue;
+              if (max > BigInt(0) && BigInt(tokenAmountStr) > max) continue;
+
+              const tokenAmountFormatted = (tokenAmount / 1e6).toFixed(2);
+
+              fallbackQuotes.push({
+                depositId: dep.depositId.toString(),
+                escrowAddress: escrowAddress,
+                processorName: platformKey,
+                amount: tokenAmountStr,
+                toAddress: address,
+                payeeDetails: pm.verificationData.payeeDetails,
+                fiatCurrencyCode: cur.code,
+                conversionRate: cur.minConversionRate.toString(),
+                fiatAmount: Math.round(fiatAmount * 1e6).toString(),
+                fiatAmountFormatted: `${fiatAmount.toFixed(2)} ${currencyUpper}`,
+                tokenAmount: tokenAmountStr,
+                tokenAmountFormatted: `${tokenAmountFormatted}`,
+                paymentMethod: pm.paymentMethod,
+              });
+            }
+          }
+        }
+
+        console.log("Fallback quotes built:", fallbackQuotes.length, fallbackQuotes);
+
+        if (fallbackQuotes.length > 0) {
+          setZkp2pQuotes(fallbackQuotes);
+          return fallbackQuotes;
+        }
+      } catch (err) {
+        console.error("On-chain fallback failed:", err);
       }
 
-      const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: `0x${string}`; signatureExpiration?: string | bigint }) => ({
-        depositId: q.intent.depositId,
-        escrowAddress: q.intent.escrowAddress,
-        processorName: q.intent.processorName,
-        amount: q.intent.amount,
-        toAddress: q.intent.toAddress,
-        payeeDetails: q.intent.payeeDetails,
-        fiatCurrencyCode: q.intent.fiatCurrencyCode,
-        conversionRate: q.conversionRate,
-        fiatAmount: q.fiatAmount,
-        fiatAmountFormatted: q.fiatAmountFormatted,
-        tokenAmount: q.tokenAmount,
-        tokenAmountFormatted: q.tokenAmountFormatted,
-        paymentMethod: q.paymentMethod,
-        gatingServiceSignature: q.gatingServiceSignature,
-        signatureExpiration: q.signatureExpiration,
-      }));
-
-      setZkp2pQuotes(mapped);
-      return mapped;
+      return [];
     } catch (err) {
       console.error("ZKP2P quote fetch failed:", err);
       return [];
     }
-  }, [address, chainId]);
+  }, [address, chainId, publicClient]);
 
   // Fetch FreeFlo solver quotes
   const fetchFreefloQuotes = useCallback(async (usdcAmount: bigint) => {
