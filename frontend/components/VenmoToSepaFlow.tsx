@@ -50,6 +50,41 @@ import Card from "@mui/material/Card";
 // OffRampV3: QUOTE_WINDOW (5 min) + SELECTION_WINDOW (10 min) = 15 min
 const OFFRAMP_DEADLINE_SECONDS = 15 * 60;
 
+// ZKP2P staging Orchestrator - hardcoded because SDK version mismatch
+const ZKP2P_STAGING_ORCHESTRATOR = "0x2466d5B30613309E32a2faFA9b3B3c03eD6c9124" as const;
+const ZKP2P_STAGING_ESCROW = "0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5" as const;
+
+// Minimal Orchestrator ABI for signalIntent
+const ORCHESTRATOR_ABI = [
+  {
+    name: "signalIntent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "intent",
+        type: "tuple",
+        components: [
+          { name: "escrow", type: "address" },
+          { name: "depositId", type: "uint256" },
+          { name: "amount", type: "uint256" },
+          { name: "to", type: "address" },
+          { name: "paymentMethod", type: "bytes32" },
+          { name: "fiatCurrency", type: "bytes32" },
+          { name: "conversionRate", type: "uint256" },
+          { name: "referrer", type: "address" },
+          { name: "referrerFee", type: "uint256" },
+          { name: "gatingServiceSignature", type: "bytes" },
+          { name: "signatureExpiration", type: "uint256" },
+          { name: "postIntentHook", type: "address" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+] as const;
+
 // ============ Types ============
 
 type FlowStep =
@@ -678,7 +713,7 @@ export function VenmoToSepaFlow() {
   };
 
   const handleSignalIntent = async () => {
-    if (!address || !flowData.zkp2pQuote || !zkp2pClient) return;
+    if (!address || !flowData.zkp2pQuote || !walletClient) return;
 
     const quote = flowData.zkp2pQuote;
 
@@ -689,15 +724,11 @@ export function VenmoToSepaFlow() {
       BigInt(Math.floor(flowData.minEurAmount * 100)), // EUR cents
     );
 
-    // Debug: log SDK client config
-    console.log("ZKP2P Client exists:", !!zkp2pClient);
-    console.log("API Key set:", !!process.env.NEXT_PUBLIC_ZKP2P_API_KEY);
-
     setIsSignaling(true);
     setError(null);
 
     try {
-      // First, fetch the gating signature manually since SDK auto-fetch isn't working
+      // First, fetch the gating signature from ZKP2P API
       console.log("Fetching gating signature from ZKP2P API...");
       const gatingResult = await fetchGatingSignature({
         depositId: quote.depositId,
@@ -718,24 +749,36 @@ export function VenmoToSepaFlow() {
 
       console.log("Got gating signature:", gatingResult);
 
-      // Build params with the fetched gating signature
-      const signalParams = {
+      // Build intent struct for direct Orchestrator call
+      // paymentMethod is already a bytes32 hash from the quote
+      const intentStruct = {
+        escrow: ZKP2P_STAGING_ESCROW as `0x${string}`,
         depositId: BigInt(quote.depositId),
         amount: BigInt(quote.amount),
-        toAddress: address as `0x${string}`,
-        processorName: quote.processorName,
-        payeeDetails: quote.payeeDetails,
-        fiatCurrencyCode: quote.fiatCurrencyCode,
-        conversionRate: quote.conversionRate,
+        to: address as `0x${string}`,
+        paymentMethod: quote.paymentMethod as `0x${string}`, // Already a bytes32 hash
+        fiatCurrency: quote.fiatCurrencyCode as `0x${string}`, // Already a bytes32 hash from on-chain data
+        conversionRate: BigInt(quote.conversionRate),
+        referrer: "0x0000000000000000000000000000000000000000" as `0x${string}`,
+        referrerFee: BigInt(0),
+        gatingServiceSignature: gatingResult.signature as `0x${string}`,
+        signatureExpiration: BigInt(gatingResult.expiration),
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS as `0x${string}`,
         data: hookPayload,
-        gatingServiceSignature: gatingResult.signature,
-        signatureExpiration: gatingResult.expiration,
       };
 
-      console.log("Signal params (with gating signature):", signalParams);
+      console.log("Direct Orchestrator call with intent:", intentStruct);
 
-      const hash = await zkp2pClient.signalIntent(signalParams);
+      // Call Orchestrator directly (bypass SDK)
+      const hash = await walletClient.writeContract({
+        address: ZKP2P_STAGING_ORCHESTRATOR,
+        abi: ORCHESTRATOR_ABI,
+        functionName: "signalIntent",
+        args: [intentStruct],
+        account: address,
+      });
+
+      console.log("SignalIntent tx hash:", hash);
 
       if (hash) {
         setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
