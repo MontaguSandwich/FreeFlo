@@ -254,6 +254,7 @@ export function VenmoToSepaFlow() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   const zkp2pClient = useZkp2pClient();
 
   // Flow state
