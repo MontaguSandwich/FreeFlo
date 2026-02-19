@@ -645,8 +645,8 @@ export function VenmoToSepaFlow() {
     conversionRate: string;
     escrowAddress: string;
     paymentMethod: string; // bytes32 hash from quote
-    postIntentHook?: string;
-    data?: string;
+    postIntentHook: string; // Router address for hook
+    data: string; // Encoded hook payload
   }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
     const apiKey = process.env.NEXT_PUBLIC_ZKP2P_API_KEY;
     if (!apiKey) {
@@ -660,8 +660,7 @@ export function VenmoToSepaFlow() {
     const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
     const fiatCurrencyHash = resolveFiatCurrencyBytes32(params.fiatCurrencyCode);
 
-    // NOTE: postIntentHook and data are NOT included in the gating signature
-    // They are added separately when calling the contract
+    // Include referrer/referrerFee in case they're part of the signature
     const requestBody = {
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
@@ -674,6 +673,11 @@ export function VenmoToSepaFlow() {
       chainId: chainId.toString(),
       orchestratorAddress: ZKP2P_STAGING_ORCHESTRATOR, // Use correct staging Orchestrator, not SDK's
       escrowAddress: params.escrowAddress,
+      // Include these in case they're part of the signature
+      referrer: "0x0000000000000000000000000000000000000000",
+      referrerFee: "0",
+      postIntentHook: params.postIntentHook,
+      data: params.data,
     };
 
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
