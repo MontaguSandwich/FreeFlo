@@ -644,6 +644,7 @@ export function VenmoToSepaFlow() {
     fiatCurrencyCode: string;
     conversionRate: string;
     escrowAddress: string;
+    paymentMethod: string; // bytes32 hash from quote
     postIntentHook?: string;
     data?: string;
   }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
@@ -653,19 +654,15 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
-    // Get contract addresses and payment method hash from SDK (using staging)
-    const { addresses } = getContracts(chainId, ZKP2P_ENVIRONMENT);
-    const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
-    const paymentMethodHash = catalog[params.processorName]?.paymentMethodHash;
-
     // Build the request body matching SDK's apiSignIntentV2 format exactly
+    // Use paymentMethod from quote directly to ensure consistency with intent struct
     const requestBody = {
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
       depositId: params.depositId.toString(),
       amount: params.amount.toString(),
       toAddress: params.toAddress,
-      paymentMethod: paymentMethodHash,
+      paymentMethod: params.paymentMethod, // Use quote's paymentMethod, not catalog lookup
       fiatCurrency: params.fiatCurrencyCode, // Already a bytes32 hash from quote
       conversionRate: params.conversionRate.toString(),
       chainId: chainId.toString(),
@@ -740,6 +737,7 @@ export function VenmoToSepaFlow() {
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
         escrowAddress: quote.escrowAddress,
+        paymentMethod: quote.paymentMethod, // Use same paymentMethod hash for gating and intent
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
       });
