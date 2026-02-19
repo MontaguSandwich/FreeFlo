@@ -16,7 +16,7 @@ import {
   parseAbiItem,
   type Log,
 } from "viem";
-import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getContracts, getPaymentMethodsCatalog } from "@zkp2p/sdk";
+import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getContracts, getPaymentMethodsCatalog, resolvePaymentMethodHashFromCatalog, resolveFiatCurrencyBytes32 } from "@zkp2p/sdk";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
   VENMO_TO_SEPA_ROUTER_ABI,
@@ -654,29 +654,27 @@ export function VenmoToSepaFlow() {
       return null;
     }
 
-    // Build the request body matching SDK's apiSignIntentV2 format exactly
-    // Use paymentMethod from quote directly to ensure consistency with intent struct
-    const requestBody: Record<string, unknown> = {
+    // Build the request body matching SDK's apiSignIntentV2 format EXACTLY
+    // The SDK resolves paymentMethod from catalog and fiatCurrency using resolveFiatCurrencyBytes32
+    const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
+    const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
+    const fiatCurrencyHash = resolveFiatCurrencyBytes32(params.fiatCurrencyCode);
+
+    // NOTE: postIntentHook and data are NOT included in the gating signature
+    // They are added separately when calling the contract
+    const requestBody = {
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
       depositId: params.depositId.toString(),
       amount: params.amount.toString(),
       toAddress: params.toAddress,
-      paymentMethod: params.paymentMethod, // Use quote's paymentMethod, not catalog lookup
-      fiatCurrency: params.fiatCurrencyCode, // Already a bytes32 hash from quote
+      paymentMethod: paymentMethodHash, // Resolved from catalog, same as SDK
+      fiatCurrency: fiatCurrencyHash, // Resolved using SDK's function
       conversionRate: params.conversionRate.toString(),
       chainId: chainId.toString(),
       orchestratorAddress: ZKP2P_STAGING_ORCHESTRATOR, // Use correct staging Orchestrator, not SDK's
       escrowAddress: params.escrowAddress,
     };
-
-    // Include postIntentHook and data if provided - these are part of the signed intent
-    if (params.postIntentHook) {
-      requestBody.postIntentHook = params.postIntentHook;
-    }
-    if (params.data) {
-      requestBody.data = params.data;
-    }
 
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
@@ -734,6 +732,14 @@ export function VenmoToSepaFlow() {
     setError(null);
 
     try {
+      // Resolve paymentMethod and fiatCurrency using SDK functions
+      // These MUST match what we send to both the gating API and the contract
+      const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
+      const paymentMethodHash = resolvePaymentMethodHashFromCatalog(quote.processorName, catalog);
+      const fiatCurrencyHash = resolveFiatCurrencyBytes32(quote.fiatCurrencyCode);
+
+      console.log("Resolved hashes:", { paymentMethodHash, fiatCurrencyHash });
+
       // First, fetch the gating signature from ZKP2P API
       console.log("Fetching gating signature from ZKP2P API...");
       const gatingResult = await fetchGatingSignature({
@@ -745,7 +751,7 @@ export function VenmoToSepaFlow() {
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
         escrowAddress: quote.escrowAddress,
-        paymentMethod: quote.paymentMethod, // Use same paymentMethod hash for gating and intent
+        paymentMethod: quote.paymentMethod,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
       });
@@ -757,14 +763,14 @@ export function VenmoToSepaFlow() {
       console.log("Got gating signature:", gatingResult);
 
       // Build intent struct for direct Orchestrator call
-      // paymentMethod is already a bytes32 hash from the quote
+      // Use the SAME resolved hashes that were used for the gating signature
       const intentStruct = {
         escrow: ZKP2P_STAGING_ESCROW as `0x${string}`,
         depositId: BigInt(quote.depositId),
         amount: BigInt(quote.amount),
         to: address as `0x${string}`,
-        paymentMethod: quote.paymentMethod as `0x${string}`, // Already a bytes32 hash
-        fiatCurrency: quote.fiatCurrencyCode as `0x${string}`, // Already a bytes32 hash from on-chain data
+        paymentMethod: paymentMethodHash as `0x${string}`, // Resolved from catalog
+        fiatCurrency: fiatCurrencyHash as `0x${string}`, // Resolved using SDK function
         conversionRate: BigInt(quote.conversionRate),
         referrer: "0x0000000000000000000000000000000000000000" as `0x${string}`,
         referrerFee: BigInt(0),
