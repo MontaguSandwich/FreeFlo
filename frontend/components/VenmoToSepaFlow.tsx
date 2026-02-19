@@ -154,10 +154,12 @@ function useZkp2pClient() {
   return useMemo(() => {
     if (!walletClient) return null;
     try {
+      const apiKey = process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '';
       return new Zkp2pClient({
         walletClient,
         chainId,
-        apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
+        // Staging API uses Authorization Bearer header, not x-api-key
+        authorizationToken: apiKey,
         runtimeEnv: ZKP2P_ENVIRONMENT,
         // Use staging API URL so the SDK calls the correct gating service
         baseApiUrl: ZKP2P_STAGING_API_URL,
