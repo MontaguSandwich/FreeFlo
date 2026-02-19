@@ -50,11 +50,10 @@ import Card from "@mui/material/Card";
 // OffRampV3: QUOTE_WINDOW (5 min) + SELECTION_WINDOW (10 min) = 15 min
 const OFFRAMP_DEADLINE_SECONDS = 15 * 60;
 
-// ZKP2P staging Orchestrator - hardcoded because SDK version mismatch
+// ZKP2P staging contracts and API
 const ZKP2P_STAGING_ORCHESTRATOR = "0x2466d5B30613309E32a2faFA9b3B3c03eD6c9124" as const;
 const ZKP2P_STAGING_ESCROW = "0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5" as const;
-// Staging API URL - must match the gating service the staging Orchestrator expects
-const ZKP2P_STAGING_API_URL = "https://api-staging.zkp2p.xyz" as const;
+const ZKP2P_API_URL = "https://api.zkp2p.xyz" as const;
 
 // Minimal Orchestrator ABI for signalIntent
 const ORCHESTRATOR_ABI = [
@@ -154,15 +153,12 @@ function useZkp2pClient() {
   return useMemo(() => {
     if (!walletClient) return null;
     try {
-      const apiKey = process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '';
       return new Zkp2pClient({
         walletClient,
         chainId,
-        // Staging API uses Authorization Bearer header, not x-api-key
-        authorizationToken: apiKey,
+        apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
         runtimeEnv: ZKP2P_ENVIRONMENT,
-        // Use staging API URL so the SDK calls the correct gating service
-        baseApiUrl: ZKP2P_STAGING_API_URL,
+        baseApiUrl: ZKP2P_API_URL,
       });
     } catch {
       return null;
