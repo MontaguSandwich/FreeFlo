@@ -669,7 +669,7 @@ export function VenmoToSepaFlow() {
       fiatCurrency: params.fiatCurrencyCode, // Already a bytes32 hash from quote
       conversionRate: params.conversionRate.toString(),
       chainId: chainId.toString(),
-      orchestratorAddress: addresses.orchestrator,
+      orchestratorAddress: ZKP2P_STAGING_ORCHESTRATOR, // Use correct staging Orchestrator, not SDK's
       escrowAddress: params.escrowAddress,
     };
 
