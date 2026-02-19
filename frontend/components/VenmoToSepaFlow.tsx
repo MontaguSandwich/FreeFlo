@@ -656,7 +656,7 @@ export function VenmoToSepaFlow() {
 
     // Build the request body matching SDK's apiSignIntentV2 format exactly
     // Use paymentMethod from quote directly to ensure consistency with intent struct
-    const requestBody = {
+    const requestBody: Record<string, unknown> = {
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
       depositId: params.depositId.toString(),
@@ -669,6 +669,14 @@ export function VenmoToSepaFlow() {
       orchestratorAddress: ZKP2P_STAGING_ORCHESTRATOR, // Use correct staging Orchestrator, not SDK's
       escrowAddress: params.escrowAddress,
     };
+
+    // Include postIntentHook and data if provided - these are part of the signed intent
+    if (params.postIntentHook) {
+      requestBody.postIntentHook = params.postIntentHook;
+    }
+    if (params.data) {
+      requestBody.data = params.data;
+    }
 
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
