@@ -738,7 +738,15 @@ export function VenmoToSepaFlow() {
       const paymentMethodHash = resolvePaymentMethodHashFromCatalog(quote.processorName, catalog);
       const fiatCurrencyHash = resolveFiatCurrencyBytes32(quote.fiatCurrencyCode);
 
-      console.log("Resolved hashes:", { paymentMethodHash, fiatCurrencyHash });
+      console.log("Resolved hashes:", {
+        paymentMethodHash,
+        fiatCurrencyHash,
+        quoteEscrowAddress: quote.escrowAddress,
+        quoteDepositId: quote.depositId,
+        quoteAmount: quote.amount,
+        quoteConversionRate: quote.conversionRate,
+        userAddress: address,
+      });
 
       // First, fetch the gating signature from ZKP2P API
       console.log("Fetching gating signature from ZKP2P API...");
@@ -763,9 +771,9 @@ export function VenmoToSepaFlow() {
       console.log("Got gating signature:", gatingResult);
 
       // Build intent struct for direct Orchestrator call
-      // Use the SAME resolved hashes that were used for the gating signature
+      // Use the SAME values that were sent to the gating API for signing
       const intentStruct = {
-        escrow: ZKP2P_STAGING_ESCROW as `0x${string}`,
+        escrow: quote.escrowAddress as `0x${string}`, // Must match what was signed
         depositId: BigInt(quote.depositId),
         amount: BigInt(quote.amount),
         to: address as `0x${string}`,
@@ -780,7 +788,20 @@ export function VenmoToSepaFlow() {
         data: hookPayload,
       };
 
-      console.log("Direct Orchestrator call with intent:", intentStruct);
+      console.log("Direct Orchestrator call with intent:", {
+        escrow: intentStruct.escrow,
+        depositId: intentStruct.depositId.toString(),
+        amount: intentStruct.amount.toString(),
+        to: intentStruct.to,
+        paymentMethod: intentStruct.paymentMethod,
+        fiatCurrency: intentStruct.fiatCurrency,
+        conversionRate: intentStruct.conversionRate.toString(),
+        referrer: intentStruct.referrer,
+        referrerFee: intentStruct.referrerFee.toString(),
+        signatureExpiration: intentStruct.signatureExpiration.toString(),
+        postIntentHook: intentStruct.postIntentHook,
+        dataLength: intentStruct.data.length,
+      });
 
       // Call Orchestrator directly (bypass SDK)
       const hash = await walletClient.writeContract({
