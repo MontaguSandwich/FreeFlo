@@ -153,12 +153,12 @@ function useZkp2pClient() {
   return useMemo(() => {
     if (!walletClient) return null;
     try {
+      // Let SDK handle API routing based on runtimeEnv
       return new Zkp2pClient({
         walletClient,
         chainId,
         apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
         runtimeEnv: ZKP2P_ENVIRONMENT,
-        baseApiUrl: ZKP2P_API_URL,
       });
     } catch {
       return null;
