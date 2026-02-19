@@ -685,13 +685,18 @@ export function VenmoToSepaFlow() {
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
     try {
-      // Try without API key for staging - production key doesn't work there
+      // Staging API uses Authorization header instead of x-api-key
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      // Only add API key for production
-      if (!ZKP2P_STAGING_API_URL.includes("staging") && apiKey) {
-        headers["x-api-key"] = apiKey;
+      if (apiKey) {
+        if (ZKP2P_STAGING_API_URL.includes("staging")) {
+          // Staging uses Bearer token in Authorization header
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        } else {
+          // Production uses x-api-key
+          headers["x-api-key"] = apiKey;
+        }
       }
 
       const response = await fetch(`${ZKP2P_STAGING_API_URL}/v2/verify/intent`, {
