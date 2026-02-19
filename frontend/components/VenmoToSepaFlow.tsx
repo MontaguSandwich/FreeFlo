@@ -53,6 +53,8 @@ const OFFRAMP_DEADLINE_SECONDS = 15 * 60;
 // ZKP2P staging Orchestrator - hardcoded because SDK version mismatch
 const ZKP2P_STAGING_ORCHESTRATOR = "0x2466d5B30613309E32a2faFA9b3B3c03eD6c9124" as const;
 const ZKP2P_STAGING_ESCROW = "0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5" as const;
+// Staging API URL - must match the gating service the staging Orchestrator expects
+const ZKP2P_STAGING_API_URL = "https://api-staging.zkp2p.xyz" as const;
 
 // Minimal Orchestrator ABI for signalIntent
 const ORCHESTRATOR_ABI = [
@@ -683,7 +685,7 @@ export function VenmoToSepaFlow() {
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
     try {
-      const response = await fetch("https://api.zkp2p.xyz/v2/verify/intent", {
+      const response = await fetch(`${ZKP2P_STAGING_API_URL}/v2/verify/intent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
