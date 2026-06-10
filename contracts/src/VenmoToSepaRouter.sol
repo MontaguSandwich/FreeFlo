@@ -5,39 +5,26 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IPostIntentHookV2 } from "./interfaces/IPostIntentHookV2.sol";
 import { OffRampV3 } from "./OffRampV3.sol";
 
 /**
  * @title VenmoToSepaRouter
- * @notice Routes USDC from ZKP2P onramp to FreeFlo offramp for Venmo→SEPA transfers
- * @dev Implements ZKP2P's IPostIntentHook interface to receive USDC after onramp
+ * @notice Routes USDC from ZKP2P V3 onramp to FreeFlo offramp for Venmo->SEPA transfers
+ * @dev Implements ZKP2P's IPostIntentHookV2 interface (permissionless in V3)
  *
  * Flow:
- * 1. User completes ZKP2P onramp (Venmo USD → USDC) with this contract as postIntentHook
- * 2. ZKP2P calls execute() with USDC approval
- * 3. Router pulls USDC, creates FreeFlo intent, stores pending transfer
- * 4. User calls commit() to select solver quote and commit to SEPA transfer
- * 5. FreeFlo solver fulfills, EUR arrives in user's bank
+ * 1. User calls ZKP2P signalIntent with this contract as postIntentHook and SEPA details in data
+ * 2. User completes Venmo payment and proves via ZKP2P
+ * 3. ZKP2P fulfillIntent triggers execute() on this contract
+ * 4. Router pulls USDC, creates FreeFlo intent, stores pending transfer
+ * 5. User calls commit() to select solver quote and commit to SEPA transfer
+ * 6. FreeFlo solver fulfills, EUR arrives in user's bank
  */
-contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
+contract VenmoToSepaRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     // ============ Structs ============
-
-    /**
-     * @notice ZKP2P Intent struct (must match ZKP2P's Orchestrator.Intent layout)
-     * @dev Only fields we access are listed; extra fields at end are ignored by ABI decoder
-     */
-    struct ZKP2PIntent {
-        bytes32 intentHash;
-        address onRamper;
-        uint256 deposit;
-        uint256 amount;
-        uint256 timestamp;
-        address to;              // The recipient - this is our user
-        address postIntentHook;  // This contract
-        // Additional fields exist in ZKP2P but we don't need them
-    }
 
     /**
      * @notice Status of a pending transfer
@@ -52,7 +39,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice A pending Venmo→SEPA transfer
+     * @notice A pending Venmo->SEPA transfer
      */
     struct PendingTransfer {
         address user;           // User who initiated via ZKP2P
@@ -66,7 +53,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Payload encoded by user when calling ZKP2P fulfillIntent
+     * @notice Payload encoded by user in signalIntent data field
      */
     struct HookPayload {
         string iban;
@@ -95,6 +82,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     event TransferInitiated(
         address indexed user,
         bytes32 indexed intentId,
+        bytes32 indexed zkp2pIntentHash,
         uint256 usdcAmount,
         string iban,
         string recipientName,
@@ -135,6 +123,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     error SlippageExceeded(uint256 quoted, uint256 minimum);
     error NotTimedOutYet();
     error InvalidPayload();
+    error TokenMismatch();
 
     // ============ Constructor ============
 
@@ -148,53 +137,72 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         zkp2pOrchestrator = _zkp2pOrchestrator;
     }
 
-    // ============ ZKP2P Hook (Entry Point) ============
+    // ============ ZKP2P V3 Hook (Entry Point) ============
 
     /**
-     * @notice Called by ZKP2P Orchestrator after user completes onramp
-     * @dev Implements IPostIntentHook.execute
-     * @param _intent The ZKP2P intent data
-     * @param _amountNetFees USDC amount after ZKP2P fees
-     * @param _fulfillIntentData Encoded HookPayload (iban, recipientName, minEurAmount)
+     * @notice Called by ZKP2P OrchestratorV2 after intent fulfillment
+     * @dev Implements IPostIntentHookV2.execute
+     * @param _ctx Execution context containing intent details and token amount
+     * @param _fulfillHookData Additional data from fulfillIntent (unused, payload is in signalHookData)
      */
     function execute(
-        ZKP2PIntent calldata _intent,
-        uint256 _amountNetFees,
-        bytes calldata _fulfillIntentData
-    ) external nonReentrant {
+        HookExecutionContext calldata _ctx,
+        bytes calldata _fulfillHookData
+    ) external override nonReentrant {
+        // Silence unused parameter warning
+        _fulfillHookData;
+
         // Only ZKP2P Orchestrator can call this
         if (msg.sender != zkp2pOrchestrator) revert OnlyZKP2POrchestrator();
 
-        // Get user address from intent
-        address user = _intent.to;
+        // Verify token is USDC
+        if (_ctx.token != address(usdc)) revert TokenMismatch();
 
-        // Check user doesn't have existing pending transfer
-        if (pendingTransfers[user].status == TransferStatus.PENDING) {
+        // Get user address from intent context
+        address user = _ctx.intent.to;
+
+        // Block a new transfer while the user has an active one. Allowing a second
+        // onramp during PENDING *or* COMMITTED would overwrite the single slot and
+        // orphan the first intent, stranding its USDC.
+        TransferStatus existing = pendingTransfers[user].status;
+        if (existing == TransferStatus.PENDING || existing == TransferStatus.COMMITTED) {
             revert UserAlreadyHasPendingTransfer();
         }
 
-        // Decode payload
-        HookPayload memory payload = _decodePayload(_fulfillIntentData);
+        // Decode payload from signalHookData (passed during signalIntent)
+        HookPayload memory payload = _decodePayload(_ctx.intent.signalHookData);
 
-        // Validate payload
-        if (bytes(payload.iban).length == 0 || bytes(payload.recipientName).length == 0) {
+        // Validate payload, including the same length bounds OffRampV3 enforces
+        // (receivingInfo <= 256, recipientName <= 70). Checking here fails fast
+        // instead of trapping USDC until commit() later reverts.
+        if (bytes(payload.iban).length == 0 || bytes(payload.iban).length > 256) {
+            revert InvalidPayload();
+        }
+        if (bytes(payload.recipientName).length == 0 || bytes(payload.recipientName).length > 70) {
             revert InvalidPayload();
         }
 
         // Pull USDC from Orchestrator (we have approval)
-        usdc.safeTransferFrom(msg.sender, address(this), _amountNetFees);
+        uint256 amount = _ctx.executableAmount;
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Approve OffRampV3 to pull USDC for intent creation
+        usdc.forceApprove(address(offRamp), amount);
 
         // Create FreeFlo intent (Router is depositor)
         bytes32 freefloIntentId = offRamp.createIntent(
-            _amountNetFees,
+            amount,
             OffRampV3.Currency.EUR
         );
+
+        // Reset approval
+        usdc.forceApprove(address(offRamp), 0);
 
         // Store pending transfer
         pendingTransfers[user] = PendingTransfer({
             user: user,
             intentId: freefloIntentId,
-            usdcAmount: _amountNetFees,
+            usdcAmount: amount,
             iban: payload.iban,
             recipientName: payload.recipientName,
             minEurAmount: payload.minEurAmount,
@@ -205,7 +213,8 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         emit TransferInitiated(
             user,
             freefloIntentId,
-            _amountNetFees,
+            _ctx.intentHash,
+            amount,
             payload.iban,
             payload.recipientName,
             payload.minEurAmount
@@ -215,23 +224,24 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     // ============ User Functions ============
 
     /**
-     * @notice Commit to a solver's quote and initiate SEPA transfer
-     * @param solver The solver address from the quote
-     * @param quotedEurAmount EUR amount from solver's quote (for slippage check)
+     * @notice Commit to a solver's quote and initiate the SEPA transfer.
+     * @param solver The solver whose on-chain quote to accept.
+     * @dev Slippage is enforced against the REAL on-chain quote, not a
+     *      caller-supplied number — a solver cannot quote a low figure on-chain
+     *      while the user "commits" to a fabricated higher one.
      */
-    function commit(
-        address solver,
-        uint256 quotedEurAmount
-    ) external nonReentrant {
+    function commit(address solver) external nonReentrant {
         PendingTransfer storage transfer = pendingTransfers[msg.sender];
 
         // Validate state
         if (transfer.user == address(0)) revert NoPendingTransfer();
         if (transfer.status != TransferStatus.PENDING) revert TransferNotPending();
 
-        // Check slippage
-        if (quotedEurAmount < transfer.minEurAmount) {
-            revert SlippageExceeded(quotedEurAmount, transfer.minEurAmount);
+        // Read the real on-chain quote and enforce slippage against it.
+        uint256 realEurAmount =
+            offRamp.getQuote(transfer.intentId, solver, OffRampV3.RTPN.SEPA_INSTANT).fiatAmount;
+        if (realEurAmount < transfer.minEurAmount) {
+            revert SlippageExceeded(realEurAmount, transfer.minEurAmount);
         }
 
         // Approve OffRampV3 to pull USDC
@@ -252,17 +262,12 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         // Update status
         transfer.status = TransferStatus.COMMITTED;
 
-        emit TransferCommitted(
-            msg.sender,
-            transfer.intentId,
-            solver,
-            quotedEurAmount
-        );
+        emit TransferCommitted(msg.sender, transfer.intentId, solver, realEurAmount);
     }
 
     /**
      * @notice Cancel pending transfer and reclaim USDC
-     * @dev Can only cancel if still in PENDING status and within FreeFlo's window
+     * @dev Can only cancel if still in PENDING status
      */
     function cancel() external nonReentrant {
         PendingTransfer storage transfer = pendingTransfers[msg.sender];
@@ -270,10 +275,6 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
         // Validate state
         if (transfer.user == address(0)) revert NoPendingTransfer();
         if (transfer.status != TransferStatus.PENDING) revert TransferNotPending();
-
-        // Note: We need to wait for FreeFlo's quote+selection window to expire
-        // before we can cancel the intent. For now, we'll just return the USDC
-        // directly since we haven't committed yet (USDC is still in Router).
 
         uint256 amount = transfer.usdcAmount;
         bytes32 intentId = transfer.intentId;
@@ -316,6 +317,34 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     }
 
     /**
+     * @notice Rescue a committed transfer whose solver never fulfilled (permissionless).
+     * @dev After OffRampV3's fulfillment window, cancels the intent (returning USDC
+     *      to this router as depositor) and forwards it to the user. cancelIntent's
+     *      own CannotCancelYet enforces the timeout.
+     * @param user The user whose committed transfer to rescue
+     */
+    function rescueCommitted(address user) external nonReentrant {
+        PendingTransfer storage transfer = pendingTransfers[user];
+
+        if (transfer.user == address(0)) revert NoPendingTransfer();
+        if (transfer.status != TransferStatus.COMMITTED) revert TransferNotCommitted();
+
+        uint256 amount = transfer.usdcAmount;
+        bytes32 intentId = transfer.intentId;
+
+        // Mark expired before external calls (reentrancy hygiene).
+        transfer.status = TransferStatus.EXPIRED;
+
+        // Reclaim USDC from OffRampV3 (reverts CannotCancelYet until the window passes).
+        offRamp.cancelIntent(intentId);
+
+        // Forward the reclaimed USDC to the user.
+        usdc.safeTransfer(user, amount);
+
+        emit TransferExpired(user, intentId, amount);
+    }
+
+    /**
      * @notice Mark transfer as complete (call after solver fulfills)
      * @param user The user whose transfer completed
      */
@@ -348,7 +377,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Check if user can commit (has pending transfer and quotes available)
+     * @notice Check if user can commit (has pending transfer and within timeout)
      */
     function canCommit(address user) external view returns (bool) {
         PendingTransfer storage transfer = pendingTransfers[user];
@@ -358,7 +387,7 @@ contract VenmoToSepaRouter is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Encode payload for ZKP2P fulfillIntent call
+     * @notice Encode payload for signalIntent data field
      * @dev Helper for frontend to encode the hook data
      */
     function encodePayload(
