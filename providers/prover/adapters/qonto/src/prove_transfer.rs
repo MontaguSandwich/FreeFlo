@@ -45,13 +45,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing_subscriber::fmt::init();
 
-    // Get Qonto credentials from environment
-    let api_key_login =
-        env::var("QONTO_API_KEY_LOGIN").expect("QONTO_API_KEY_LOGIN environment variable required");
-    let api_key_secret = env::var("QONTO_API_KEY_SECRET")
-        .expect("QONTO_API_KEY_SECRET environment variable required");
+    // Qonto credentials. API-key login/secret are optional because OAuth
+    // (QONTO_ACCESS_TOKEN) is an alternative auth path used by the sandbox.
+    let api_key_login = env::var("QONTO_API_KEY_LOGIN").unwrap_or_default();
+    let api_key_secret = env::var("QONTO_API_KEY_SECRET").unwrap_or_default();
     let bank_account_slug = env::var("QONTO_BANK_ACCOUNT_SLUG")
         .expect("QONTO_BANK_ACCOUNT_SLUG environment variable required");
+
+    // Sandbox / auth config: QONTO_HOST overrides the default prod host (point it at
+    // the sandbox host for testing); staging token + bearer token are sandbox/OAuth.
+    let qonto_host = env::var("QONTO_HOST").unwrap_or_else(|_| QONTO_HOST.to_string());
+    let staging_token = env::var("QONTO_STAGING_TOKEN").ok();
+    let access_token = env::var("QONTO_ACCESS_TOKEN").ok();
 
     // Optional: filter by reference (our intent reference)
     let reference_filter = env::var("QONTO_REFERENCE").ok();
@@ -72,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🏦 Qonto TLSNotary Transfer Prover");
     println!("===================================");
-    println!("API Endpoint: {}{}", QONTO_HOST, api_path);
+    println!("API Endpoint: {}{}", qonto_host, api_path);
     if let Some(ref_filter) = &reference_filter {
         println!("Reference Filter: {}", ref_filter);
     }
@@ -96,8 +101,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         request_tx,
         attestation_rx,
         &api_path,
+        &qonto_host,
         &api_key_login,
         &api_key_secret,
+        access_token.as_deref(),
+        staging_token.as_deref(),
     )
     .await?;
 
@@ -109,15 +117,18 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
     req_tx: Sender<AttestationRequest>,
     resp_rx: Receiver<Attestation>,
     api_path: &str,
+    host: &str,
     api_key_login: &str,
     api_key_secret: &str,
+    access_token: Option<&str>,
+    staging_token: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Use default TLS config with system root certificates
     let tls_config = TlsConfig::builder().build().unwrap();
 
     // Set up protocol configuration for prover
     let prover_config = ProverConfig::builder()
-        .server_name(ServerName::Dns(QONTO_HOST.try_into().unwrap()))
+        .server_name(ServerName::Dns(host.try_into().unwrap()))
         .tls_config(tls_config)
         .protocol_config(
             ProtocolConfig::builder()
@@ -131,8 +142,8 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
     let prover = Prover::new(prover_config).setup(socket.compat()).await?;
 
     // Connect to Qonto API
-    info!("Connecting to {}:{}", QONTO_HOST, QONTO_PORT);
-    let client_socket = TcpStream::connect((QONTO_HOST, QONTO_PORT)).await?;
+    info!("Connecting to {}:{}", host, QONTO_PORT);
+    let client_socket = TcpStream::connect((host, QONTO_PORT)).await?;
 
     // Bind the prover to the server connection
     let (mpc_tls_connection, prover_fut) = prover.connect(client_socket.compat()).await?;
@@ -147,17 +158,27 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
 
     tokio::spawn(connection);
 
-    // Build Qonto API request with authentication
-    let auth_header = format!("{}:{}", api_key_login, api_key_secret);
+    // Authorization header: OAuth bearer if an access token is present, otherwise
+    // Qonto's api-key "login:secret" scheme.
+    let auth_header = match access_token {
+        Some(token) => format!("Bearer {}", token),
+        None => format!("{}:{}", api_key_login, api_key_secret),
+    };
 
-    let request = Request::builder()
+    let mut req_builder = Request::builder()
         .uri(api_path)
-        .header("Host", QONTO_HOST)
+        .header("Host", host)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "identity") // No compression
         .header("Connection", "close")
-        .header("Authorization", &auth_header)
-        .body(Empty::<Bytes>::new())?;
+        .header("Authorization", &auth_header);
+
+    // Qonto sandbox requires the staging token header.
+    if let Some(token) = staging_token {
+        req_builder = req_builder.header("X-Qonto-Staging-Token", token);
+    }
+
+    let request = req_builder.body(Empty::<Bytes>::new())?;
 
     info!("Sending MPC-TLS request to Qonto API");
 
@@ -234,7 +255,7 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
     request_config_builder.transcript_commit(transcript_commit);
     let request_config = request_config_builder.build()?;
 
-    let (attestation, secrets) = notarize(prover, &request_config, req_tx, resp_rx).await?;
+    let (attestation, secrets) = notarize(prover, &request_config, host, req_tx, resp_rx).await?;
 
     // Save attestation and secrets
     let attestation_path = "qonto_transfer.attestation.tlsn";
@@ -258,6 +279,7 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
 async fn notarize(
     mut prover: Prover<Committed>,
     config: &RequestConfig,
+    host: &str,
     request_tx: Sender<AttestationRequest>,
     attestation_rx: Receiver<Attestation>,
 ) -> Result<(Attestation, Secrets), Box<dyn std::error::Error>> {
@@ -283,7 +305,7 @@ async fn notarize(
     let mut builder = AttestationRequest::builder(config);
 
     builder
-        .server_name(ServerName::Dns(QONTO_HOST.try_into().unwrap()))
+        .server_name(ServerName::Dns(host.try_into().unwrap()))
         .handshake_data(HandshakeData {
             certs: tls_transcript
                 .server_cert_chain()
