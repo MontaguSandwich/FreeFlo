@@ -5,20 +5,24 @@ import { Script, console } from "forge-std/Script.sol";
 import { VenmoToSepaRouter } from "../src/VenmoToSepaRouter.sol";
 
 contract DeployRouterScript is Script {
-    // Base Sepolia addresses
+    // Base Mainnet addresses
+    address constant USDC_BASE_MAINNET = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant OFFRAMP_V3_BASE_MAINNET = 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D;
+
+    // ZKP2P V3 OrchestratorV2 address on Base (permissionless PostIntentHook)
+    address constant ZKP2P_V3_ORCHESTRATOR = 0x888888359E981B5225CA48fbCdCeff702FC3b888;
+
+    // Base Sepolia addresses (for testing)
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address constant OFFRAMP_V3_BASE_SEPOLIA = 0x34249F4AB741F0661A38651A08213DDe1469b60f;
-
-    // ZKP2P Orchestrator address on Base
-    address constant ZKP2P_ORCHESTRATOR = 0x88888883Ed048FF0a415271B28b2F52d431810D0;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
-        // Allow override via env vars
-        address zkp2pOrchestrator = vm.envOr("ZKP2P_ORCHESTRATOR", ZKP2P_ORCHESTRATOR);
-        address offRampV3 = vm.envOr("OFFRAMP_V3_ADDRESS", OFFRAMP_V3_BASE_SEPOLIA);
-        address usdc = vm.envOr("USDC_ADDRESS", USDC_BASE_SEPOLIA);
+        // Default to mainnet addresses, allow override via env vars
+        address zkp2pOrchestrator = vm.envOr("ZKP2P_ORCHESTRATOR", ZKP2P_V3_ORCHESTRATOR);
+        address offRampV3 = vm.envOr("OFFRAMP_V3_ADDRESS", OFFRAMP_V3_BASE_MAINNET);
+        address usdc = vm.envOr("USDC_ADDRESS", USDC_BASE_MAINNET);
 
         require(zkp2pOrchestrator != address(0), "ZKP2P_ORCHESTRATOR not set");
 
@@ -40,14 +44,13 @@ contract DeployRouterScript is Script {
         console.log("");
         console.log("=== Deployment Summary ===");
         console.log("Chain ID:", block.chainid);
-        console.log("VenmoToSepaRouter:", address(router));
+        console.log("VenmoToSepaRouter V3:", address(router));
         console.log("");
         console.log("Next steps:");
-        console.log("1. Register router in ZKP2P PostIntentHookRegistry");
-        console.log("2. Update frontend with router address");
-        console.log("3. Test the full flow");
+        console.log("1. Update frontend/lib/router-contracts.ts with router address");
+        console.log("2. Test the full flow (V3 is permissionless - no registration needed!)");
         console.log("");
-        console.log("Add to .env:");
-        console.log("  VENMO_TO_SEPA_ROUTER=", address(router));
+        console.log("Add to frontend/lib/router-contracts.ts:");
+        console.log("  export const VENMO_TO_SEPA_ROUTER_V3 = \"", address(router), "\" as const;");
     }
 }
