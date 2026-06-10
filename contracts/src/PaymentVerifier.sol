@@ -26,9 +26,6 @@ contract PaymentVerifier is Ownable {
     /// @notice Used nullifiers (payment IDs) to prevent replay
     mapping(bytes32 => bool) public usedNullifiers;
 
-    /// @notice Minimum required witnesses for a valid attestation
-    uint256 public minWitnesses = 1;
-
     // ============ Structs ============
 
     /// @notice Payment attestation data
@@ -44,7 +41,6 @@ contract PaymentVerifier is Ownable {
 
     event WitnessAdded(address indexed witness);
     event WitnessRemoved(address indexed witness);
-    event MinWitnessesUpdated(uint256 oldMin, uint256 newMin);
     event PaymentVerified(
         bytes32 indexed intentHash, bytes32 indexed nullifier, uint256 amount, address verifiedBy
     );
@@ -53,10 +49,7 @@ contract PaymentVerifier is Ownable {
 
     error InvalidSignature();
     error NullifierAlreadyUsed();
-    error InsufficientWitnesses();
     error NotAuthorizedWitness();
-    error InvalidAttestation();
-    error TimestampTooOld();
 
     // ============ Constructor ============
 
@@ -188,13 +181,6 @@ contract PaymentVerifier is Ownable {
     function removeWitness(address witness) external onlyOwner {
         authorizedWitnesses[witness] = false;
         emit WitnessRemoved(witness);
-    }
-
-    /// @notice Updates the minimum required witnesses
-    /// @param newMin The new minimum
-    function setMinWitnesses(uint256 newMin) external onlyOwner {
-        emit MinWitnessesUpdated(minWitnesses, newMin);
-        minWitnesses = newMin;
     }
 }
 

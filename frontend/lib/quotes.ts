@@ -198,55 +198,6 @@ export interface RTPNQuote {
   expiresAt: number;
 }
 
-// Mock exchange rates
-const MOCK_RATES: Record<Currency, number> = {
-  EUR: 0.92,
-  GBP: 0.79,
-  USD: 1.00,
-  BRL: 5.05,
-  INR: 83.12,
-};
-
-// Mock solvers with their supported RTPNs
-const MOCK_SOLVERS: Array<SolverInfo & { supportedRtpns: RTPN[]; feeMultiplier: number }> = [
-  {
-    address: '0x1234567890abcdef1234567890abcdef12345678',
-    name: 'SwiftSolver',
-    avatar: '⚡',
-    rating: 4.9,
-    totalFulfilled: 1247,
-    supportedRtpns: ['SEPA_INSTANT', 'FPS', 'FEDNOW', 'PIX', 'UPI'],
-    feeMultiplier: 1.0,
-  },
-  {
-    address: '0xabcdef1234567890abcdef1234567890abcdef12',
-    name: 'EuroRails',
-    avatar: '🚄',
-    rating: 4.7,
-    totalFulfilled: 892,
-    supportedRtpns: ['SEPA_INSTANT', 'SEPA_STANDARD', 'FPS', 'BACS'],
-    feeMultiplier: 0.8,
-  },
-  {
-    address: '0x9876543210fedcba9876543210fedcba98765432',
-    name: 'GlobalPay',
-    avatar: '🌍',
-    rating: 4.8,
-    totalFulfilled: 2103,
-    supportedRtpns: ['SEPA_INSTANT', 'FPS', 'FEDNOW', 'ACH', 'PIX', 'UPI', 'IMPS'],
-    feeMultiplier: 1.1,
-  },
-  {
-    address: '0xfedcba9876543210fedcba9876543210fedcba98',
-    name: 'ValueMax',
-    avatar: '💰',
-    rating: 4.5,
-    totalFulfilled: 456,
-    supportedRtpns: ['SEPA_STANDARD', 'BACS', 'ACH', 'TED'],
-    feeMultiplier: 0.5,
-  },
-];
-
 // Fetch real quotes from solver API (via Next.js proxy to avoid CORS/mixed-content)
 export async function fetchQuotesByRtpn(
   usdcAmount: number,
@@ -311,75 +262,6 @@ export async function fetchQuotesByRtpn(
 
   // No fallback — return empty array when solver API is unavailable
   return [];
-}
-
-// Mock quote generation (fallback)
-async function fetchMockQuotes(
-  usdcAmount: number,
-  currency: Currency
-): Promise<RTPNQuote[]> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 300));
-
-  const rtpns = getRtpnsForCurrency(currency);
-  const baseRate = MOCK_RATES[currency];
-  const quotes: RTPNQuote[] = [];
-
-  for (const rtpn of rtpns) {
-    const rtpnInfo = RTPN_CONFIG[rtpn];
-    
-    // Find solvers that support this RTPN
-    const supportingSolvers = MOCK_SOLVERS.filter(s => s.supportedRtpns.includes(rtpn));
-    
-    if (supportingSolvers.length === 0) continue;
-
-    // Generate quotes from each solver and pick the best
-    const solverQuotes = supportingSolvers.map(solver => {
-      const rateVariation = 0.995 + Math.random() * 0.01;
-      const baseFeePercent = rtpnInfo.speed === 'instant' 
-        ? 0.5 + solver.feeMultiplier * 0.3 
-        : 0.2 + solver.feeMultiplier * 0.15;
-      
-      const fee = usdcAmount * (baseFeePercent / 100);
-      const effectiveAmount = usdcAmount - fee;
-      const exchangeRate = baseRate * rateVariation;
-      const outputAmount = effectiveAmount * exchangeRate;
-
-      const timeVariation = 0.8 + Math.random() * 0.4;
-      const estimatedSeconds = Math.round(rtpnInfo.avgSeconds * timeVariation);
-
-      return {
-        rtpn,
-        rtpnInfo,
-        solver: {
-          address: solver.address,
-          name: solver.name,
-          avatar: solver.avatar,
-          rating: solver.rating,
-          totalFulfilled: solver.totalFulfilled,
-        },
-        inputAmount: usdcAmount,
-        outputAmount: Math.round(outputAmount * 100) / 100,
-        fee: Math.round(fee * 100) / 100,
-        feePercent: Math.round(baseFeePercent * 100) / 100,
-        exchangeRate: Math.round(exchangeRate * 10000) / 10000,
-        estimatedSeconds,
-        expiresAt: Date.now() + 5 * 60 * 1000,
-      };
-    });
-
-    // Pick the best quote (highest output amount)
-    const bestQuote = solverQuotes.sort((a, b) => b.outputAmount - a.outputAmount)[0];
-    quotes.push(bestQuote);
-  }
-
-  // Sort by speed (instant first), then by output amount
-  return quotes.sort((a, b) => {
-    const speedOrder = { instant: 0, fast: 1, standard: 2 };
-    const speedDiff = speedOrder[a.rtpnInfo.speed] - speedOrder[b.rtpnInfo.speed];
-    if (speedDiff !== 0) return speedDiff;
-    return b.outputAmount - a.outputAmount;
-  });
 }
 
 // Validate IBAN using ISO 13616 mod-97 checksum algorithm

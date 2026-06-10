@@ -19,7 +19,6 @@ contract PaymentVerifierTest is Test {
 
     function test_InitialState() public view {
         assertTrue(verifier.authorizedWitnesses(witness));
-        assertEq(verifier.minWitnesses(), 1);
     }
 
     function test_VerifyValidPayment() public {
