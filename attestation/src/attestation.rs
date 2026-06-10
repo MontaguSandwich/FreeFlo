@@ -9,8 +9,15 @@ use crate::verification::{verify_presentation, VerifiedPayment};
 /// Request to create an attestation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttestationRequest {
-    /// Base64-encoded TLSNotary presentation
+    /// Base64-encoded TLSNotary presentation of the transfer (status + amount).
     pub presentation: String,
+
+    /// Base64-encoded TLSNotary presentation of the beneficiary record (recipient
+    /// IBAN). Qonto serves status+amount (transfer) and the IBAN (beneficiary) on
+    /// separate endpoints and won't keep one notarized connection open for both, so
+    /// the IBAN is proven separately and bound here via beneficiary_id.
+    #[serde(default)]
+    pub beneficiary_presentation: Option<String>,
 
     /// Intent hash this payment is for
     pub intent_hash: String,
@@ -64,14 +71,12 @@ pub fn verify_payment_presentation(
     request: &AttestationRequest,
     config: &Config,
 ) -> Result<VerifiedPayment, AttestationError> {
-    // Decode the base64 presentation.
-    let presentation_bytes = base64::engine::general_purpose::STANDARD
+    // --- Proof 1: the transfer (status + amount + transfer.beneficiary_id) ---
+    let transfer_bytes = base64::engine::general_purpose::STANDARD
         .decode(&request.presentation)
         .map_err(|e| AttestationError::DeserializationError(format!("Invalid base64: {}", e)))?;
-
-    // Verify the presentation and pin the notary key.
-    let verified = verify_presentation(
-        &presentation_bytes,
+    let mut verified = verify_presentation(
+        &transfer_bytes,
         &config.allowed_servers,
         config.notary_keys(),
     )?;
@@ -85,6 +90,42 @@ pub fn verify_payment_presentation(
                 other.unwrap_or("<missing>").to_string(),
             ))
         }
+    }
+
+    // --- Proof 2: the beneficiary (recipient IBAN) ---
+    // Qonto splits the IBAN onto the beneficiary record, proven on a separate
+    // connection. Required: without it we cannot bind the recipient to the intent.
+    let beneficiary_b64 = request
+        .beneficiary_presentation
+        .as_deref()
+        .ok_or_else(|| AttestationError::MissingField("beneficiary_presentation".to_string()))?;
+    let beneficiary_bytes = base64::engine::general_purpose::STANDARD
+        .decode(beneficiary_b64)
+        .map_err(|e| AttestationError::DeserializationError(format!("Invalid base64: {}", e)))?;
+    let beneficiary = verify_presentation(
+        &beneficiary_bytes,
+        &config.allowed_servers,
+        config.notary_keys(),
+    )?;
+
+    // Bind the two proofs: the proven beneficiary MUST be the transfer's beneficiary,
+    // else a solver could staple on a beneficiary proof for an unrelated IBAN.
+    match (
+        verified.beneficiary_id.as_deref(),
+        beneficiary.beneficiary_id.as_deref(),
+    ) {
+        (Some(t), Some(b)) if t == b => {}
+        _ => {
+            return Err(AttestationError::InvalidPaymentData(
+                "transfer.beneficiary_id does not match the proven beneficiary.id".to_string(),
+            ))
+        }
+    }
+
+    // Carry the proven IBAN onto the transfer's verified payment for on-chain binding.
+    verified.beneficiary_iban = beneficiary.beneficiary_iban;
+    if verified.beneficiary_iban.is_none() {
+        return Err(AttestationError::MissingField("beneficiary_iban".to_string()));
     }
 
     Ok(verified)

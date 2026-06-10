@@ -35,7 +35,7 @@ const QONTO_HOST: &str = "thirdparty.qonto.com";
 const QONTO_PORT: u16 = 443;
 
 // TLSNotary limits - adjust based on expected request/response sizes
-const MAX_SENT_DATA: usize = 1024; // 1KB for request
+const MAX_SENT_DATA: usize = 4096; // two GETs (transfer + beneficiary) on one connection
 const MAX_RECV_DATA: usize = 32 * 1024; // 32KB for response (transaction list can be larger)
 
 #[tokio::main]
@@ -49,8 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (QONTO_ACCESS_TOKEN) is an alternative auth path used by the sandbox.
     let api_key_login = env::var("QONTO_API_KEY_LOGIN").unwrap_or_default();
     let api_key_secret = env::var("QONTO_API_KEY_SECRET").unwrap_or_default();
-    let bank_account_slug = env::var("QONTO_BANK_ACCOUNT_SLUG")
-        .expect("QONTO_BANK_ACCOUNT_SLUG environment variable required");
+    // No longer used for the query (we fetch the transfer + beneficiary by id), but
+    // kept optional so a stale env value doesn't crash the prover.
+    let _bank_account_slug = env::var("QONTO_BANK_ACCOUNT_SLUG").unwrap_or_default();
 
     // Sandbox / auth config: QONTO_HOST overrides the default prod host (point it at
     // the sandbox host for testing); staging token + bearer token are sandbox/OAuth.
@@ -58,29 +59,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let staging_token = env::var("QONTO_STAGING_TOKEN").ok();
     let access_token = env::var("QONTO_ACCESS_TOKEN").ok();
 
-    // Optional: filter by reference (our intent reference)
-    let reference_filter = env::var("QONTO_REFERENCE").ok();
-
-    // Build the API path
-    let api_path = if let Some(ref reference) = reference_filter {
-        format!(
-            "/v2/transactions?slug={}&per_page=1&reference={}",
-            bank_account_slug,
-            urlencoding::encode(reference)
-        )
-    } else {
-        format!(
-            "/v2/transactions?slug={}&per_page=1&side=debit&status=completed",
-            bank_account_slug
-        )
-    };
+    // The exact API path to prove. The solver runs this prover twice — once for the
+    // transfer (/v2/sepa/transfers/{id}: status + amount + beneficiary_id) and once
+    // for the beneficiary (/v2/beneficiaries/{id}: recipient IBAN) — because Qonto
+    // won't serve both on one notarized connection. The attestation binds the two.
+    let api_path = env::var("QONTO_PROVE_PATH")
+        .expect("QONTO_PROVE_PATH environment variable required");
 
     println!("🏦 Qonto TLSNotary Transfer Prover");
     println!("===================================");
-    println!("API Endpoint: {}{}", qonto_host, api_path);
-    if let Some(ref_filter) = &reference_filter {
-        println!("Reference Filter: {}", ref_filter);
-    }
+    println!("Proving path: {}", api_path);
     println!();
 
     // Create prover-notary channel (in-memory for this example)
@@ -180,14 +168,11 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
 
     let request = req_builder.body(Empty::<Bytes>::new())?;
 
-    info!("Sending MPC-TLS request to Qonto API");
+    info!("Sending MPC-TLS request to Qonto API: {}", api_path);
 
-    // Send request and get response
     let response = request_sender.send_request(request).await?;
     let status = response.status();
-
     info!("Got response from Qonto: {}", status);
-
     if status != StatusCode::OK {
         return Err(format!("Qonto API returned error: {}", status).into());
     }
@@ -197,50 +182,23 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
 
     // Parse the HTTP transcript
     let transcript = HttpTranscript::parse(prover.transcript())?;
+    info!(
+        "Captured {} request(s), {} response(s)",
+        transcript.requests.len(),
+        transcript.responses.len()
+    );
 
-    // Parse and display transaction info
-    if let Some(body) = &transcript.responses[0].body {
+    // Emit the beneficiary_id from a transfer response so the caller can prove the
+    // matching beneficiary record next. No-op for a beneficiary-endpoint proof.
+    if let Some(body) = transcript.responses.get(0).and_then(|r| r.body.as_ref()) {
         let body_str = String::from_utf8_lossy(body.content.span().as_bytes());
-
-        // Parse JSON to show transaction details
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_str) {
-            if let Some(transactions) = json.get("transactions").and_then(|t| t.as_array()) {
-                if let Some(tx) = transactions.first() {
-                    println!("\n📋 Transaction Found:");
-                    println!(
-                        "   ID: {}",
-                        tx.get("id").and_then(|v| v.as_str()).unwrap_or("N/A")
-                    );
-                    println!(
-                        "   Amount: €{:.2}",
-                        tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0)
-                    );
-                    println!(
-                        "   Amount (cents): {}",
-                        tx.get("amount_cents").and_then(|v| v.as_i64()).unwrap_or(0)
-                    );
-                    println!(
-                        "   Status: {}",
-                        tx.get("status").and_then(|v| v.as_str()).unwrap_or("N/A")
-                    );
-                    println!(
-                        "   Reference: {}",
-                        tx.get("reference")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("N/A")
-                    );
-                    if let Some(transfer) = tx.get("transfer") {
-                        println!(
-                            "   Beneficiary IBAN: {}",
-                            transfer
-                                .get("counterparty_account_number")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("N/A")
-                        );
-                    }
-                } else {
-                    println!("\n⚠ No transactions found matching criteria");
-                }
+            if let Some(bid) = json
+                .get("transfer")
+                .and_then(|t| t.get("beneficiary_id"))
+                .and_then(|v| v.as_str())
+            {
+                println!("BENEFICIARY_ID={}", bid);
             }
         }
     }

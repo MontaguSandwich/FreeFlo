@@ -30,6 +30,10 @@ pub struct VerifiedPayment {
     
     /// Transaction status
     pub status: Option<String>,
+
+    /// Beneficiary linkage id: `transfer.beneficiary_id` from a transfer proof, or
+    /// `beneficiary.id` from a beneficiary proof. The two proofs must agree.
+    pub beneficiary_id: Option<String>,
 }
 
 /// Verify a TLSNotary presentation and extract payment information
@@ -86,23 +90,50 @@ pub fn verify_presentation(
     // Mark unauthenticated bytes
     partial_transcript.set_unauthed(b'X');
     
-    // Extract the response body from the received data
+    // A single proof is one of two shapes (Qonto won't serve both on one connection):
+    //   transfer:    {"transfer":{ id, status, amount_cents, beneficiary_id }}
+    //   beneficiary: {"beneficiary":{ id, bank_account:{ iban } }}
+    // verify_payment_presentation() verifies BOTH proofs and binds them via the
+    // beneficiary_id (transfer.beneficiary_id must equal beneficiary.id).
     let received = String::from_utf8_lossy(partial_transcript.received_unsafe());
-    
-    // Parse HTTP response to extract JSON body
-    let response_body = extract_json_body(&received)?;
-    
-    // Extract payment details from JSON
-    let (transaction_id, amount_cents, beneficiary_iban, status) = parse_payment_details(&response_body)?;
-    
+
+    let mut status: Option<String> = None;
+    let mut amount_cents: Option<i64> = None;
+    let mut transaction_id: Option<String> = None;
+    let mut beneficiary_iban: Option<String> = None;
+    let mut beneficiary_id: Option<String> = None;
+
+    for obj in extract_json_objects(&received) {
+        let value: serde_json::Value = match serde_json::from_str(&obj) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(t) = value.get("transfer") {
+            status = t.get("status").and_then(|v| v.as_str()).map(String::from);
+            amount_cents = t.get("amount_cents").and_then(|v| v.as_i64());
+            transaction_id = t.get("id").and_then(|v| v.as_str()).map(String::from);
+            beneficiary_id =
+                t.get("beneficiary_id").and_then(|v| v.as_str()).map(String::from);
+        }
+        if let Some(b) = value.get("beneficiary") {
+            beneficiary_iban = b
+                .get("bank_account")
+                .and_then(|ba| ba.get("iban"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            beneficiary_id = b.get("id").and_then(|v| v.as_str()).map(String::from);
+        }
+    }
+
     Ok(VerifiedPayment {
         server_name,
         timestamp: connection_info.time,
-        response_body,
+        response_body: received.into_owned(),
         transaction_id,
         amount_cents,
         beneficiary_iban,
         status,
+        beneficiary_id,
     })
 }
 
@@ -158,6 +189,59 @@ fn extract_json_body(response: &str) -> Result<String, AttestationError> {
     // Try to reconstruct a minimal JSON from visible content
     // For now, return the raw visible content for debugging
     Ok(format!("{{\"_visible_content\": {:?}}}", visible_content))
+}
+
+/// Extract every balanced top-level JSON object from a transcript that may contain
+/// multiple concatenated HTTP responses. String-aware brace matching so braces inside
+/// JSON string values don't throw off the depth count.
+fn extract_json_objects(s: &str) -> Vec<String> {
+    let bytes = s.as_bytes();
+    let mut objects = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'{' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut depth = 0i32;
+        let mut in_str = false;
+        let mut esc = false;
+        let mut j = i;
+        while j < bytes.len() {
+            let c = bytes[j];
+            if in_str {
+                if esc {
+                    esc = false;
+                } else if c == b'\\' {
+                    esc = true;
+                } else if c == b'"' {
+                    in_str = false;
+                }
+            } else {
+                match c {
+                    b'"' => in_str = true,
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            j += 1;
+        }
+        if depth == 0 && j < bytes.len() {
+            // start is at '{', j is at the matching '}', both ASCII => char boundaries.
+            objects.push(s[start..=j].to_string());
+            i = j + 1;
+        } else {
+            break; // unbalanced (truncated/redacted) — stop
+        }
+    }
+    objects
 }
 
 /// Extract visible (non-redacted) content from a selectively disclosed transcript
@@ -344,6 +428,35 @@ mod tests {
         assert_eq!(amount, Some(10000));
         assert_eq!(iban, Some("DE89370400440532013000".to_string()));
         assert_eq!(status, Some("completed".to_string()));
+    }
+
+    #[test]
+    fn extract_json_objects_splits_two_responses() {
+        // Mimics the received transcript: two HTTP responses (transfer + beneficiary)
+        // concatenated on one keep-alive connection.
+        let received = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{\"transfer\":{\"id\":\"t1\",\"status\":\"settled\",\"amount_cents\":86,\"beneficiary_id\":\"b1\"}}HTTP/1.1 200 OK\r\nx: y\r\n\r\n{\"beneficiary\":{\"id\":\"b1\",\"bank_account\":{\"iban\":\"DE89370400440532013000\"}}}";
+        let objs = extract_json_objects(received);
+        assert_eq!(objs.len(), 2, "should split two concatenated responses");
+        let t: serde_json::Value = serde_json::from_str(&objs[0]).unwrap();
+        assert_eq!(t["transfer"]["status"], "settled");
+        assert_eq!(t["transfer"]["amount_cents"], 86);
+        assert_eq!(t["transfer"]["beneficiary_id"], "b1");
+        let b: serde_json::Value = serde_json::from_str(&objs[1]).unwrap();
+        assert_eq!(b["beneficiary"]["id"], "b1");
+        assert_eq!(
+            b["beneficiary"]["bank_account"]["iban"],
+            "DE89370400440532013000"
+        );
+    }
+
+    #[test]
+    fn extract_json_objects_ignores_braces_in_strings() {
+        let s = r#"{"note":"off-ramp {0xabc} intent","k":1}"#;
+        let objs = extract_json_objects(s);
+        assert_eq!(objs.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&objs[0]).unwrap();
+        assert_eq!(v["k"], 1);
+        assert_eq!(v["note"], "off-ramp {0xabc} intent");
     }
 }
 
