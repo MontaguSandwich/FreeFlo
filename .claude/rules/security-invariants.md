@@ -48,5 +48,16 @@ verify → bind → sign. Also enforced: settlement gate (status ∈ {settled, c
 empty-expected bypass, and fail-closed when chain config is missing (unless
 `ALLOW_NO_CHAIN_VALIDATION=true`).
 
+## Qonto Proof Spans Two Notarized Sessions (MUST — "Approach T", 2026-06)
+
+The IBAN binding now relies on TWO TLSNotary proofs: Qonto serves the transfer (status + amount) and
+the recipient IBAN (beneficiary record) on separate endpoints and closes the connection after one
+response, so they can't be proven in one session. The attestation MUST verify BOTH presentations and
+require `transfer.beneficiary_id == beneficiary.id` (the proven link) before binding the IBAN to the
+on-chain recipient — a solver must never be able to staple an unrelated beneficiary proof (a matching
+IBAN it didn't actually pay) onto a real transfer proof. Enforced in
+`attestation/src/attestation.rs::verify_payment_presentation`. Sandbox SCA is mocked
+(`/v2/mocked_sca_sessions/{token}/allow`); production needs trusted beneficiaries / an SCA exemption.
+
 > These hold on branch `audit-fixes` — NOT yet on `main` or the live mainnet contracts. See
 > `docs/agent/SESSION-HANDOFF.md`.

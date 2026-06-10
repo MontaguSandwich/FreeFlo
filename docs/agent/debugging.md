@@ -33,6 +33,32 @@ Solver logs: pm2 logs zkp2p-solver --lines 100
 - Quote API 404: Check SOLVER_API_URL in Vercel env vars
 - Env contamination: Use ENV_FILE= not shell sourcing for solver
 
+## Qonto + zkTLS proof + RPC errors
+
+Attestation "Payment not settled: transfer status is \"<missing>\"":
+  - The proof carried no settled status. The prover must prove BOTH GET /v2/sepa/transfers/{id}
+    (status+amount) AND GET /v2/beneficiaries/{id} (IBAN) — two proofs ("Approach T"). The
+    /v2/transactions ledger is empty in sandbox. See solver/CLAUDE.md.
+
+Qonto 400 "transfer_to_same_organization":
+  - Recipient IBAN is one of the Qonto org's own accounts. Use an EXTERNAL IBAN (e.g. a real
+    third-party one; the canonical test IBAN DE89370400440532013000 works in sandbox).
+
+Qonto 428 "sca_required":
+  - Sandbox: auto-cleared via POST /v2/mocked_sca_sessions/{token}/allow (needs QONTO_STAGING_TOKEN).
+    The device-poll GET /v2/sca/sessions/{token} 404s in sandbox — don't wait on it.
+  - Prod: requires a TRUSTED beneficiary or a Qonto SCA exemption (unattended solver can't device-approve).
+
+Qonto "invalid_grant ... refresh token was already used":
+  - Rotating refresh token consumed (not persisted, or used by another process). Re-mint via
+    scripts/qonto-oauth.mjs, or refresh non-interactively with grant_type=refresh_token. Tokens
+    persist to ENV_FILE — make sure that's the file the solver actually loads.
+
+RPC "over rate limit" / HTTP 429 on eth_getLogs (solver crashes at boot during sync):
+  - Public RPC rate-limiting the historical sync. Use a dedicated RPC (Alchemy
+    https://base-mainnet.g.alchemy.com/v2/<key>). Also use a per-network DB_PATH — a stale lastBlock
+    (e.g. block 3 from an anvil DB) makes the sync replay a huge block range.
+
 ## ZKP2P Integration Errors
 
 Missing gatingServiceSignature/signatureExpiration:

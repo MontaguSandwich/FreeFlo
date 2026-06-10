@@ -56,6 +56,40 @@ Removing this gate for true permissionless solving is a deferred product decisio
 - The spawned Rust prover inherits the solver's full env, so `solver/.env` configures both;
   `QONTO_HOST` defaults to prod — set the sandbox host explicitly for sandbox runs.
 
+## Qonto zkTLS proof — TWO proofs ("Approach T", since 2026-06)
+
+Qonto serves the transfer's **status + amount** (`GET /v2/sepa/transfers/{id}`) and the recipient
+**IBAN** (`GET /v2/beneficiaries/{id}`) on SEPARATE endpoints, and closes the connection after one
+response — so a single notarized TLS session can't fetch both. The `/v2/transactions` ledger (which
+would carry both) is **empty in sandbox**. So the solver generates **two** TLSNotary proofs:
+- `generateQontoProof` runs the prover twice with `QONTO_PROVE_PATH` (transfer, then beneficiary —
+  the beneficiary id comes from the transfer proof's `BENEFICIARY_ID=` stdout line).
+- Both presentations go to the attestation (`presentation` + `beneficiary_presentation`); it verifies
+  each, gates settlement on the transfer, and cross-checks `transfer.beneficiary_id == beneficiary.id`
+  before binding the IBAN. Do NOT collapse to one proof or trust a solver-supplied link between them.
+
+## Qonto SCA: sandbox = mock, prod = trusted beneficiaries
+
+- **Sandbox**: a 428 `sca_required` is cleared by `POST /v2/mocked_sca_sessions/{token}/allow` (the
+  device-poll `GET /v2/sca/sessions/{token}` 404s in sandbox). Gated on `QONTO_STAGING_TOKEN` being
+  set (which also sends `X-Qonto-2fa-Preference: mock`).
+- **Production**: real SCA — an untrusted/arbitrary IBAN returns 428 → device approval (an unattended
+  solver can't). Needs **trusted beneficiaries** or a Qonto SCA exemption — the real gate for
+  permissionless prod. See `docs/agent/QONTO-PROD-MIGRATION.md`.
+- Recipient IBAN must be **external** — sending to one of the org's own accounts → 400
+  `transfer_to_same_organization`.
+
+## Tokens, RPC, DB (mainnet ops)
+
+- Refreshed OAuth tokens are **rotating/one-time**; the solver persists them to `process.env.ENV_FILE`
+  (a prior bug wrote a non-existent `.env.testnet` → tokens lost → restart failed with
+  `invalid_grant: refresh token was already used`). Re-mint via `scripts/qonto-oauth.mjs`, OR
+  non-interactively: `POST <oauth>/token grant_type=refresh_token` (works while the token is unused).
+- Use a **dedicated RPC** (Alchemy) — public RPCs (mainnet.base.org, publicnode) 429 the
+  historical-sync `eth_getLogs` storm (`CHUNK_SIZE=9` over a large gap = hundreds of calls).
+- Use a **distinct `DB_PATH` per network** — a stale `lastBlock` from another chain's DB (e.g. an
+  anvil run left block 3) makes the mainnet sync grind from block 4 onward.
+
 ## Local / mainnet dev (VPS access lost)
 
 The PM2/VPS instructions above are superseded for current work — see
