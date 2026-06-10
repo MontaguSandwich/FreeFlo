@@ -381,9 +381,10 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
         // Verify the attestation matches this intent
         if (attestation.intentHash != intentId) revert PaymentVerificationFailed();
 
-        // Verify the amount matches (allow small tolerance for rounding)
-        // attestation.amount is in cents, selectedFiatAmount is in cents (2 decimals)
-        if (attestation.amount < intent.selectedFiatAmount * 99 / 100) revert AmountMismatch();
+        // Verify the amount: the proof must cover the committed fiat, with a 1-cent
+        // rounding epsilon only. The old `* 99 / 100` let a solver short the
+        // recipient by up to 1% (e.g. EUR 10 on EUR 1000) and still claim 100% USDC.
+        if (attestation.amount + 1 < intent.selectedFiatAmount) revert AmountMismatch();
 
         // Verify the payment proof via the verifier contract
         (bool valid,) = verifier.verifyPayment(attestation, signature);

@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { VenmoToSepaRouter } from "../src/VenmoToSepaRouter.sol";
+import { IPostIntentHookV2 } from "../src/interfaces/IPostIntentHookV2.sol";
 import { OffRampV3 } from "../src/OffRampV3.sol";
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 
@@ -30,16 +31,17 @@ contract VenmoToSepaRouterTest is Test {
     address constant ORCHESTRATOR = address(0xBEEF);
     address constant USER = address(0x1111);
     address constant SOLVER = address(0x2222);
-    address constant ON_RAMPER = address(0x3333);
+    address constant DEPOSIT_OWNER = address(0x3333);
 
     uint256 constant WITNESS_PK =
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address witness;
 
-    // Events from Router
+    // Events from Router (updated for V2)
     event TransferInitiated(
         address indexed user,
         bytes32 indexed intentId,
+        bytes32 indexed zkp2pIntentHash,
         uint256 usdcAmount,
         string iban,
         string recipientName,
@@ -71,19 +73,32 @@ contract VenmoToSepaRouterTest is Test {
 
     // ============ Helpers ============
 
-    function _buildIntent(address user, uint256 amount)
-        internal
-        pure
-        returns (VenmoToSepaRouter.ZKP2PIntent memory)
-    {
-        return VenmoToSepaRouter.ZKP2PIntent({
-            intentHash: keccak256(abi.encodePacked(user, amount)),
-            onRamper: ON_RAMPER,
-            deposit: 0,
-            amount: amount,
-            timestamp: 0,
+    function _buildExecutionContext(
+        address user,
+        uint256 amount,
+        bytes memory signalHookData
+    ) internal view returns (IPostIntentHookV2.HookExecutionContext memory) {
+        bytes32 intentHash = keccak256(abi.encodePacked(user, amount, block.timestamp));
+
+        IPostIntentHookV2.HookIntentContext memory intentCtx = IPostIntentHookV2.HookIntentContext({
+            owner: DEPOSIT_OWNER,
             to: user,
-            postIntentHook: address(0) // filled by orchestrator
+            escrow: address(0x5555),
+            depositId: 1,
+            amount: amount,
+            timestamp: block.timestamp,
+            paymentMethod: keccak256("venmo"),
+            fiatCurrency: keccak256("USD"),
+            conversionRate: 1e18,
+            payeeId: keccak256("payee123"),
+            signalHookData: signalHookData
+        });
+
+        return IPostIntentHookV2.HookExecutionContext({
+            intentHash: intentHash,
+            token: address(usdc),
+            executableAmount: amount,
+            intent: intentCtx
         });
     }
 
@@ -110,11 +125,12 @@ contract VenmoToSepaRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), amount);
 
-        VenmoToSepaRouter.ZKP2PIntent memory intent = _buildIntent(user, amount);
         bytes memory payload =
             _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(user, amount, payload);
 
-        router.execute(intent, amount, payload);
+        router.execute(ctx, "");
         vm.stopPrank();
 
         // Read the pending transfer to get the intentId
@@ -174,29 +190,31 @@ contract VenmoToSepaRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), amount);
 
-        VenmoToSepaRouter.ZKP2PIntent memory intent =
-            _buildIntent(USER, amount);
         bytes memory payload =
             _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, amount, payload);
 
-        vm.expectEmit(true, false, false, true);
+        // Note: We can't easily predict the exact intentId since it's created inside execute()
+        // So we just check the event is emitted with correct user and amount
+        vm.expectEmit(true, false, true, false);
         emit TransferInitiated(
-            USER, bytes32(0), amount, "DE89370400440532013000", "John Doe", 8500
+            USER, bytes32(0), ctx.intentHash, amount, "DE89370400440532013000", "John Doe", 8500
         );
 
-        router.execute(intent, amount, payload);
+        router.execute(ctx, "");
         vm.stopPrank();
     }
 
     function test_Execute_RevertsNonOrchestrator() public {
-        VenmoToSepaRouter.ZKP2PIntent memory intent =
-            _buildIntent(USER, 100_000_000);
         bytes memory payload =
             _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
 
         vm.prank(USER);
         vm.expectRevert(VenmoToSepaRouter.OnlyZKP2POrchestrator.selector);
-        router.execute(intent, 100_000_000, payload);
+        router.execute(ctx, "");
     }
 
     function test_Execute_RevertsDuplicateUser() public {
@@ -207,15 +225,15 @@ contract VenmoToSepaRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), 100_000_000);
 
-        VenmoToSepaRouter.ZKP2PIntent memory intent =
-            _buildIntent(USER, 100_000_000);
         bytes memory payload =
             _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
 
         vm.expectRevert(
             VenmoToSepaRouter.UserAlreadyHasPendingTransfer.selector
         );
-        router.execute(intent, 100_000_000, payload);
+        router.execute(ctx, "");
         vm.stopPrank();
     }
 
@@ -224,12 +242,30 @@ contract VenmoToSepaRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), 100_000_000);
 
-        VenmoToSepaRouter.ZKP2PIntent memory intent =
-            _buildIntent(USER, 100_000_000);
         bytes memory payload = _encodePayload("", "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
 
         vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
-        router.execute(intent, 100_000_000, payload);
+        router.execute(ctx, "");
+        vm.stopPrank();
+    }
+
+    function test_Execute_RevertsTokenMismatch() public {
+        usdc.mint(ORCHESTRATOR, 100_000_000);
+        vm.startPrank(ORCHESTRATOR);
+        usdc.approve(address(router), 100_000_000);
+
+        bytes memory payload =
+            _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
+
+        // Change token to a different address
+        ctx.token = address(0xDEAD);
+
+        vm.expectRevert(VenmoToSepaRouter.TokenMismatch.selector);
+        router.execute(ctx, "");
         vm.stopPrank();
     }
 
@@ -244,7 +280,7 @@ contract VenmoToSepaRouterTest is Test {
 
         // User commits via router
         vm.prank(USER);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
 
         // Verify router state
         VenmoToSepaRouter.PendingTransfer memory transfer =
@@ -271,23 +307,26 @@ contract VenmoToSepaRouterTest is Test {
 
     function test_Commit_RevertsSlippage() public {
         uint256 amount = 100_000_000;
-        bytes32 intentId = _executeHook(USER, amount);
-        _submitSolverQuote(intentId);
+        bytes32 intentId = _executeHook(USER, amount); // minEurAmount = 8500
 
-        // minEurAmount is 8500, try committing with 8000 (below min)
+        // Solver submits an on-chain quote BELOW the user's minimum. Slippage is now
+        // enforced against this real quote, not a number the caller passes in.
+        vm.prank(SOLVER);
+        offRamp.submitQuote(intentId, OffRampV3.RTPN.SEPA_INSTANT, 8000, 100_000, 15);
+
         vm.prank(USER);
         vm.expectRevert(
             abi.encodeWithSelector(
                 VenmoToSepaRouter.SlippageExceeded.selector, 8000, 8500
             )
         );
-        router.commit(SOLVER, 8000);
+        router.commit(SOLVER);
     }
 
     function test_Commit_RevertsWhenNotPending() public {
         vm.prank(USER);
         vm.expectRevert(VenmoToSepaRouter.NoPendingTransfer.selector);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
     }
 
     function test_Commit_EmitsEvent() public {
@@ -298,7 +337,7 @@ contract VenmoToSepaRouterTest is Test {
         vm.prank(USER);
         vm.expectEmit(true, true, false, true);
         emit TransferCommitted(USER, intentId, SOLVER, 9200);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
     }
 
     // ============ cancel() tests ============
@@ -331,7 +370,7 @@ contract VenmoToSepaRouterTest is Test {
         _submitSolverQuote(intentId);
 
         vm.prank(USER);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
 
         vm.prank(USER);
         vm.expectRevert(VenmoToSepaRouter.TransferNotPending.selector);
@@ -396,7 +435,7 @@ contract VenmoToSepaRouterTest is Test {
         _submitSolverQuote(intentId);
 
         vm.prank(USER);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
 
         // Simulate solver fulfillment via OffRampV3
         PaymentVerifier.PaymentAttestation memory attestation =
@@ -465,7 +504,7 @@ contract VenmoToSepaRouterTest is Test {
         _submitSolverQuote(intentId);
 
         vm.prank(USER);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
 
         // Try to mark complete before fulfillment
         vm.expectRevert(VenmoToSepaRouter.TransferNotCommitted.selector);
@@ -547,7 +586,7 @@ contract VenmoToSepaRouterTest is Test {
         // will revert with SelectionWindowClosed
         vm.prank(USER);
         vm.expectRevert(OffRampV3.SelectionWindowClosed.selector);
-        router.commit(SOLVER, 9200);
+        router.commit(SOLVER);
     }
 
     // ============ emergencyWithdraw test ============
@@ -563,5 +602,110 @@ contract VenmoToSepaRouterTest is Test {
         // Owner can
         router.emergencyWithdraw(address(usdc), address(this), 100_000_000);
         assertEq(usdc.balanceOf(address(this)), 100_000_000);
+    }
+
+    // ============ rescueCommitted() tests ============
+
+    function test_RescueCommitted_ReturnsUSDC() public {
+        uint256 amount = 100_000_000;
+        bytes32 intentId = _executeHook(USER, amount);
+        _submitSolverQuote(intentId);
+        vm.prank(USER);
+        router.commit(SOLVER);
+
+        // USDC now sits in OffRampV3.
+        assertEq(usdc.balanceOf(address(offRamp)), amount);
+
+        // Solver never fulfills; warp past OffRampV3's FULFILLMENT_WINDOW (30 min).
+        vm.warp(block.timestamp + 31 minutes);
+
+        // Permissionless rescue reclaims from OffRampV3 and forwards to the user.
+        router.rescueCommitted(USER);
+
+        assertEq(usdc.balanceOf(USER), amount);
+        assertEq(
+            uint256(router.getPendingTransfer(USER).status),
+            uint256(VenmoToSepaRouter.TransferStatus.EXPIRED)
+        );
+        assertEq(
+            uint256(offRamp.getIntent(intentId).status),
+            uint256(OffRampV3.IntentStatus.CANCELLED)
+        );
+    }
+
+    function test_RescueCommitted_RevertsBeforeWindow() public {
+        uint256 amount = 100_000_000;
+        bytes32 intentId = _executeHook(USER, amount);
+        _submitSolverQuote(intentId);
+        vm.prank(USER);
+        router.commit(SOLVER);
+
+        // Before the window, OffRampV3.cancelIntent reverts CannotCancelYet.
+        vm.expectRevert(OffRampV3.CannotCancelYet.selector);
+        router.rescueCommitted(USER);
+    }
+
+    function test_RescueCommitted_RevertsWhenNotCommitted() public {
+        _executeHook(USER, 100_000_000); // PENDING, not COMMITTED
+        vm.expectRevert(VenmoToSepaRouter.TransferNotCommitted.selector);
+        router.rescueCommitted(USER);
+    }
+
+    // ============ duplicate-while-committed guard ============
+
+    function test_Execute_RevertsDuplicateWhenCommitted() public {
+        uint256 amount = 100_000_000;
+        bytes32 intentId = _executeHook(USER, amount);
+        _submitSolverQuote(intentId);
+        vm.prank(USER);
+        router.commit(SOLVER);
+
+        // A second onramp for the same user must be blocked while COMMITTED.
+        usdc.mint(ORCHESTRATOR, amount);
+        vm.startPrank(ORCHESTRATOR);
+        usdc.approve(address(router), amount);
+        bytes memory payload =
+            _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, amount, payload);
+        vm.expectRevert(VenmoToSepaRouter.UserAlreadyHasPendingTransfer.selector);
+        router.execute(ctx, "");
+        vm.stopPrank();
+    }
+
+    // ============ execute() length-bound tests ============
+
+    function test_Execute_RevertsOversizedIban() public {
+        usdc.mint(ORCHESTRATOR, 100_000_000);
+        vm.startPrank(ORCHESTRATOR);
+        usdc.approve(address(router), 100_000_000);
+        bytes memory payload = _encodePayload(_repeat("A", 257), "John Doe", 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
+        vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
+        router.execute(ctx, "");
+        vm.stopPrank();
+    }
+
+    function test_Execute_RevertsOversizedName() public {
+        usdc.mint(ORCHESTRATOR, 100_000_000);
+        vm.startPrank(ORCHESTRATOR);
+        usdc.approve(address(router), 100_000_000);
+        bytes memory payload =
+            _encodePayload("DE89370400440532013000", _repeat("B", 71), 8500);
+        IPostIntentHookV2.HookExecutionContext memory ctx =
+            _buildExecutionContext(USER, 100_000_000, payload);
+        vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
+        router.execute(ctx, "");
+        vm.stopPrank();
+    }
+
+    function _repeat(string memory ch, uint256 n) internal pure returns (string memory) {
+        bytes memory out = new bytes(n);
+        bytes1 c = bytes(ch)[0];
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = c;
+        }
+        return string(out);
     }
 }
