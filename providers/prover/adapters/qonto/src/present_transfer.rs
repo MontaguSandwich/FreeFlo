@@ -29,59 +29,53 @@ async fn create_transfer_presentation() -> Result<(), Box<dyn std::error::Error>
     let transcript = HttpTranscript::parse(secrets.transcript())?;
     let mut builder = secrets.transcript_proof_builder();
 
-    // === REQUEST DISCLOSURE ===
-    let request = &transcript.requests[0];
+    // === REQUEST DISCLOSURE (every request on the connection) ===
+    for request in &transcript.requests {
+        // Reveal request structure (method, path)
+        builder.reveal_sent(&request.without_data())?;
+        builder.reveal_sent(&request.request.target)?;
 
-    // Reveal request structure (method, path)
-    builder.reveal_sent(&request.without_data())?;
-    builder.reveal_sent(&request.request.target)?;
-
-    // Reveal headers EXCEPT Authorization
-    for header in &request.headers {
-        if header
-            .name
-            .as_str()
-            .eq_ignore_ascii_case(header::AUTHORIZATION.as_str())
-        {
-            // Only reveal header name, not value (credentials)
-            builder.reveal_sent(&header.without_value())?;
-        } else {
-            builder.reveal_sent(header)?;
+        // Reveal headers EXCEPT Authorization
+        for header in &request.headers {
+            if header
+                .name
+                .as_str()
+                .eq_ignore_ascii_case(header::AUTHORIZATION.as_str())
+            {
+                // Only reveal header name, not value (credentials)
+                builder.reveal_sent(&header.without_value())?;
+            } else {
+                builder.reveal_sent(header)?;
+            }
         }
     }
 
-    // === RESPONSE DISCLOSURE ===
-    let response = &transcript.responses[0];
-
-    // Reveal response structure
-    builder.reveal_recv(&response.without_data())?;
-
-    // Reveal all response headers
-    for header in &response.headers {
-        builder.reveal_recv(header)?;
-    }
-
-    // === JSON BODY SELECTIVE DISCLOSURE ===
-    let content = &response.body.as_ref().unwrap().content;
-
-    match content {
-        tlsn_formats::http::BodyContent::Json(_json) => {
-            // For now, reveal the full JSON body since TLSNotary requires all
-            // committed data to be covered in the proof
-            // In production, we'd use a custom committer that only commits
-            // to the fields we want to reveal
-            println!("\n📋 Revealing full JSON body for attestation");
-            builder.reveal_recv(content)?;
+    // === RESPONSE DISCLOSURE (every response: transfer + beneficiary) ===
+    for response in &transcript.responses {
+        // Reveal response structure + all headers
+        builder.reveal_recv(&response.without_data())?;
+        for header in &response.headers {
+            builder.reveal_recv(header)?;
         }
-        tlsn_formats::http::BodyContent::Unknown(span) => {
-            // Reveal the full body when JSON parsing fails
-            println!("  Revealing raw response body (JSON parse failed)");
-            builder.reveal_recv(span)?;
-        }
-        _ => {
-            println!("  (no body content)");
+
+        // Reveal the full JSON body (TLSNotary requires committed data to be covered)
+        if let Some(body) = response.body.as_ref() {
+            match &body.content {
+                tlsn_formats::http::BodyContent::Json(_json) => {
+                    builder.reveal_recv(&body.content)?;
+                }
+                tlsn_formats::http::BodyContent::Unknown(span) => {
+                    builder.reveal_recv(span)?;
+                }
+                _ => {}
+            }
         }
     }
+    println!(
+        "\n📋 Revealed {} request(s) + {} response body(ies) for attestation",
+        transcript.requests.len(),
+        transcript.responses.len()
+    );
 
     // Fields we explicitly DO NOT reveal:
     println!("\n🔒 Redacted fields:");
