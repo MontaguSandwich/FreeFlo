@@ -352,6 +352,18 @@ export class IntentDatabase {
     return row?.provider_transfer_id || null;
   }
 
+  /**
+   * Get retry information for an intent
+   */
+  getRetryInfo(intentId: string): { retryCount: number; nextRetryAt: number | null } | null {
+    const stmt = this.db.prepare(`
+      SELECT retry_count, next_retry_at FROM intents WHERE intent_id = ?
+    `);
+    const row = stmt.get(intentId) as { retry_count: number; next_retry_at: number | null } | undefined;
+    if (!row) return null;
+    return { retryCount: row.retry_count, nextRetryAt: row.next_retry_at };
+  }
+
   // ============ Quote Operations ============
 
   insertQuote(quote: {
@@ -409,6 +421,32 @@ export class IntentDatabase {
       INSERT OR REPLACE INTO solver_state (key, value) VALUES (?, ?)
     `);
     stmt.run("last_block", blockNumber.toString());
+  }
+
+  // ============ Intent Queries for Status API ============
+
+  /**
+   * Get all stuck intents (failed or pending_retry)
+   */
+  getStuckIntents(): DbIntent[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM intents
+      WHERE status IN ('failed', 'pending_retry')
+      ORDER BY updated_at DESC
+    `);
+    return stmt.all().map(this.rowToIntent);
+  }
+
+  /**
+   * Get recent intents with optional limit
+   */
+  getRecentIntents(limit: number = 50): DbIntent[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM intents
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(limit).map(this.rowToIntent);
   }
 
   // ============ Stats ============

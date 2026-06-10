@@ -353,10 +353,6 @@ export class QontoClient {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private generateIdempotencyKey(): string {
-    return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-  }
-
   // ============ Organization & Accounts ============
 
   /**
@@ -496,15 +492,48 @@ export class QontoClient {
     return false;
   }
 
+  /**
+   * Approve a mocked SCA session in the sandbox. Real device/SMS approval isn't
+   * available there and GET /v2/sca/sessions/{token} 404s; paired with the
+   * X-Qonto-2fa-Preference: mock header, the 428 session is cleared via this
+   * endpoint. Returns true on success so the caller's retry path is unchanged.
+   */
+  async approveMockScaSession(scaSessionToken: string): Promise<boolean> {
+    const url = `${this.baseUrl}/v2/mocked_sca_sessions/${scaSessionToken}/allow`;
+    log.info("Sandbox: approving mocked SCA session");
+    const response = await fetch(url, { method: "POST", headers: this.getHeaders() });
+    if (!response.ok) {
+      const text = await response.text();
+      log.warn({ status: response.status, body: text }, "Mock SCA approval failed");
+      return false;
+    }
+    log.info("Mocked SCA session approved");
+    return true;
+  }
+
   // ============ SEPA Transfers ============
 
   /**
    * Create a SEPA transfer
    * If SCA is required, will wait for user approval and retry
+   *
+   * @param request Transfer payload (VoP proof token + transfer details).
+   * @param idempotencyKey Value sent as the (required) X-Qonto-Idempotency-Key header. This MUST be
+   *   derived deterministically from the off-ramp intent (see QontoProvider.executeTransfer) and stay
+   *   stable across every retry of the same logical transfer. Qonto caches the first successful
+   *   response per key (~24h window) and replays it for any later request with the same key, so a
+   *   re-send after a solver crash/timeout returns the original transfer instead of moving real EUR
+   *   twice. Never pass a random or per-call value here — that would defeat the dedup guarantee.
    */
-  async createTransfer(request: QontoCreateTransferRequest): Promise<QontoTransferResponse> {
-    const idempotencyKey = this.generateIdempotencyKey();
-    
+  async createTransfer(
+    request: QontoCreateTransferRequest,
+    idempotencyKey: string
+  ): Promise<QontoTransferResponse> {
+    if (!idempotencyKey) {
+      // Fail loudly rather than send money with no dedup protection.
+      throw new Error("createTransfer requires a deterministic idempotencyKey");
+    }
+
     try {
       return await this.request<QontoTransferResponse>(
         "POST",
@@ -520,8 +549,12 @@ export class QontoClient {
           "SCA required - please approve on your Qonto app"
         );
         
-        // Wait for user approval
-        const approved = await this.waitForScaApproval(error.scaSessionToken);
+        // Sandbox can't do device/SMS SCA and the GET /v2/sca/sessions poll 404s,
+        // so approve the mocked session directly (pairs with the X-Qonto-2fa-Preference:
+        // mock header). Production keeps the real wait-for-device-approval path.
+        const approved = this.stagingToken
+          ? await this.approveMockScaSession(error.scaSessionToken)
+          : await this.waitForScaApproval(error.scaSessionToken);
         
         if (!approved) {
           throw new QontoApiError("SCA approval denied or timed out", 428, "sca_denied");

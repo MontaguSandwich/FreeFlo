@@ -106,6 +106,16 @@ export interface TransferResult {
   transferId: string;       // Provider's transfer ID
   fiatSent: bigint;         // Actual amount sent (2 decimals)
   error?: string;
+  /**
+   * Set when the transfer FAILED but its outcome could not be confirmed and
+   * the fiat may still settle at the recipient (e.g. SEPA Instant exceeded its
+   * window and the cancel could not be confirmed - Qonto may fall back to
+   * Standard). When true the caller MUST: (a) persist `transferId` for
+   * reconciliation, (b) raise a critical reconciliation alert, and (c) never
+   * issue a fresh send for this intent (any retry must resume from proof
+   * generation only). Implies `transferId` is non-empty.
+   */
+  requiresReconciliation?: boolean;
 }
 
 export type TransferStatus = 

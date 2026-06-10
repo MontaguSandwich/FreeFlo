@@ -14,9 +14,23 @@ const CLIENT_ID = process.env.QONTO_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.QONTO_CLIENT_SECRET || "";
 const REDIRECT_URI = "http://localhost:3456/callback";
 
-const QONTO_AUTH_URL = "https://oauth.qonto.com/oauth2/auth";
-const QONTO_TOKEN_URL = "https://oauth.qonto.com/oauth2/token";
-const QONTO_API_URL = "https://thirdparty.qonto.com";
+// Sandbox vs production endpoints (set QONTO_USE_SANDBOX=true for the staging env).
+const USE_SANDBOX = process.env.QONTO_USE_SANDBOX === "true";
+const STAGING_TOKEN = process.env.QONTO_STAGING_TOKEN || "";
+const QONTO_AUTH_URL = USE_SANDBOX
+  ? "https://oauth-sandbox.staging.qonto.co/oauth2/auth"
+  : "https://oauth.qonto.com/oauth2/auth";
+const QONTO_TOKEN_URL = USE_SANDBOX
+  ? "https://oauth-sandbox.staging.qonto.co/oauth2/token"
+  : "https://oauth.qonto.com/oauth2/token";
+const QONTO_API_URL = USE_SANDBOX
+  ? "https://thirdparty-sandbox.staging.qonto.co"
+  : "https://thirdparty.qonto.com";
+
+// Sandbox gates token + API calls on the staging token header.
+function stagingHeaders(base = {}) {
+  return STAGING_TOKEN ? { ...base, "X-Qonto-Staging-Token": STAGING_TOKEN } : base;
+}
 
 const SCOPES = ["offline_access", "organization.read", "payment.write"];
 
@@ -28,9 +42,9 @@ const STATE = Math.random().toString(36).substring(2) + Math.random().toString(3
 async function exchangeCodeForToken(code) {
   const response = await fetch(QONTO_TOKEN_URL, {
     method: "POST",
-    headers: {
+    headers: stagingHeaders({
       "Content-Type": "application/x-www-form-urlencoded",
-    },
+    }),
     body: new URLSearchParams({
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
@@ -50,9 +64,9 @@ async function exchangeCodeForToken(code) {
 
 async function getOrganization(accessToken) {
   const response = await fetch(`${QONTO_API_URL}/v2/organization`, {
-    headers: {
+    headers: stagingHeaders({
       Authorization: `Bearer ${accessToken}`,
-    },
+    }),
   });
 
   if (!response.ok) {

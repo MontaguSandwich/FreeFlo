@@ -11,8 +11,10 @@ import { attestationDurationSeconds } from "../metrics.js";
 const log = createLogger("attestation-client");
 
 export interface AttestationRequest {
-  /** Base64-encoded TLSNotary presentation */
+  /** Base64-encoded TLSNotary presentation of the transfer (status + amount) */
   presentation: string;
+  /** Base64-encoded TLSNotary presentation of the beneficiary (recipient IBAN) */
+  beneficiaryPresentation: string;
   /** Intent hash this payment is for */
   intentHash: string;
   /** Expected amount in cents (for validation) */
@@ -122,10 +124,12 @@ export class AttestationClient {
       headers,
       body: JSON.stringify({
         presentation: request.presentation,
+        beneficiary_presentation: request.beneficiaryPresentation,
         intent_hash: request.intentHash,
         expected_amount_cents: request.expectedAmountCents,
         expected_beneficiary_iban: request.expectedBeneficiaryIban,
       }),
+
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

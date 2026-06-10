@@ -6,7 +6,7 @@
  */
 
 import { spawn } from "child_process";
-import { readFile, mkdir, writeFile } from "fs/promises";
+import { readFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { createLogger } from "../utils/logger.js";
 
@@ -28,8 +28,10 @@ export interface ProverConfig {
 
 export interface ProofResult {
   success: boolean;
-  presentationBase64?: string;
-  presentationPath?: string;
+  /** Transfer-endpoint proof (status + amount + beneficiary_id). */
+  transferPresentationBase64?: string;
+  /** Beneficiary-endpoint proof (recipient IBAN). */
+  beneficiaryPresentationBase64?: string;
   error?: string;
   duration?: number;
 }
@@ -47,69 +49,73 @@ export async function generateQontoProof(
   log.info({ transferId }, "Starting TLSNotary proof generation");
 
   try {
-    // Ensure proof storage directory exists
     await mkdir(config.proofStoragePath, { recursive: true });
 
-    // Step 1: Generate attestation and secrets
-    log.info({ transferId }, "Step 1/2: Generating attestation...");
-    
-    const proveResult = await runCargoBinary(
-      config.tlsnExamplesPath,
-      "qonto_prove_transfer",
-      {
-        QONTO_API_KEY_LOGIN: config.qontoApiKeyLogin,
-        QONTO_API_KEY_SECRET: config.qontoApiKeySecret,
-        QONTO_BANK_ACCOUNT_SLUG: config.qontoBankAccountSlug,
-        QONTO_TRANSFER_ID: transferId,
-      },
-      timeout * 0.6  // 60% of timeout for attestation step
-    );
-
-    if (!proveResult.success) {
-      return {
-        success: false,
-        error: `Attestation generation failed: ${proveResult.error}`,
-        duration: Date.now() - startTime,
-      };
-    }
-
-    // Step 2: Generate presentation
-    log.info({ transferId }, "Step 2/2: Generating presentation...");
-
-    const presentResult = await runCargoBinary(
-      config.tlsnExamplesPath,
-      "qonto_present_transfer",
-      {},
-      timeout * 0.4  // 40% of timeout for presentation step
-    );
-
-    if (!presentResult.success) {
-      return {
-        success: false,
-        error: `Presentation generation failed: ${presentResult.error}`,
-        duration: Date.now() - startTime,
-      };
-    }
-
-    // Read the generated presentation
+    const proveEnv = {
+      QONTO_API_KEY_LOGIN: config.qontoApiKeyLogin,
+      QONTO_API_KEY_SECRET: config.qontoApiKeySecret,
+    };
     const presentationPath = join(config.tlsnExamplesPath, "qonto_transfer.presentation.tlsn");
-    const presentationBytes = await readFile(presentationPath);
-    const presentationBase64 = presentationBytes.toString("base64");
 
-    // Copy to proof storage with transfer ID
-    const storedPath = join(config.proofStoragePath, `${transferId}.presentation.tlsn`);
-    await writeFile(storedPath, presentationBytes);
+    // Run prove + present for one QONTO_PROVE_PATH. Returns the presentation (base64)
+    // and the prover stdout (carries BENEFICIARY_ID on a transfer proof). Qonto won't
+    // serve transfer + beneficiary on one notarized connection, so we prove each.
+    const proveOne = async (
+      provePath: string,
+      budgetMs: number
+    ): Promise<{ base64: string; stdout: string }> => {
+      const prove = await runCargoBinary(
+        config.tlsnExamplesPath,
+        "qonto_prove_transfer",
+        { ...proveEnv, QONTO_PROVE_PATH: provePath },
+        budgetMs * 0.6
+      );
+      if (!prove.success) throw new Error(`prove ${provePath} failed: ${prove.error}`);
+
+      const present = await runCargoBinary(
+        config.tlsnExamplesPath,
+        "qonto_present_transfer",
+        {},
+        budgetMs * 0.4
+      );
+      if (!present.success) throw new Error(`present ${provePath} failed: ${present.error}`);
+
+      const bytes = await readFile(presentationPath);
+      return { base64: bytes.toString("base64"), stdout: prove.stdout };
+    };
+
+    // Proof 1: the transfer (status + amount). Also emits the beneficiary_id.
+    log.info({ transferId }, "Proof 1/2: transfer");
+    const transfer = await proveOne(`/v2/sepa/transfers/${transferId}`, timeout * 0.5);
+    const match = transfer.stdout.match(/BENEFICIARY_ID=([0-9a-fA-F-]+)/);
+    if (!match) {
+      return {
+        success: false,
+        error: "prover did not emit BENEFICIARY_ID from the transfer response",
+        duration: Date.now() - startTime,
+      };
+    }
+    const beneficiaryId = match[1];
+
+    // Proof 2: the beneficiary (recipient IBAN).
+    log.info({ transferId, beneficiaryId }, "Proof 2/2: beneficiary");
+    const beneficiary = await proveOne(`/v2/beneficiaries/${beneficiaryId}`, timeout * 0.5);
 
     const duration = Date.now() - startTime;
     log.info(
-      { transferId, duration, size: presentationBytes.length },
-      "TLSNotary proof generated successfully"
+      {
+        transferId,
+        duration,
+        transferSize: transfer.base64.length,
+        beneficiarySize: beneficiary.base64.length,
+      },
+      "TLSNotary proofs (transfer + beneficiary) generated successfully"
     );
 
     return {
       success: true,
-      presentationBase64,
-      presentationPath: storedPath,
+      transferPresentationBase64: transfer.base64,
+      beneficiaryPresentationBase64: beneficiary.base64,
       duration,
     };
 

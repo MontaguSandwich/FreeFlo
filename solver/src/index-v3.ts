@@ -11,7 +11,7 @@ import { IntentDatabase } from "./db/intents.js";
 import { ChainClientV3 } from "./chain/client-v3.js";
 import { SolverOrchestratorV3 } from "./orchestrator-v3.js";
 import { registry, createQontoProvider } from "./providers/index.js";
-import { startHealthServer, updateHealthCheck } from "./health.js";
+import { startHealthServer, updateHealthCheck, setHealthDatabase } from "./health.js";
 import { createAttestationClient } from "./attestation/client.js";
 import { createQuoteApiServer } from "./api/quote-api.js";
 
@@ -91,6 +91,7 @@ async function main() {
   const dbPath = config.dbPath.replace(".db", "-v3.db");
   const db = new IntentDatabase(dbPath);
   updateHealthCheck("database", "ok");
+  setHealthDatabase(db);
 
   // Initialize V3 chain client
   const chain = new ChainClientV3({
