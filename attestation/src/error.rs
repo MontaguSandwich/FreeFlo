@@ -35,6 +35,12 @@ pub enum AttestationError {
     #[error("Deserialization error: {0}")]
     DeserializationError(String),
 
+    #[error("Untrusted notary: presentation was not signed by a pinned FreeFlo notary key")]
+    UntrustedNotary,
+
+    #[error("Payment not settled: transfer status is {0:?}, expected a terminal success state")]
+    PaymentNotSettled(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -51,6 +57,8 @@ impl IntoResponse for AttestationError {
             AttestationError::MissingField(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AttestationError::SigningError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             AttestationError::DeserializationError(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            AttestationError::UntrustedNotary => (StatusCode::BAD_REQUEST, self.to_string()),
+            AttestationError::PaymentNotSettled(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AttestationError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 

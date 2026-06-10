@@ -37,6 +37,9 @@ pub struct OnChainIntent {
     /// The fiat amount the solver committed to pay (2 decimals, in cents)
     pub selected_fiat_amount: U256,
     pub status: IntentStatus,
+    /// Recipient bank details (IBAN), decoded from the on-chain Intent's dynamic
+    /// `receivingInfo` string. This is the authoritative payee a proof must match.
+    pub receiving_info: String,
 }
 
 /// Chain client for RPC calls
@@ -140,12 +143,16 @@ impl ChainClient {
             return Ok(None);
         }
 
+        // Decode the dynamic `receivingInfo` string (Intent field index 9).
+        let receiving_info = decode_dynamic_string(&result, base, 9).unwrap_or_default();
+
         Ok(Some(OnChainIntent {
             owner: depositor,
             solver: selected_solver,
             usdc_amount,
             selected_fiat_amount,
             status,
+            receiving_info,
         }))
     }
 
@@ -230,12 +237,41 @@ impl ChainClient {
     }
 }
 
+/// Decode a dynamic `string` field from an ABI-encoded struct tuple.
+/// `base` is where the tuple head begins; `field_index` is the string's position.
+fn decode_dynamic_string(data: &[u8], base: usize, field_index: usize) -> Option<String> {
+    let head = base + field_index * 32;
+    if data.len() < head + 32 {
+        return None;
+    }
+    let offset = U256::from_be_slice(&data[head..head + 32]).to::<u128>() as usize;
+    let len_pos = base + offset;
+    if data.len() < len_pos + 32 {
+        return None;
+    }
+    let len = U256::from_be_slice(&data[len_pos..len_pos + 32]).to::<u128>() as usize;
+    let start = len_pos + 32;
+    if data.len() < start + len {
+        return None;
+    }
+    String::from_utf8(data[start..start + len].to_vec()).ok()
+}
+
+/// Normalize an IBAN for comparison: strip whitespace and uppercase.
+fn normalize_iban(iban: &str) -> String {
+    iban.chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_uppercase()
+}
+
 /// Validate an intent before creating attestation
 pub async fn validate_intent(
     chain: &ChainClient,
     intent_hash: [u8; 32],
     solver_address: &str,
-    expected_amount_cents: i64,
+    proven_amount_cents: i64,
+    proven_iban: &str,
 ) -> Result<(), String> {
     debug!(
         intent_hash = %hex::encode(intent_hash),
@@ -271,6 +307,15 @@ pub async fn validate_intent(
         }
     }
 
+    // Bind the PROVEN beneficiary IBAN to the user's on-chain recipient. The
+    // solver does not get to assert the payee; the chain does.
+    if normalize_iban(proven_iban) != normalize_iban(&intent.receiving_info) {
+        return Err(format!(
+            "Beneficiary mismatch: proof paid IBAN '{}', on-chain recipient is '{}'",
+            proven_iban, intent.receiving_info
+        ));
+    }
+
     // Note: OffRampV3 is permissionless - no authorizedSolvers mapping
     // The selectedSolver check above is sufficient to verify the solver
     // is authorized to fulfill this specific intent
@@ -279,16 +324,16 @@ pub async fn validate_intent(
     // Both values are in cents (2 decimals)
     let committed_fiat_cents = intent.selected_fiat_amount.to::<u128>() as i64;
 
-    if expected_amount_cents > 0 && committed_fiat_cents > 0 {
-        if expected_amount_cents < committed_fiat_cents {
+    if proven_amount_cents > 0 && committed_fiat_cents > 0 {
+        if proven_amount_cents < committed_fiat_cents {
             return Err(format!(
                 "Amount mismatch: proof shows {} cents paid, but solver committed to {} cents on-chain",
-                expected_amount_cents, committed_fiat_cents
+                proven_amount_cents, committed_fiat_cents
             ));
         }
 
         debug!(
-            proof_amount_cents = %expected_amount_cents,
+            proof_amount_cents = %proven_amount_cents,
             committed_fiat_cents = %committed_fiat_cents,
             "Fiat amount validated: proof >= committed"
         );
@@ -305,6 +350,41 @@ pub async fn validate_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_iban() {
+        assert_eq!(
+            normalize_iban("de89 3704 0044 0532 0130 00"),
+            "DE89370400440532013000"
+        );
+        assert_eq!(normalize_iban("  fr76 1234  "), "FR761234");
+    }
+
+    #[test]
+    fn test_decode_dynamic_string() {
+        // Minimal ABI tuple: outer offset word, then base=32 with a 1-word head
+        // whose only field (index 0) is a dynamic string.
+        let s = b"GB33BUKB20201555555555";
+        let mut data = vec![0u8; 32]; // outer offset pointer
+        let base = data.len();
+        let str_offset = 32usize; // tail starts right after the 1-word head
+        let mut head = [0u8; 32];
+        head[24..32].copy_from_slice(&(str_offset as u64).to_be_bytes());
+        data.extend_from_slice(&head);
+        let mut len_word = [0u8; 32];
+        len_word[24..32].copy_from_slice(&(s.len() as u64).to_be_bytes());
+        data.extend_from_slice(&len_word);
+        let mut padded = s.to_vec();
+        padded.resize(((s.len() + 31) / 32) * 32, 0);
+        data.extend_from_slice(&padded);
+
+        assert_eq!(
+            decode_dynamic_string(&data, base, 0).as_deref(),
+            Some("GB33BUKB20201555555555")
+        );
+        // Truncated input → None, not a panic.
+        assert_eq!(decode_dynamic_string(&data[..base + 10], base, 0), None);
+    }
 
     #[test]
     fn test_intent_status_from() {

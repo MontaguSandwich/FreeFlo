@@ -21,3 +21,4 @@ bincode = "1.3"
 k256 = { version = "0.13", features = ["ecdsa"] }
 urlencoding = "2.1"
 dotenvy = "0.15"
+hex = "0.4"

@@ -10,7 +10,7 @@ use axum::{
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::attestation::{create_attestation, AttestationRequest, AttestationResponse};
+use crate::attestation::{sign_verified_payment, verify_payment_presentation, AttestationRequest, AttestationResponse};
 use crate::audit::{current_timestamp, AuditLogEntry, AuditLogger, AuditResult};
 use crate::auth::SolverAuth;
 use crate::chain::ChainClient;
@@ -37,12 +37,16 @@ impl AppState {
             warn!("Solver authentication DISABLED - set SOLVER_API_KEYS to enable");
         }
 
-        if let Some(ref c) = chain {
+        if chain.is_some() {
             info!("On-chain intent validation enabled");
             info!("  RPC URL: {}", std::env::var("RPC_URL").unwrap_or_default());
             info!("  Contract: {}", std::env::var("OFFRAMP_CONTRACT").unwrap_or_default());
+        } else if config.allow_no_chain_validation {
+            warn!("On-chain validation DISABLED (ALLOW_NO_CHAIN_VALIDATION=true) - DEV ONLY");
         } else {
-            warn!("On-chain validation DISABLED - set RPC_URL and OFFRAMP_CONTRACT to enable");
+            return Err(anyhow::anyhow!(
+                "On-chain validation required: set RPC_URL and OFFRAMP_CONTRACT, or ALLOW_NO_CHAIN_VALIDATION=true for dev"
+            ));
         }
 
         Ok(Self {
@@ -167,6 +171,28 @@ pub async fn attest(
         "Processing attestation request"
     );
 
+    // Verify the TLSNotary presentation FIRST: pins the notary key and extracts
+    // the PROVEN payee/amount/status, so the on-chain binding below uses proven
+    // data rather than solver-supplied request fields.
+    let verified = match verify_payment_presentation(&request, &state.config) {
+        Ok(v) => v,
+        Err(e) => {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            state.audit.log(&AuditLogEntry {
+                timestamp: current_timestamp(),
+                solver_address: solver_address.clone(),
+                intent_hash: intent_hash.clone(),
+                payment_id: None,
+                amount_cents: request.expected_amount_cents,
+                result: AuditResult::Rejected { reason: e.to_string() },
+                request_ip: None,
+                duration_ms,
+            });
+            warn!(intent_hash = %request.intent_hash, error = %e, "Presentation verification failed");
+            return Err(e.into_response());
+        }
+    };
+
     // Validate intent on-chain (if enabled)
     if let Some(ref chain) = state.chain {
         let intent_bytes = match decode_bytes32(&request.intent_hash) {
@@ -201,7 +227,8 @@ pub async fn attest(
             chain,
             intent_bytes,
             &solver_address,
-            request.expected_amount_cents,
+            verified.amount_cents.unwrap_or(0),
+            verified.beneficiary_iban.as_deref().unwrap_or(""),
         )
         .await
         {
@@ -236,8 +263,8 @@ pub async fn attest(
         }
     }
 
-    // Create attestation
-    match create_attestation(&request, &state.config) {
+    // Sign the attestation for the verified, on-chain-bound payment.
+    match sign_verified_payment(&verified, &request.intent_hash, &state.config) {
         Ok(response) => {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             state.audit.log(&AuditLogEntry {

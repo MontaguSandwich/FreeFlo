@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use k256::ecdsa::SigningKey;
+use k256::ecdsa::{SigningKey, VerifyingKey};
 
 /// Configuration for the attestation service
 pub struct Config {
@@ -14,6 +14,15 @@ pub struct Config {
     
     /// Allowed server domains for presentation verification
     pub allowed_servers: Vec<String>,
+
+    /// Trusted TLSNotary verifying keys. A presentation is accepted only if its
+    /// notary (attestation) signing key matches one of these. Without this pin,
+    /// any party could self-notarize a forged transcript and mint attestations.
+    notary_keys: Vec<VerifyingKey>,
+
+    /// When true, the service may run without on-chain intent validation
+    /// (RPC_URL / OFFRAMP_CONTRACT unset). Dev/test only — never in production.
+    pub allow_no_chain_validation: bool,
 }
 
 impl Config {
@@ -53,19 +62,50 @@ impl Config {
             .split(',')
             .map(|s| s.trim().to_string())
             .collect();
-        
+
+        // Load pinned notary public keys (SEC1 secp256k1 hex, comma-separated).
+        // REQUIRED: the notary is the root of trust for proof authenticity.
+        let notary_keys_raw = std::env::var("NOTARY_PUBLIC_KEYS")
+            .map_err(|_| anyhow!("NOTARY_PUBLIC_KEYS not set (no trusted notary configured)"))?;
+        let notary_keys = notary_keys_raw
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let bytes = hex::decode(s.trim_start_matches("0x"))
+                    .map_err(|e| anyhow!("Invalid NOTARY_PUBLIC_KEYS hex: {}", e))?;
+                VerifyingKey::from_sec1_bytes(&bytes)
+                    .map_err(|e| anyhow!("Invalid notary public key (not SEC1 secp256k1): {}", e))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if notary_keys.is_empty() {
+            return Err(anyhow!("NOTARY_PUBLIC_KEYS is empty (no trusted notary configured)"));
+        }
+
+        // Fail closed on on-chain validation unless explicitly opted out for dev.
+        let allow_no_chain_validation = std::env::var("ALLOW_NO_CHAIN_VALIDATION")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+
         Ok(Self {
             signing_key,
             chain_id,
             verifier_contract,
             allowed_servers,
+            notary_keys,
+            allow_no_chain_validation,
         })
     }
     
     pub fn signing_key(&self) -> &SigningKey {
         &self.signing_key
     }
-    
+
+    /// Trusted TLSNotary verifying keys used to pin proof authenticity.
+    pub fn notary_keys(&self) -> &[VerifyingKey] {
+        &self.notary_keys
+    }
+
     pub fn witness_address(&self) -> [u8; 20] {
         use k256::ecdsa::VerifyingKey;
         use alloy_primitives::keccak256;

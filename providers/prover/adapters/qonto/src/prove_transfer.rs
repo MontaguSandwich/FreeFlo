@@ -376,8 +376,16 @@ async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
     // Receive attestation request
     let request = request_rx.await?;
 
-    // Load signing key (dummy for local testing)
-    let signing_key = k256::ecdsa::SigningKey::from_bytes(&[1u8; 32].into())?;
+    // Load the notary signing key from the environment. FreeFlo controls this key
+    // and the attestation service pins the matching public key (NOTARY_PUBLIC_KEYS),
+    // so a solver running its own notary with a different key is rejected. For the
+    // permissionless milestone this in-process notary becomes a standalone service
+    // the solver does NOT control — this is the seam for that change.
+    let notary_key_hex =
+        env::var("NOTARY_PRIVATE_KEY").expect("NOTARY_PRIVATE_KEY environment variable required");
+    let notary_key_bytes = hex::decode(notary_key_hex.trim_start_matches("0x"))
+        .expect("NOTARY_PRIVATE_KEY must be valid hex");
+    let signing_key = k256::ecdsa::SigningKey::from_slice(&notary_key_bytes)?;
     let signer = Box::new(Secp256k1Signer::new(&signing_key.to_bytes())?);
     let mut provider = CryptoProvider::default();
     provider.signer.set_signer(signer);

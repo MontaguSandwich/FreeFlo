@@ -1,5 +1,7 @@
+use k256::ecdsa::VerifyingKey;
 use tlsn::attestation::{
     presentation::{Presentation, PresentationOutput},
+    signing::{KeyAlgId, VerifyingKey as NotaryVerifyingKey},
     CryptoProvider,
 };
 
@@ -34,12 +36,16 @@ pub struct VerifiedPayment {
 pub fn verify_presentation(
     presentation_bytes: &[u8],
     allowed_servers: &[String],
+    notary_keys: &[VerifyingKey],
 ) -> Result<VerifiedPayment, AttestationError> {
     // Deserialize the presentation
     let presentation: Presentation = bincode::deserialize(presentation_bytes)
         .map_err(|e| AttestationError::DeserializationError(format!("Failed to deserialize presentation: {}", e)))?;
     
     // Use default crypto provider (trusts standard root CAs)
+    // Capture the notary key the presentation claims, before verify() consumes it.
+    let notary_key = presentation.verifying_key().clone();
+
     let crypto_provider = CryptoProvider::default();
     
     // Verify the presentation
@@ -50,14 +56,23 @@ pub fn verify_presentation(
         ..
     } = presentation.verify(&crypto_provider)
         .map_err(|e| AttestationError::VerificationFailed(format!("Presentation verification failed: {:?}", e)))?;
+
+    // PIN THE NOTARY KEY. verify() only proves the attestation is internally
+    // consistent with *some* key embedded in it; it does NOT prove that key is
+    // trusted. Without this, a solver can run its own notary and forge any
+    // transcript. Require the notary to be one FreeFlo controls.
+    if !notary_is_trusted(&notary_key, notary_keys) {
+        return Err(AttestationError::UntrustedNotary);
+    }
     
     // Extract server name
     let server_name = server_name
         .ok_or(AttestationError::ServerNotFound)?
         .to_string();
     
-    // Check if server is in allowed list
-    if !allowed_servers.iter().any(|s| server_name.contains(s)) {
+    // Check the server is explicitly allow-listed (exact host match — a substring
+    // check would accept e.g. "thirdparty.qonto.com.evil.tld").
+    if !allowed_servers.iter().any(|s| s == &server_name) {
         return Err(AttestationError::UnexpectedServer {
             expected: allowed_servers.join(", "),
             actual: server_name,
@@ -89,6 +104,19 @@ pub fn verify_presentation(
         beneficiary_iban,
         status,
     })
+}
+
+/// Returns true iff the presentation's notary key is one of the trusted (pinned)
+/// secp256k1 keys. Compares as canonical k256 keys so SEC1 compressed/uncompressed
+/// encodings can't cause a false mismatch.
+fn notary_is_trusted(notary_key: &NotaryVerifyingKey, trusted: &[VerifyingKey]) -> bool {
+    if notary_key.alg != KeyAlgId::K256 {
+        return false;
+    }
+    match VerifyingKey::from_sec1_bytes(&notary_key.data) {
+        Ok(presented) => trusted.iter().any(|t| t == &presented),
+        Err(_) => false,
+    }
 }
 
 /// Extract JSON body from HTTP response (with selective disclosure handling)
@@ -264,6 +292,32 @@ fn extract_amount(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_notary_pinning() {
+        use k256::ecdsa::SigningKey;
+        let trusted_sk = SigningKey::from_slice(&[7u8; 32]).unwrap();
+        let trusted = [trusted_sk.verifying_key().clone()];
+        let trusted_sec1 = trusted[0].to_sec1_bytes().to_vec();
+
+        // Same key the legitimate notary used → trusted.
+        let good = NotaryVerifyingKey { alg: KeyAlgId::K256, data: trusted_sec1.clone() };
+        assert!(notary_is_trusted(&good, &trusted));
+
+        // A solver's self-notarized key → rejected (the core forgery defense).
+        let attacker_sk = SigningKey::from_slice(&[1u8; 32]).unwrap();
+        let attacker_sec1 = attacker_sk.verifying_key().to_sec1_bytes().to_vec();
+        let forged = NotaryVerifyingKey { alg: KeyAlgId::K256, data: attacker_sec1 };
+        assert!(!notary_is_trusted(&forged, &trusted));
+
+        // Wrong key algorithm → rejected.
+        let wrong_alg = NotaryVerifyingKey { alg: KeyAlgId::P256, data: trusted_sec1.clone() };
+        assert!(!notary_is_trusted(&wrong_alg, &trusted));
+
+        // Malformed key bytes → rejected, not a panic.
+        let malformed = NotaryVerifyingKey { alg: KeyAlgId::K256, data: vec![0u8; 5] };
+        assert!(!notary_is_trusted(&malformed, &trusted));
+    }
     
     #[test]
     fn test_extract_json_body() {
