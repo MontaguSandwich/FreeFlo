@@ -7,11 +7,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const ZKP2P_API_BASE = 'https://api.zkp2p.xyz';
-const ZKP2P_API_KEY = process.env.ZKP2P_API_KEY || '';
+const ZKP2P_API_URL = 'https://api.zkp2p.xyz';
+// Check both env var names (NEXT_PUBLIC_ is also available server-side)
+const ZKP2P_API_KEY = process.env.ZKP2P_API_KEY || process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '';
 
-// Staging escrow address - filters quotes to staging deposits only
-const ZKP2P_STAGING_ESCROW = '0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5';
+// V3 Escrow address (permissionless PostIntentHook)
+const ZKP2P_V3_ESCROW = '0x777777779d229cdF3110e9de47943791c26300Ef';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest) {
   try {
     // ZKP2P API expects POST with JSON body
     const endpoint = isExactFiat ? 'exact-fiat' : 'exact-token';
-    const url = `${ZKP2P_API_BASE}/v2/quote/${endpoint}?quotesToReturn=${quotesToReturn}`;
+    const url = `${ZKP2P_API_URL}/v2/quote/${endpoint}?quotesToReturn=${quotesToReturn}`;
 
     const requestBody: Record<string, unknown> = {
       paymentPlatforms,
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
       recipient,
       destinationChainId: parseInt(destinationChainId, 10),
       destinationToken,
-      escrowAddresses: [ZKP2P_STAGING_ESCROW],
+      escrowAddresses: [ZKP2P_V3_ESCROW],
     };
 
     // Amount in smallest unit (6 decimals)
@@ -78,6 +79,7 @@ export async function GET(request: NextRequest) {
       'Content-Type': 'application/json',
     };
     if (ZKP2P_API_KEY) {
+      // Production uses x-api-key header
       headers['x-api-key'] = ZKP2P_API_KEY;
     }
 

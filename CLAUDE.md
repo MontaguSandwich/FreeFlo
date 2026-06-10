@@ -1,274 +1,65 @@
-# CLAUDE.md
+# FreeFlo
 
-Trustless USDC-to-fiat offramp using zkTLS. User deposits USDC, solver sends fiat (SEPA Instant), proves payment via TLSNotary, claims USDC. End-to-end: ~10-15 seconds.
+Trustless USDC-to-fiat offramp on Base. User deposits USDC, solver sends fiat (SEPA Instant), proves payment via TLSNotary, claims USDC. Built on ZKP2P V3 protocol.
 
-## Directory Structure
+## Architecture
 
-```
-frontend/           Next.js on Vercel (free-flo.vercel.app)
-├── app/api/quote/  Proxy to solver Quote API (avoids CORS)
-├── app/venmo-to-sepa/  Venmo USD → SEPA EUR page
-├── components/     OffRampForm.tsx (main wizard), VenmoToSepaFlow.tsx
-├── hooks/useNetworkAddresses.ts  Runtime chain detection hook
-├── lib/network.ts  Central address/RPC config per chain ID
-└── lib/quotes.ts   Quote fetching logic
+frontend/       Next.js (Vercel) - user-facing offramp wizard
+solver/         TypeScript - intent watcher, fiat executor, proof generator
+contracts/      Solidity (Foundry) - OffRampV3, PaymentVerifier, VenmoToSepaRouter
+attestation/    Rust - TLSNotary proof verification + EIP-712 signing
+providers/      Rust - TLSNotary prover adapters (Qonto)
 
-solver/             TypeScript service on VPS (95.217.235.164:8080-8081)
-├── src/index-v3.ts         Entry point
-├── src/orchestrator-v3.ts  Intent processing & fulfillment
-├── src/providers/qonto.ts  Qonto SEPA executor
-└── src/attestation/        Prover client + attestation client
+## How to Work on This Project
 
-contracts/          Solidity (Foundry)
-├── src/OffRampV3.sol       Intent/quote/fulfillment (permissionless)
-├── src/PaymentVerifier.sol EIP-712 verification
-└── src/VenmoToSepaRouter.sol  ZKP2P → FreeFlo bridge (PostIntentHook)
+1. Before changing code: read the relevant subdirectory CLAUDE.md for component-specific context.
+2. Before changing contracts: run `cd contracts && forge build` to verify compilation.
+3. Before committing: run tests for the affected component. Never commit broken builds.
+4. For ZKP2P protocol questions: see .claude/rules/zkp2p-protocol.md
+5. For debugging errors: see docs/agent/debugging.md for error signatures and cast commands.
+6. For deployment/ops: see docs/agent/operations.md for VPS commands and PM2 config.
+7. Always work on a feature branch. Never push directly to main.
 
-attestation/        Rust service on FreeFlo infrastructure (:4001 mainnet, :4002 testnet)
-├── src/            Verifies TLSNotary proofs, validates on-chain, signs attestations
-└── env.testnet.example  Template for testnet dual-deployment
+## Key Commands
 
-providers/          Payment provider implementations
-├── README.md       Provider overview and how to add new providers
-├── prover/         Rust TLSNotary prover workspace
-│   └── adapters/qonto/  Qonto-specific prover (uses tlsnotary/tlsn v0.1.0-alpha.13)
-└── qonto/          Qonto provider docs
-```
+Frontend:     cd frontend && npm run dev
+Contracts:    cd contracts && forge build && forge test
+Solver:       cd solver && npm run build && npm run start:v3
+Attestation:  cd attestation && cargo build --release
 
 ## Contracts (Base Mainnet)
 
-```
-OffRampV3:            0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
-PaymentVerifier:      0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
-VenmoToSepaRouter:    0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8
-USDC:                 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-```
+OffRampV3: 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
+PaymentVerifier: 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
+VenmoToSepaRouter V3: 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23
+USDC (Base): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 
-### Base Sepolia (testnet)
+## ZKP2P V2 Contracts (Base Mainnet) - Use These
 
-```
-OffRampV3:        0x34249F4AB741F0661A38651A08213DDe1469b60f
-PaymentVerifier:  0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
-USDC:             0x036CbD53842c5426634e7929541eC2318f3dCF7e
-```
+OrchestratorV2: 0x888888359E981B5225CA48fbCdCeff702FC3b888 (permissionless PostIntentHooks)
+EscrowV2: 0x777777779d229cdF3110e9de47943791c26300Ef
+OrchestratorRegistry: 0xBe9fED15ED7A4B915C03EFcEcb9662739C3382A9
+ProtocolViewerV2: 0xC8A622e1614BB58141E72e1D6023B16f08677d6c
 
-## Security Model
+## ZKP2P V1 Contracts (Base Mainnet) - Requires Hook Whitelisting
 
-**FreeFlo controls the attestation service and witness key.** This ensures:
-- Solvers cannot forge payment proofs
-- Attestations are only signed after on-chain intent validation
-- All attestation requests are authenticated and audit-logged
+Orchestrator: 0x88888883Ed048FF0a415271B28b2F52d431810D0
+Escrow: 0x2f121CDDCA6d652f35e8B3E560f9760898888888
+PostIntentHookRegistry: 0x9B128EBAD4d874199A2Dc57E93186796c5EcAdE9
 
-```
-Solver (Untrusted)          FreeFlo (Trusted)           On-Chain
-─────────────────           ─────────────────           ────────
-1. Send fiat (SEPA)
-2. Generate TLSNotary proof
-3. POST /attest ──────────► 4. Validate on-chain intent
-   (with API key)              (status, solver match)
-                            5. Verify proof
-                            6. Sign EIP-712 attestation
-                     ◄────── 7. Return signature
-8. Submit to contract ─────────────────────────────────► 9. Verify & release USDC
-```
+## Contracts (Base Sepolia)
 
-## Venmo → SEPA Flow (Cross-Border)
+OffRampV3: 0x34249F4AB741F0661A38651A08213DDe1469b60f
+PaymentVerifier: 0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe
+USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
 
-VenmoToSepaRouter bridges ZKP2P (Venmo USD → USDC) and FreeFlo (USDC → SEPA EUR) in a single user flow.
+## Critical Rules
 
-```
-User                    ZKP2P                   VenmoToSepaRouter         FreeFlo (OffRampV3)
-────                    ─────                   ─────────────────         ───────────────────
-1. Send Venmo USD
-2. Prove payment ────► 3. Release USDC
-                       4. PostIntentHook ──────► 5. Receive USDC
-                                                 6. createIntent() ──────► 7. Deposit USDC
-                                                                           8. Solver sends EUR
-                                                                           9. User receives SEPA
-```
+- IPv6 trap: use 127.0.0.1 not localhost for ATTESTATION_SERVICE_URL
+- tlsn version lock: both attestation and prover MUST use tlsnotary/tlsn v0.1.0-alpha.13
+- Env isolation: solver uses ENV_FILE= for dotenv (never set -a). Attestation (Rust) uses set -a && source.
+- EIP-712 domain MUST match between attestation service and PaymentVerifier contract. See .claude/rules/security-invariants.md
 
-ZKP2P Orchestrator (Base Mainnet): `0x88888883Ed048FF0a415271B28b2F52d431810D0`
+## Repository
 
-## Run & Test
-
-```bash
-# Frontend
-cd frontend && npm run dev
-curl "http://localhost:3000/api/quote?amount=100&currency=EUR"
-
-# Contracts
-cd contracts && forge build && forge test
-
-# Solver (VPS)
-cd solver && npm run build && npm run start:v3
-curl "http://127.0.0.1:8081/api/quote?amount=100&currency=EUR"
-
-# Attestation (FreeFlo infrastructure)
-cd attestation && cargo build --release
-curl http://127.0.0.1:4001/api/v1/health
-
-# TLSNotary prover (VPS)
-cd providers/prover
-cargo build --release --bin qonto_prove_transfer
-```
-
-## Dual Deployment (Mainnet + Testnet)
-
-Both mainnet and testnet run simultaneously across all components.
-
-### Frontend (Runtime Chain Detection)
-
-The frontend auto-switches contract addresses based on the wallet's connected chain (no rebuild needed). `frontend/lib/network.ts` maps chain IDs to addresses. `frontend/hooks/useNetworkAddresses.ts` reads `useChainId()` from wagmi. All hooks (`useCreateIntent`, `useApproveUSDC`, `useCommitQuote`, `usePollFulfillment`) use dynamic addresses.
-
-### Solver (Two PM2 Instances)
-
-| | Mainnet | Testnet |
-|---|---|---|
-| PM2 name | `zkp2p-solver` | `zkp2p-solver-testnet` |
-| Health port | 8080 | 8082 |
-| Quote API port | 8081 | 8083 |
-| Env file | `.env` | `.env.testnet` |
-| Database | `solver.db` | `solver-testnet.db` |
-| Qonto | Production | Sandbox (`thirdparty-sandbox.staging.qonto.co`) |
-
-```bash
-# Start mainnet solver (default: loads .env)
-pm2 start bash --name zkp2p-solver -- -c \
-  "cd /opt/zkp2p-offramp/solver && exec node dist/index-v3.js"
-
-# Start testnet solver (ENV_FILE tells dotenv to load .env.testnet instead)
-pm2 start bash --name zkp2p-solver-testnet -- -c \
-  "cd /opt/zkp2p-offramp/solver && ENV_FILE=.env.testnet exec node dist/index-v3.js"
-```
-
-**Important**: The solver uses `dotenv` with `override: true`, so the `.env` file always wins over inherited shell env vars. Use `ENV_FILE` to specify which env file to load (defaults to `.env`). `CHAIN_ID` is required — the solver will crash immediately if it's missing, preventing silent misconfiguration.
-
-### Attestation (Two Processes)
-
-| | Mainnet | Testnet |
-|---|---|---|
-| Port | 4001 | 4002 |
-| Env file | `/etc/freeflo/attestation.env` | `/etc/freeflo/attestation-testnet.env` |
-| Chain ID | 8453 | 84532 |
-| ALLOWED_SERVERS | `thirdparty.qonto.com` | `thirdparty-sandbox.staging.qonto.co` |
-
-```bash
-# Start testnet attestation
-set -a && source /etc/freeflo/attestation-testnet.env && set +a
-/opt/freeflo/attestation-service/target/release/attestation-service &
-```
-
-### Qonto Sandbox
-
-Testnet uses Qonto sandbox to avoid conflicts with production OAuth tokens. Sandbox OAuth runs through `oauth-sandbox.staging.qonto.co` and requires the `X-Qonto-Staging-Token` header. To obtain sandbox tokens:
-
-```bash
-cd solver
-QONTO_SANDBOX=true QONTO_STAGING_TOKEN=<token> \
-  QONTO_CLIENT_ID=<id> QONTO_CLIENT_SECRET=<secret> \
-  node scripts/qonto-oauth-simple.mjs
-```
-
-### Witness
-
-Same witness key (`0x343830917e4e5f6291146af68f76eada08631a27`) is authorized on both mainnet and testnet PaymentVerifier contracts.
-
-## Critical Invariants
-
-**EIP-712 domain MUST match** between attestation service and PaymentVerifier:
-```
-name: "WisePaymentVerifier"
-version: "1"
-chainId: 8453
-verifyingContract: 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
-```
-Mismatch → `NotAuthorizedWitness` error.
-
-**Witness must be authorized**: `PaymentVerifier.authorizedWitnesses(addr) == true`
-
-**OffRampV3 is permissionless**: Any address can be a solver. On-chain intent tracks `selectedSolver`.
-
-## Error Signatures
-
-| Selector | Error | Fix |
-|----------|-------|-----|
-| `0x41110897` | NotAuthorizedWitness | Check EIP-712 domain + witness authorization |
-| `0x8baa579f` | InvalidSignature | Signature verification failed |
-| `0xcad2ae02` | NullifierAlreadyUsed | Payment ID already claimed |
-| `0x69388023` | PaymentVerificationFailed | Check attestation data format |
-| `0x88366b0a` | QuoteWindowClosed | Intent expired (>5 min), create new intent |
-
-## Gotchas
-
-- **IPv6**: Use `127.0.0.1` not `localhost` for `ATTESTATION_SERVICE_URL`. Node resolves localhost to IPv6, Rust binds IPv4.
-- **Prover timeout**: Set `PROVER_TIMEOUT=300000` (5 min). First run compiles Rust.
-- **Qonto tokens**: Expire in 1 hour. Solver auto-refreshes on 401.
-- **Duplicate prevention**: Solver saves `provider_transfer_id` after fiat transfer. On retry, skips transfer if ID exists.
-- **Quote API 404**: Ensure `SOLVER_API_URL` is set in Vercel env vars.
-- **Intent detection**: Solver event watchers use `eth_getLogs` polling (not `eth_newFilter`/`watchContractEvent`) because public RPCs don't support server-side filters. Watchers query with a 3-block safety margin to handle load balancer inconsistency. Wait for "V3 Orchestrator started" log before creating intents.
-- **tlsn dependency**: Both attestation service and prover use git dependency (`tlsnotary/tlsn` tag v0.1.0-alpha.13). Versions must match or deserialization fails.
-- **Env sourcing**: Use `set -a && source file.env && set +a` to properly export env vars for the attestation service (Rust). The solver (Node) uses `ENV_FILE` instead — do NOT use `set -a && source` for the solver as dotenv handles it with `override: true`.
-- **Solver env contamination**: With dual pm2 instances, shell env vars can bleed between processes. The solver's `override: true` dotenv config prevents this. Always use `ENV_FILE=.env.testnet` for testnet, never `source .env.testnet`.
-- **Attestation server has no repo checkout**: Only the compiled binary exists at `/opt/freeflo/attestation-service/target/release/attestation-service`. Env files live at `/etc/freeflo/attestation.env` (mainnet) and `/etc/freeflo/attestation-testnet.env` (testnet). Do NOT look for source code or config templates on that server.
-
-## Environment Variables
-
-### Solver (key ones)
-```bash
-ATTESTATION_SERVICE_URL=https://attestation.freeflo.live  # FreeFlo's service
-ATTESTATION_API_KEY=your_api_key_from_freeflo            # Issued by FreeFlo
-PROVER_TIMEOUT=300000
-TLSN_EXAMPLES_PATH=/opt/FreeFlo/providers/prover/adapters/qonto
-```
-
-### Vercel
-```bash
-SOLVER_API_URL=http://95.217.235.164:8081
-```
-
-### Attestation Service (FreeFlo-managed)
-```bash
-WITNESS_PRIVATE_KEY=0x...                                 # FreeFlo controls this
-CHAIN_ID=8453
-VERIFIER_CONTRACT=0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
-RPC_URL=https://mainnet.base.org
-OFFRAMP_CONTRACT=0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
-SOLVER_API_KEYS=key1:solver1_addr,key2:solver2_addr       # Registered solvers
-```
-
-## Quick Debug
-
-```bash
-# Check witness authorized
-cast call 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905 "authorizedWitnesses(address)" $WITNESS --rpc-url https://mainnet.base.org
-
-# Check domain separator
-cast call 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905 "DOMAIN_SEPARATOR()" --rpc-url https://mainnet.base.org
-
-# Check intent status
-cast call 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D "getIntent(bytes32)" $INTENT_ID --rpc-url https://mainnet.base.org
-
-# Clear solver state
-rm -rf solver/data/ solver/*.db solver/proofs/ && pm2 restart zkp2p-solver
-```
-
-## Development & Deployment
-
-**Branches**:
-- `main` - stable, production-ready
-
-| Server | IP | Code Path | Env Files |
-|--------|-----|-----------|-----------|
-| Solver | 95.217.235.164 | `/opt/zkp2p-offramp/` | `solver/.env`, `solver/.env.testnet` |
-| Attestation | 77.42.68.242 | `/opt/freeflo/attestation-service/` (binary only) | `/etc/freeflo/attestation.env`, `/etc/freeflo/attestation-testnet.env` |
-
-To update servers, see `docs/OPERATIONS_RUNBOOK.md`.
-
-## More Info
-
-- **Operations runbook**: `docs/OPERATIONS_RUNBOOK.md` (server commands, debugging)
-- Detailed architecture: `docs/ARCHITECTURE.md`
-- Solver setup: `docs/SOLVER_ONBOARDING.md`
-- Security model: `docs/ATTESTATION_SEPARATION_SPEC.md`
-- Change history: `CHANGELOG.md`
-- GitHub: https://github.com/MontaguSandwich/FreeFlo
+GitHub: https://github.com/MontaguSandwich/FreeFlo

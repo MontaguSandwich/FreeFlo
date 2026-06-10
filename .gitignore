@@ -4,6 +4,9 @@
 .env
 .env.local
 .env.*.local
+.env.mainnet
+.env.testnet
+.env.production
 *.pem
 *.key
 *.jwk
