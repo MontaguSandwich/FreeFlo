@@ -1,15 +1,22 @@
 // VenmoToSepaRouter contract configuration
-import { encodeAbiParameters, parseAbiParameters } from "viem";
+import { encodeAbiParameters } from "viem";
 
-// Router addresses by environment
-// Production router (configured for production ZKP2P Orchestrator 0x88888883...)
-export const VENMO_TO_SEPA_ROUTER_PRODUCTION = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8" as const;
+// ZKP2P V3 Contract Addresses (Base Mainnet)
+// These are the official V3 contracts with permissionless PostIntentHooks
+export const ZKP2P_V3_ORCHESTRATOR = "0x888888359E981B5225CA48fbCdCeff702FC3b888" as const;
+export const ZKP2P_V3_ESCROW = "0x777777779d229cdF3110e9de47943791c26300Ef" as const;
+export const ZKP2P_V3_PROTOCOL_VIEWER = "0xC8A622e1614BB58141E72e1D6023B16f08677d6c" as const;
 
-// Staging router (configured for staging ZKP2P Orchestrator 0x2466d5B3...)
-export const VENMO_TO_SEPA_ROUTER_STAGING = "0x1b791095Decf7483646d9488041E747102f9f683" as const;
+// VenmoToSepaRouter V3 (implements IPostIntentHookV2, configured for V3 Orchestrator)
+// Deployed: 2026-03-18 | Tx: 0x6048fdb239be5c8eac753303fcf3cbeeab4f789ef7ff76dbc87d8ceb3402f8fd
+export const VENMO_TO_SEPA_ROUTER_V3 = "0x8558D9701C80A5805E6ea940AfD05e36cfE27B23" as const;
 
-// Currently using staging (permissionless hooks)
-export const VENMO_TO_SEPA_ROUTER_ADDRESS = VENMO_TO_SEPA_ROUTER_STAGING;
+// Legacy routers (deprecated)
+export const VENMO_TO_SEPA_ROUTER_V2 = "0x6dBb90D2bE03dF76b08267A8942D38Ecece82581" as const;
+export const VENMO_TO_SEPA_ROUTER_V1 = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B8" as const;
+
+// Using V3 (permissionless PostIntentHook with IPostIntentHookV2)
+export const VENMO_TO_SEPA_ROUTER_ADDRESS = VENMO_TO_SEPA_ROUTER_V3;
 
 // Transfer status enum matching contract
 export enum RouterTransferStatus {
@@ -30,6 +37,7 @@ export const VENMO_TO_SEPA_ROUTER_ABI = [
     inputs: [
       { name: "user", type: "address", indexed: true },
       { name: "intentId", type: "bytes32", indexed: true },
+      { name: "zkp2pIntentHash", type: "bytes32", indexed: true },
       { name: "usdcAmount", type: "uint256", indexed: false },
       { name: "iban", type: "string", indexed: false },
       { name: "recipientName", type: "string", indexed: false },
@@ -141,10 +149,7 @@ export const VENMO_TO_SEPA_ROUTER_ABI = [
   {
     type: "function",
     name: "commit",
-    inputs: [
-      { name: "solver", type: "address" },
-      { name: "quotedEurAmount", type: "uint256" },
-    ],
+    inputs: [{ name: "solver", type: "address" }],
     outputs: [],
     stateMutability: "nonpayable",
   },
@@ -189,9 +194,21 @@ export function encodeHookPayload(
   recipientName: string,
   minEurAmount: bigint
 ): `0x${string}` {
+  // Encode as a single tuple matching the contract's `HookPayload` struct — NOT
+  // three flat params, which produces a different head layout and makes the
+  // contract's abi.decode(data, (HookPayload)) revert.
   return encodeAbiParameters(
-    parseAbiParameters("string, string, uint256"),
-    [iban, recipientName, minEurAmount]
+    [
+      {
+        type: "tuple",
+        components: [
+          { name: "iban", type: "string" },
+          { name: "recipientName", type: "string" },
+          { name: "minEurAmount", type: "uint256" },
+        ],
+      },
+    ],
+    [{ iban, recipientName, minEurAmount }]
   );
 }
 

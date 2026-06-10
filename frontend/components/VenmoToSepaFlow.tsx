@@ -12,11 +12,10 @@ import {
 } from "wagmi";
 import {
   encodeAbiParameters,
-  parseAbiParameters,
   parseAbiItem,
   type Log,
 } from "viem";
-import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getContracts, getPaymentMethodsCatalog, resolvePaymentMethodHashFromCatalog, resolveFiatCurrencyBytes32 } from "@zkp2p/sdk";
+import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getPaymentMethodsCatalog, resolvePaymentMethodHashFromCatalog, resolveFiatCurrencyBytes32 } from "@zkp2p/sdk";
 import {
   VENMO_TO_SEPA_ROUTER_ADDRESS,
   VENMO_TO_SEPA_ROUTER_ABI,
@@ -50,12 +49,13 @@ import Card from "@mui/material/Card";
 // OffRampV3: QUOTE_WINDOW (5 min) + SELECTION_WINDOW (10 min) = 15 min
 const OFFRAMP_DEADLINE_SECONDS = 15 * 60;
 
-// ZKP2P staging contracts and API
-const ZKP2P_STAGING_ORCHESTRATOR = "0x2466d5B30613309E32a2faFA9b3B3c03eD6c9124" as const;
-const ZKP2P_STAGING_ESCROW = "0x5C2a8D9246777eE4501B6C426a8B8C7635C7b5b5" as const;
+// ZKP2P V3 contracts (fully permissionless PostIntentHook with IPostIntentHookV2)
+const ZKP2P_V3_ORCHESTRATOR = "0x888888359E981B5225CA48fbCdCeff702FC3b888" as const;
+const ZKP2P_V3_ESCROW = "0x777777779d229cdF3110e9de47943791c26300Ef" as const;
+const ZKP2P_V3_PROTOCOL_VIEWER = "0xC8A622e1614BB58141E72e1D6023B16f08677d6c" as const;
 const ZKP2P_API_URL = "https://api.zkp2p.xyz" as const;
 
-// Minimal Orchestrator ABI for signalIntent
+// Minimal Orchestrator ABI for signalIntent and cancelIntent
 const ORCHESTRATOR_ABI = [
   {
     name: "signalIntent",
@@ -84,6 +84,30 @@ const ORCHESTRATOR_ABI = [
     ],
     outputs: [{ name: "", type: "bytes32" }],
   },
+  {
+    name: "cancelIntent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "intentHash", type: "bytes32" }],
+    outputs: [],
+  },
+  // IntentSignaled event to extract intent hash from logs
+  {
+    name: "IntentSignaled",
+    type: "event",
+    inputs: [
+      { name: "intentHash", type: "bytes32", indexed: true },
+      { name: "escrow", type: "address", indexed: true },
+      { name: "depositId", type: "uint256", indexed: true },
+      { name: "paymentMethod", type: "bytes32", indexed: false },
+      { name: "to", type: "address", indexed: false },
+      { name: "funder", type: "address", indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "fiatCurrency", type: "bytes32", indexed: false },
+      { name: "conversionRate", type: "uint256", indexed: false },
+      { name: "timestamp", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
 
 // ============ Types ============
@@ -110,6 +134,7 @@ interface ZkpQuote {
   amount: string;
   toAddress: string;
   payeeDetails: string;
+  payeeUsername: string; // Human-readable username (e.g., Revolut username)
   fiatCurrencyCode: string;
   conversionRate: string;
   fiatAmount: string;
@@ -143,8 +168,8 @@ interface FlowData {
 
 // ============ Hooks ============
 
-// Use staging environment for ZKP2P (hook is whitelisted there)
-const ZKP2P_ENVIRONMENT = 'staging' as const;
+// Use production environment for ZKP2P (PostIntentHook now permissionless)
+const ZKP2P_ENVIRONMENT = 'production' as const;
 
 function useZkp2pClient() {
   const { data: walletClient } = useWalletClient();
@@ -312,8 +337,9 @@ export function VenmoToSepaFlow() {
   const { writeContract: routerCommit, data: routerCommitHash } = useWriteContract();
   const { isSuccess: isRouterCommitConfirmed } = useWaitForTransactionReceipt({ hash: routerCommitHash });
 
-  // Local state for signaling (we use client directly, not the hook)
+  // Local state for signaling and cancelling
   const [isSignaling, setIsSignaling] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // OffRampV3 deadline countdown (starts when Router creates the FreeFlo intent)
   const deadlineRemaining = useCountdown(flowData.routerIntentCreatedAt, OFFRAMP_DEADLINE_SECONDS);
@@ -333,7 +359,7 @@ export function VenmoToSepaFlow() {
   useLogPoller(
     step === "zkp2p_fulfilling",
     VENMO_TO_SEPA_ROUTER_ADDRESS,
-    "event TransferInitiated(address indexed user, bytes32 indexed intentId, uint256 usdcAmount, string iban, string recipientName, uint256 minEurAmount)",
+    "event TransferInitiated(address indexed user, bytes32 indexed intentId, bytes32 indexed zkp2pIntentHash, uint256 usdcAmount, string iban, string recipientName, uint256 minEurAmount)",
     useCallback((log: Log) => {
       const args = (log as any).args;
       if (args?.user?.toLowerCase() === address?.toLowerCase()) {
@@ -382,179 +408,86 @@ export function VenmoToSepaFlow() {
     return Math.floor(eurEstimate * 100) / 100;
   }, []);
 
-  // Fetch ZKP2P quotes via server-side proxy (their API has no CORS headers)
+  // Fetch ZKP2P quotes via server-side proxy (avoids CORS)
   const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
-    if (!address) return [];
+    if (!address) {
+      console.log("fetchZkp2pQuotes: missing address");
+      return [];
+    }
 
     try {
+      console.log(`Fetching quotes via proxy: ${platform} ${currency} ${fiatAmount}`);
+
+      // Use server-side proxy to avoid CORS issues with ZKP2P API
       const params = new URLSearchParams({
-        paymentPlatforms: platform,
+        amount: fiatAmount.toString(),
         fiatCurrency: currency,
         user: address,
         recipient: address,
         destinationChainId: chainId.toString(),
         destinationToken: USDC_MAINNET_ADDRESS,
-        amount: fiatAmount.toFixed(2),
+        paymentPlatforms: platform,
         isExactFiat: "true",
-        includeNearbyQuotes: "true",
-        nearbySearchRange: "20",
+        quotesToReturn: "10",
       });
 
-      const response = await fetch(`/api/zkp2p-quote?${params.toString()}`);
+      const response = await fetch(`/api/zkp2p-quote?${params}`);
+      const data = await response.json();
+
+      console.log("Proxy quote response:", data);
+
       if (!response.ok) {
-        console.error("ZKP2P proxy error:", response.status);
-        const text = await response.text();
-        console.error("ZKP2P proxy response:", text);
-      } else {
-        const data = await response.json();
-        console.log("ZKP2P quote response:", data);
-        console.log("ZKP2P quotes detail:", JSON.stringify(data.responseObject?.quotes, null, 2));
-
-        if (data.success && data.responseObject?.quotes?.length > 0) {
-          const mapped: ZkpQuote[] = data.responseObject.quotes.map((q: { intent: { depositId: string; escrowAddress: string; processorName: string; amount: string; toAddress: string; payeeDetails: string; fiatCurrencyCode: string }; conversionRate: string; fiatAmount: string; fiatAmountFormatted: string; tokenAmount: string; tokenAmountFormatted: string; paymentMethod: string; gatingServiceSignature?: `0x${string}`; signatureExpiration?: string | bigint }) => ({
-            depositId: q.intent.depositId,
-            escrowAddress: q.intent.escrowAddress,
-            processorName: q.intent.processorName,
-            amount: q.intent.amount,
-            toAddress: q.intent.toAddress,
-            payeeDetails: q.intent.payeeDetails,
-            fiatCurrencyCode: q.intent.fiatCurrencyCode,
-            conversionRate: q.conversionRate,
-            fiatAmount: q.fiatAmount,
-            fiatAmountFormatted: q.fiatAmountFormatted,
-            tokenAmount: q.tokenAmount,
-            tokenAmountFormatted: q.tokenAmountFormatted,
-            paymentMethod: q.paymentMethod,
-            gatingServiceSignature: q.gatingServiceSignature,
-            signatureExpiration: q.signatureExpiration,
-          }));
-
-          setZkp2pQuotes(mapped);
-          return mapped;
-        }
-      }
-
-      // Fallback: build quote from on-chain staging deposit data
-      // The ZKP2P API may not index staging deposits, so query on-chain
-      console.log("API returned no quotes, trying on-chain staging fallback...");
-      const { addresses } = getContracts(chainId, ZKP2P_ENVIRONMENT);
-      const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
-      const platformKey = platform.toLowerCase();
-      const paymentMethodHash = catalog[platformKey]?.paymentMethodHash;
-
-      if (!paymentMethodHash || !publicClient) {
-        console.error("No payment method hash or public client for fallback");
+        console.error("Proxy quote error:", data);
         return [];
       }
 
-      const escrowAddress = addresses.escrow as `0x${string}`;
-      const protocolViewerAddress = addresses.protocolViewer as `0x${string}`;
-      const pvAbi = (await import('@zkp2p/contracts-v2/abis/baseStaging/ProtocolViewer.json')).default;
+      // ZKP2P API wraps response in responseObject
+      const responseData = data.responseObject || data;
+      const quotes = responseData.quotes || responseData.nearbySuggestions || [];
 
-      try {
-        // Get total deposits count from Escrow
-        const depositCount = await publicClient.readContract({
-          address: escrowAddress,
-          abi: [{
-            name: 'depositCounter',
-            type: 'function',
-            stateMutability: 'view',
-            inputs: [],
-            outputs: [{ type: 'uint256' }],
-          }],
-          functionName: 'depositCounter',
-        }) as bigint;
-
-        console.log("Staging escrow deposit count:", depositCount.toString());
-
-        if (depositCount === BigInt(0)) return [];
-
-        // Build array of deposit IDs to query (all of them for staging)
-        const count = Number(depositCount);
-        const depositIds = Array.from({ length: count }, (_, i) => BigInt(i));
-
-        // Fetch all deposits via ProtocolViewer
-        const deposits = await publicClient.readContract({
-          address: protocolViewerAddress,
-          abi: pvAbi,
-          functionName: 'getDepositFromIds',
-          args: [depositIds],
-        }) as Array<{
-          depositId: bigint;
-          deposit: {
-            depositor: string;
-            acceptingIntents: boolean;
-            intentAmountRange: { min: bigint; max: bigint };
-          };
-          availableLiquidity: bigint;
-          paymentMethods: Array<{
-            paymentMethod: string;
-            verificationData: { intentGatingService: string; payeeDetails: string; data: string };
-            currencies: Array<{ code: string; minConversionRate: bigint }>;
-          }>;
-        }>;
-
-        console.log("On-chain staging deposits fetched:", deposits.length);
-
-        const currencyUpper = currency.toUpperCase();
-        const fallbackQuotes: ZkpQuote[] = [];
-
-        for (const dep of deposits) {
-          if (!dep.deposit.acceptingIntents) continue;
-          if (dep.availableLiquidity === BigInt(0)) continue;
-
-          for (const pm of dep.paymentMethods) {
-            if (pm.paymentMethod.toLowerCase() !== paymentMethodHash.toLowerCase()) continue;
-
-            for (const cur of pm.currencies) {
-              // minConversionRate is fiat per token (e.g., 0.84 = 840000000000000000)
-              const rate = Number(cur.minConversionRate) / 1e18;
-              if (rate === 0) continue;
-              const tokenAmount = Math.ceil((fiatAmount / rate) * 1e6);
-              const tokenAmountStr = tokenAmount.toString();
-
-              if (BigInt(tokenAmountStr) > dep.availableLiquidity) continue;
-              const { min, max } = dep.deposit.intentAmountRange;
-              if (min > BigInt(0) && BigInt(tokenAmountStr) < min) continue;
-              if (max > BigInt(0) && BigInt(tokenAmountStr) > max) continue;
-
-              const tokenAmountFormatted = (tokenAmount / 1e6).toFixed(2);
-
-              fallbackQuotes.push({
-                depositId: dep.depositId.toString(),
-                escrowAddress: escrowAddress,
-                processorName: platformKey,
-                amount: tokenAmountStr,
-                toAddress: address,
-                payeeDetails: pm.verificationData.payeeDetails,
-                fiatCurrencyCode: cur.code,
-                conversionRate: cur.minConversionRate.toString(),
-                fiatAmount: Math.round(fiatAmount * 1e6).toString(),
-                fiatAmountFormatted: `${fiatAmount.toFixed(2)} ${currencyUpper}`,
-                tokenAmount: tokenAmountStr,
-                tokenAmountFormatted: `${tokenAmountFormatted}`,
-                paymentMethod: pm.paymentMethod,
-              });
-            }
-          }
-        }
-
-        console.log("Fallback quotes built:", fallbackQuotes.length, fallbackQuotes);
-
-        if (fallbackQuotes.length > 0) {
-          setZkp2pQuotes(fallbackQuotes);
-          return fallbackQuotes;
-        }
-      } catch (err) {
-        console.error("On-chain fallback failed:", err);
+      if (!quotes || quotes.length === 0) {
+        console.log("No quotes returned from API");
+        return [];
       }
 
-      return [];
+      // Map API response to our ZkpQuote interface
+      const mapped: ZkpQuote[] = quotes.map((q: any) => {
+        // Extract username from maker.depositData (platform-specific field names)
+        const depositData = q.maker?.depositData || {};
+        const payeeUsername = depositData.revolutUsername
+          || depositData.venmoUsername
+          || depositData.cashappUsername
+          || depositData.username
+          || "";
+
+        return {
+          depositId: q.intent?.depositId?.toString() || q.depositId?.toString() || "",
+          escrowAddress: q.intent?.escrowAddress || q.escrowAddress || ZKP2P_V3_ESCROW,
+          processorName: q.intent?.processorName || q.processorName || platform,
+          amount: q.intent?.amount?.toString() || q.amount?.toString() || "",
+          toAddress: q.intent?.toAddress || q.toAddress || address,
+          payeeDetails: q.intent?.payeeDetails || q.payeeDetails || "",
+          payeeUsername,
+          fiatCurrencyCode: q.intent?.fiatCurrencyCode || q.fiatCurrencyCode || currency,
+          conversionRate: q.conversionRate?.toString() || "",
+          fiatAmount: q.fiatAmount?.toString() || "",
+          fiatAmountFormatted: q.fiatAmountFormatted || `${fiatAmount.toFixed(2)} ${currency}`,
+          tokenAmount: q.tokenAmount?.toString() || "",
+          tokenAmountFormatted: q.tokenAmountFormatted || "",
+          paymentMethod: q.paymentMethod || "",
+          gatingServiceSignature: q.gatingServiceSignature,
+          signatureExpiration: q.signatureExpiration,
+        };
+      });
+
+      console.log("Mapped quotes:", mapped);
+      setZkp2pQuotes(mapped);
+      return mapped;
     } catch (err) {
-      console.error("ZKP2P quote fetch failed:", err);
+      console.error("Proxy getQuote failed:", err);
       return [];
     }
-  }, [address, chainId, publicClient]);
+  }, [address, chainId]);
 
   // Fetch FreeFlo solver quotes
   const fetchFreefloQuotes = useCallback(async (usdcAmount: bigint) => {
@@ -574,9 +507,20 @@ export function VenmoToSepaFlow() {
 
   // Encode hook payload for ZKP2P signalIntent data field
   const encodeHookPayload = useCallback((iban: string, recipientName: string, minEurAmount: bigint): `0x${string}` => {
+    // Single tuple matching the contract's HookPayload struct (not three flat
+    // params — that layout makes the contract's abi.decode revert).
     return encodeAbiParameters(
-      parseAbiParameters("string, string, uint256"),
-      [iban, recipientName, minEurAmount]
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "iban", type: "string" },
+            { name: "recipientName", type: "string" },
+            { name: "minEurAmount", type: "uint256" },
+          ],
+        },
+      ],
+      [{ iban, recipientName, minEurAmount }]
     );
   }, []);
 
@@ -636,7 +580,7 @@ export function VenmoToSepaFlow() {
     setStep("zkp2p_signal");
   };
 
-  // Fetch gating signature from ZKP2P API
+  // Fetch gating signature via server-side proxy (keeps API key secret)
   const fetchGatingSignature = async (params: {
     depositId: string;
     amount: string;
@@ -650,34 +594,22 @@ export function VenmoToSepaFlow() {
     postIntentHook: string; // Router address for hook
     data: string; // Encoded hook payload
   }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
-    const apiKey = process.env.NEXT_PUBLIC_ZKP2P_API_KEY;
-    if (!apiKey) {
-      console.error("No ZKP2P API key configured");
-      return null;
-    }
-
-    // Build the request body matching SDK's apiSignIntentV2 format EXACTLY
-    // The SDK resolves paymentMethod from catalog and fiatCurrency using resolveFiatCurrencyBytes32
+    // Resolve payment method and fiat currency hashes (same as SDK does)
     const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
     const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
     const fiatCurrencyHash = resolveFiatCurrencyBytes32(params.fiatCurrencyCode);
 
-    // Include referrer/referrerFee in case they're part of the signature
     const requestBody = {
       processorName: params.processorName,
       payeeDetails: params.payeeDetails,
-      depositId: params.depositId.toString(),
-      amount: params.amount.toString(),
+      depositId: params.depositId,
+      amount: params.amount,
       toAddress: params.toAddress,
-      paymentMethod: paymentMethodHash, // Resolved from catalog, same as SDK
-      fiatCurrency: fiatCurrencyHash, // Resolved using SDK's function
-      conversionRate: params.conversionRate.toString(),
+      paymentMethod: paymentMethodHash,
+      fiatCurrency: fiatCurrencyHash,
+      conversionRate: params.conversionRate,
       chainId: chainId.toString(),
-      orchestratorAddress: ZKP2P_STAGING_ORCHESTRATOR, // Use correct staging Orchestrator, not SDK's
       escrowAddress: params.escrowAddress,
-      // Include these in case they're part of the signature
-      referrer: "0x0000000000000000000000000000000000000000",
-      referrerFee: "0",
       postIntentHook: params.postIntentHook,
       data: params.data,
     };
@@ -685,48 +617,26 @@ export function VenmoToSepaFlow() {
     console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
     try {
-      // Staging API uses Authorization header instead of x-api-key
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (apiKey) {
-        if (ZKP2P_STAGING_API_URL.includes("staging")) {
-          // Staging uses Bearer token in Authorization header
-          headers["Authorization"] = `Bearer ${apiKey}`;
-        } else {
-          // Production uses x-api-key
-          headers["x-api-key"] = apiKey;
-        }
-      }
-
-      const response = await fetch(`${ZKP2P_STAGING_API_URL}/v2/verify/intent`, {
+      // Use server-side proxy to keep API key secret
+      const response = await fetch('/api/zkp2p-gating', {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
       });
 
-      if (!response.ok) {
-        const text = await response.text();
-        console.error("Gating API error:", response.status, text);
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        console.error("Gating API error:", response.status, result);
         return null;
       }
 
-      const result = await response.json();
-      console.log("Gating API response:", JSON.stringify(result, null, 2));
+      console.log("Gating API response:", result);
 
-      // SDK expects: signedIntent and intentData.signatureExpiration or signatureExpiration
-      const sig = result?.responseObject?.signedIntent;
-      const expStr = result?.responseObject?.intentData?.signatureExpiration ?? result?.responseObject?.signatureExpiration;
-
-      if (sig && expStr) {
-        return {
-          signature: sig as `0x${string}`,
-          expiration: expStr.toString(),
-        };
-      }
-
-      console.error("Missing signature or expiration in response:", { sig, expStr });
-      return null;
+      return {
+        signature: result.signature as `0x${string}`,
+        expiration: result.expiration,
+      };
     } catch (err) {
       console.error("Failed to fetch gating signature:", err);
       return null;
@@ -749,7 +659,9 @@ export function VenmoToSepaFlow() {
     setError(null);
 
     try {
-      console.log("Calling SDK signalIntent with params:", {
+      // Fetch gating signature via our server-side proxy
+      console.log("Fetching gating signature for postIntentHook...");
+      const gatingResult = await fetchGatingSignature({
         depositId: quote.depositId,
         amount: quote.amount,
         toAddress: address,
@@ -757,11 +669,39 @@ export function VenmoToSepaFlow() {
         payeeDetails: quote.payeeDetails,
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
+        escrowAddress: quote.escrowAddress,
+        paymentMethod: quote.paymentMethod,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
-        dataLength: hookPayload.length,
+        data: hookPayload,
       });
 
-      // Use SDK's signalIntent - it handles gating signature automatically
+      if (!gatingResult) {
+        throw new Error("Failed to fetch gating signature from API");
+      }
+
+      const gatingSignature = gatingResult.signature;
+      const signatureExpiration = gatingResult.expiration;
+      console.log("Gating signature fetched:", {
+        signature: gatingSignature?.slice(0, 20) + "...",
+        expiration: signatureExpiration
+      });
+
+      console.log("Calling SDK signalIntent with gating signature");
+      console.log("SDK config: runtimeEnv=production, apiKey=" + (process.env.NEXT_PUBLIC_ZKP2P_API_KEY ? "set" : "NOT SET"));
+      console.log("signalIntent params:", {
+        depositId: quote.depositId,
+        amount: quote.amount,
+        toAddress: address,
+        processorName: quote.processorName,
+        payeeDetails: quote.payeeDetails,
+        fiatCurrencyCode: quote.fiatCurrencyCode,
+        conversionRate: quote.conversionRate,
+        escrowAddress: quote.escrowAddress,
+        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        dataLength: hookPayload.length,
+        hasGatingSignature: !!gatingSignature,
+      });
+
       const hash = await zkp2pClient.signalIntent({
         depositId: BigInt(quote.depositId),
         amount: BigInt(quote.amount),
@@ -770,22 +710,88 @@ export function VenmoToSepaFlow() {
         payeeDetails: quote.payeeDetails,
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: BigInt(quote.conversionRate),
+        escrowAddress: quote.escrowAddress as `0x${string}`,
         postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
         data: hookPayload,
+        gatingServiceSignature: gatingSignature,
+        signatureExpiration: BigInt(signatureExpiration),
       });
 
       console.log("SignalIntent tx hash:", hash);
 
-      if (hash) {
-        setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
+      if (hash && publicClient) {
+        // Wait for receipt and extract the actual intent hash from logs
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` });
+        console.log("Transaction receipt:", receipt.status);
+
+        // Find IntentSignaled event - intent hash is in topics[1]
+        const intentSignaledLog = receipt.logs.find(
+          (log) => log.address.toLowerCase() === ZKP2P_V3_ORCHESTRATOR.toLowerCase() &&
+                   log.topics[0] === "0xf8c114f83581b2cf0b9f130782a93024aa8933e7d188901156bd68bdd558a20a" // IntentSignaled event signature
+        );
+
+        if (intentSignaledLog && intentSignaledLog.topics[1]) {
+          const intentHash = intentSignaledLog.topics[1] as `0x${string}`;
+          console.log("Extracted intent hash:", intentHash);
+          setFlowData((prev) => ({ ...prev, zkp2pIntentHash: intentHash }));
+        } else {
+          // Fallback to tx hash if we can't find the event
+          console.warn("Could not find IntentSignaled event, using tx hash");
+          setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
+        }
         setStep("zkp2p_send_venmo");
       }
     } catch (err: any) {
       console.error("Signal intent failed:", err);
       console.error("Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
-      setError(`Failed to signal intent: ${err.message || "Unknown error"}`);
+
+      // Check if it's a 409 conflict (active intent exists)
+      const errorMsg = err.message || "Unknown error";
+      if (errorMsg.includes("409") || errorMsg.includes("active order")) {
+        setError("You have an active intent. Cancel it first or wait for it to expire.");
+      } else {
+        setError(`Failed to signal intent: ${errorMsg}`);
+      }
     } finally {
       setIsSignaling(false);
+    }
+  };
+
+  const handleCancelIntent = async () => {
+    if (!flowData.zkp2pIntentHash || !walletClient || !publicClient) {
+      setError("No active intent to cancel");
+      return;
+    }
+
+    setIsCancelling(true);
+    setError(null);
+
+    try {
+      console.log("Cancelling intent:", flowData.zkp2pIntentHash);
+
+      const { request } = await publicClient.simulateContract({
+        address: ZKP2P_V3_ORCHESTRATOR,
+        abi: ORCHESTRATOR_ABI,
+        functionName: "cancelIntent",
+        args: [flowData.zkp2pIntentHash],
+        account: walletClient.account,
+      });
+
+      const txHash = await walletClient.writeContract(request);
+      console.log("Cancel tx hash:", txHash);
+
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      console.log("Intent cancelled successfully");
+
+      // Reset flow state
+      setFlowData((prev) => ({ ...prev, zkp2pIntentHash: null, zkp2pQuote: null }));
+      setStep("select_maker");
+      setError(null);
+    } catch (err: any) {
+      console.error("Cancel intent failed:", err);
+      setError(`Failed to cancel intent: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -817,12 +823,15 @@ export function VenmoToSepaFlow() {
 
     const pollQuotes = async () => {
       const quotes = await fetchFreefloQuotes(flowData.usdcAmount);
-      if (quotes.length > 0) {
-        const best = quotes[0];
+      const best = quotes[0];
+      // /api/quote returns fiatAmount in euros (not outputAmount). Guard against a
+      // missing/NaN amount so we never advance to commit with a bad figure.
+      const eur = Number(best?.fiatAmount);
+      if (best?.solver?.address && Number.isFinite(eur) && eur > 0) {
         setFlowData((prev) => ({
           ...prev,
-          selectedSolver: best.solver?.address,
-          quotedEurAmount: best.outputAmount,
+          selectedSolver: best.solver.address,
+          quotedEurAmount: eur,
         }));
         setStep("router_commit");
       }
@@ -841,10 +850,9 @@ export function VenmoToSepaFlow() {
       address: VENMO_TO_SEPA_ROUTER_ADDRESS,
       abi: VENMO_TO_SEPA_ROUTER_ABI,
       functionName: "commit",
-      args: [
-        flowData.selectedSolver,
-        BigInt(Math.floor(flowData.quotedEurAmount * 100)), // EUR cents
-      ],
+      // commit(address solver) — slippage is now enforced on-chain against the
+      // real quote, so no caller-supplied EUR amount is passed.
+      args: [flowData.selectedSolver],
     });
   };
 
@@ -958,7 +966,20 @@ export function VenmoToSepaFlow() {
           <Alert
             severity="error"
             sx={{ bgcolor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 3, color: '#f87171', '& .MuiAlert-icon': { color: '#f87171' } }}
-            action={<Button onClick={() => setError(null)} sx={{ color: 'rgba(248,113,113,0.6)', fontSize: '0.75rem', textTransform: 'none', '&:hover': { color: '#f87171' } }}>Dismiss</Button>}
+            action={
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {(error.includes("active intent") || error.includes("active order")) && flowData.zkp2pIntentHash && (
+                  <Button
+                    onClick={handleCancelIntent}
+                    disabled={isCancelling}
+                    sx={{ color: '#fbbf24', fontSize: '0.75rem', textTransform: 'none', '&:hover': { color: '#f59e0b' } }}
+                  >
+                    {isCancelling ? "Cancelling..." : "Cancel Intent"}
+                  </Button>
+                )}
+                <Button onClick={() => setError(null)} sx={{ color: 'rgba(248,113,113,0.6)', fontSize: '0.75rem', textTransform: 'none', '&:hover': { color: '#f87171' } }}>Dismiss</Button>
+              </Box>
+            }
           >
             <Typography variant="body2">{error}</Typography>
           </Alert>
@@ -1278,6 +1299,10 @@ export function VenmoToSepaFlow() {
                   <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Open {PLATFORMS[selectedPlatform]?.name || 'your payment app'} and send payment to the seller</Typography>
                 </Box>
               </Box>
+              <Box sx={{ bgcolor: 'rgba(24,24,27,0.5)', borderRadius: 2, p: 1.5, mb: 1.5 }}>
+                <Typography variant="caption" sx={{ color: '#71717a', textTransform: 'uppercase', mb: 0.5, display: 'block' }}>Send To</Typography>
+                <Typography variant="h5" sx={{ fontWeight: 700, color: '#60a5fa' }}>@{flowData.zkp2pQuote?.payeeUsername || 'Unknown'}</Typography>
+              </Box>
               <Box sx={{ bgcolor: 'rgba(24,24,27,0.5)', borderRadius: 2, p: 1.5 }}>
                 <Typography variant="caption" sx={{ color: '#71717a', textTransform: 'uppercase', mb: 0.5, display: 'block' }}>Amount</Typography>
                 <Typography variant="h5" sx={{ fontWeight: 700, color: 'white' }}>{CURRENCIES[selectedCurrency]?.symbol || '$'}{flowData.usdAmount.toFixed(2)}</Typography>
@@ -1288,6 +1313,20 @@ export function VenmoToSepaFlow() {
               sx={{ width: '100%', py: 2, borderRadius: 3, bgcolor: '#3b82f6', color: 'white', fontWeight: 600, fontSize: '1rem', textTransform: 'none', '&:hover': { bgcolor: '#2563eb' } }}
             >
               I&apos;ve Sent the Payment
+            </Button>
+            <Button
+              onClick={handleCancelIntent}
+              disabled={isCancelling}
+              sx={{
+                width: '100%', py: 1.5, borderRadius: 3,
+                bgcolor: 'transparent', color: '#f87171',
+                border: '1px solid rgba(239,68,68,0.3)',
+                fontWeight: 500, fontSize: '0.875rem', textTransform: 'none',
+                '&:hover': { bgcolor: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.5)' },
+                '&:disabled': { color: '#71717a', borderColor: 'rgba(113,113,122,0.3)' }
+              }}
+            >
+              {isCancelling ? "Cancelling Intent..." : "Cancel Intent"}
             </Button>
           </Box>
         )}
@@ -1318,6 +1357,20 @@ export function VenmoToSepaFlow() {
               sx={{ width: '100%', py: 2, borderRadius: 3, bgcolor: '#3b82f6', color: 'white', fontWeight: 600, fontSize: '1rem', textTransform: 'none', '&:hover': { bgcolor: '#2563eb' } }}
             >
               Verify with ZKP2P
+            </Button>
+            <Button
+              onClick={handleCancelIntent}
+              disabled={isCancelling}
+              sx={{
+                width: '100%', py: 1.5, borderRadius: 3,
+                bgcolor: 'transparent', color: '#f87171',
+                border: '1px solid rgba(239,68,68,0.3)',
+                fontWeight: 500, fontSize: '0.875rem', textTransform: 'none',
+                '&:hover': { bgcolor: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.5)' },
+                '&:disabled': { color: '#71717a', borderColor: 'rgba(113,113,122,0.3)' }
+              }}
+            >
+              {isCancelling ? "Cancelling Intent..." : "Cancel Intent"}
             </Button>
           </Box>
         )}

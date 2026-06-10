@@ -61,9 +61,18 @@ export function useExecuteOfframp() {
             const realQuotes = await fetchOnChainQuotes(createIntentHook.intentId!, usdcAmount, chainId);
             if (realQuotes.length > 0) {
               // Found quotes — proceed to approve
-              const matchingQuote = selectedQuote
-                ? realQuotes.find((q) => q.rtpn === selectedQuote.rtpn) || realQuotes[0]
-                : realQuotes[0];
+              // Bind to the exact quote the user reviewed (solver AND rtpn). Do
+              // not silently fall back to a different solver's quote.
+              const matchingQuote = realQuotes.find(
+                (q) =>
+                  q.rtpn === selectedQuote?.rtpn &&
+                  q.solver?.address?.toLowerCase() ===
+                    selectedQuote?.solver?.address?.toLowerCase()
+              );
+              if (!matchingQuote) {
+                setError("The quote you selected is no longer available. Please retry.");
+                return;
+              }
 
               useFormStore.getState().setSelectedQuote(matchingQuote);
               proceedToApproval();
