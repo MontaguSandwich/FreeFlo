@@ -3,6 +3,7 @@ import { useAccount, useChainId } from "wagmi";
 import { type Address } from "viem";
 import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
+import { useIntentsStore } from "@/stores/intentsStore";
 import { useCreateIntent } from "./useCreateIntent";
 import { useApproveUSDC } from "./useApproveUSDC";
 import { useCommitQuote } from "./useCommitQuote";
@@ -49,6 +50,19 @@ export function useExecuteOfframp() {
     if (createIntentHook.isSuccess && createIntentHook.intentId) {
       setStepStatus("createIntent", "done", { txHash: createIntentHook.hash });
       setIntentId(createIntentHook.intentId);
+
+      // Persist for the "Your intents" panel so this intent can be reclaimed later.
+      // Read form values via getState() (same pattern as proceedToCommit) to avoid
+      // widening this effect's dependency array.
+      const form = useFormStore.getState();
+      useIntentsStore.getState().addIntent({
+        intentId: createIntentHook.intentId,
+        createdAt: Date.now(),
+        amountUsdc: form.amount,
+        currency: form.currency,
+        receivingInfo: form.receivingInfo,
+        recipientName: form.recipientName,
+      });
 
       // Start polling for on-chain quotes
       if (!hasStartedQuotePoll.current) {
