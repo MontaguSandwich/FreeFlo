@@ -206,21 +206,32 @@ export class QontoProvider extends BaseProvider {
       const amountEur = (Number(fiatAmount) / 100).toFixed(2);
       const reference = `OFFRAMP-${intentId.substring(0, 8)}`;
 
+      // Deterministic idempotency key derived from the on-chain intent id. Qonto caches the first
+      // successful response per X-Qonto-Idempotency-Key (~24h window) and replays it for any later
+      // request with the same key, so a retry after the solver crashes between Qonto accepting the
+      // transfer and persisting the transferId returns the ORIGINAL transfer instead of sending a
+      // second real EUR payment. The key MUST stay stable across retries of the same intent, so it
+      // is derived solely from intentId (unique per intent) — never randomized.
+      const idempotencyKey = `offramp-${intentId}`;
+
       // Always use beneficiary object with name/IBAN to match VoP token
       // (beneficiary_id would cause VoP signature mismatch)
-      const transferResponse = await this.client.createTransfer({
-        vop_proof_token: vopResult.proof_token.token,
-        transfer: {
-          bank_account_id: this.config.bankAccountId,
-          beneficiary: {
-            name: recipientName,
-            iban,
+      const transferResponse = await this.client.createTransfer(
+        {
+          vop_proof_token: vopResult.proof_token.token,
+          transfer: {
+            bank_account_id: this.config.bankAccountId,
+            beneficiary: {
+              name: recipientName,
+              iban,
+            },
+            amount: amountEur,
+            reference,
+            note: `Off-ramp intent ${intentId}`,
           },
-          amount: amountEur,
-          reference,
-          note: `Off-ramp intent ${intentId}`,
         },
-      });
+        idempotencyKey
+      );
 
       const transfer = transferResponse.transfer;
       log.info(
@@ -256,26 +267,61 @@ export class QontoProvider extends BaseProvider {
           error: `Transfer ${finalStatus}: ${statusCheck.transfer.declined_reason || "unknown reason"}`,
         };
       } else {
-        // Transfer is still processing after our timeout
-        // This likely means Qonto fell back to SEPA Standard - unacceptable for real-time
+        // Transfer did not reach a terminal state within our SEPA Instant
+        // window. This likely means Qonto fell back to SEPA Standard, which we
+        // do not accept for real-time off-ramp.
         log.error(
           { transferId: transfer.id, status: finalStatus },
-          "Transfer did not settle in time - likely fell back to SEPA Standard"
+          "Transfer did not settle in time - attempting cancel"
         );
-        
-        // Cancel the pending transfer since we can't wait for standard SEPA
+
+        // Try to cancel, then RE-VERIFY the status. Neither the cancel call
+        // succeeding nor failing tells us whether the instant payment already
+        // settled, so we must confirm a terminal state before assuming the fiat
+        // is safe.
+        let observedStatus: QontoTransferStatus = finalStatus;
+        let confirmedTerminal = false;
         try {
           await this.client.cancelTransfer(transfer.id);
-          log.info({ transferId: transfer.id }, "Cancelled non-instant transfer");
+          const recheck = await this.client.getTransfer(transfer.id);
+          observedStatus = recheck.transfer.status;
+          if (observedStatus === "canceled" || observedStatus === "declined") {
+            // Cancel took effect before any settlement - fiat is safe.
+            confirmedTerminal = true;
+          }
         } catch (cancelError) {
-          log.warn({ transferId: transfer.id, error: cancelError }, "Failed to cancel transfer");
+          log.warn(
+            { transferId: transfer.id, error: cancelError },
+            "Failed to cancel/verify transfer - outcome unknown"
+          );
         }
-        
+
+        if (confirmedTerminal) {
+          log.info(
+            { transferId: transfer.id, status: observedStatus },
+            "Non-instant transfer cancelled and confirmed terminal"
+          );
+          return {
+            success: false,
+            transferId: transfer.id,
+            fiatSent: 0n,
+            error: `Transfer did not complete as SEPA Instant and was cancelled (status: ${observedStatus}). Real-time settlement required.`,
+          };
+        }
+
+        // Could NOT confirm the transfer is dead: the fiat may still settle as
+        // SEPA Standard. Flag for manual reconciliation - the caller records the
+        // transfer id, alerts, and must never re-send for this intent.
+        log.error(
+          { transferId: transfer.id, status: observedStatus },
+          "Transfer outcome UNKNOWN after instant window - fiat may still settle, manual reconciliation required"
+        );
         return {
           success: false,
           transferId: transfer.id,
           fiatSent: 0n,
-          error: `Transfer did not complete as SEPA Instant (status: ${finalStatus}). Real-time settlement required.`,
+          requiresReconciliation: true,
+          error: `Transfer did not settle as SEPA Instant and could not be confirmed cancelled (status: ${observedStatus}). Fiat may still settle - manual reconciliation required.`,
         };
       }
 
@@ -523,8 +569,10 @@ export class QontoProvider extends BaseProvider {
  */
 function persistTokensToEnv(accessToken: string, refreshToken: string, useSandbox: boolean = false): void {
   try {
-    // Find correct .env file - use .env.testnet for sandbox mode
-    const envFileName = useSandbox ? ".env.testnet" : ".env";
+    // Persist back to whichever env file we actually loaded (ENV_FILE), so a
+    // refreshed rotating token survives restarts. Falls back to the old
+    // sandbox->.env.testnet / prod->.env mapping when ENV_FILE is unset.
+    const envFileName = process.env.ENV_FILE || (useSandbox ? ".env.testnet" : ".env");
     let envPath = path.join(process.cwd(), envFileName);
     if (!fs.existsSync(envPath)) {
       envPath = path.join(process.cwd(), "solver", envFileName);

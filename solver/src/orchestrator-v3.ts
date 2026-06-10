@@ -21,6 +21,8 @@ import {
   CURRENCY_NAMES,
 } from "./types/index.js";
 import type { IntentCreatedEvent, QuoteSelectedEvent } from "./chain/abi.js";
+import { initAlertService, type AlertService } from "./alerts/index.js";
+import { getStageFromStep } from "./types/errors.js";
 
 const log = createLogger("orchestrator-v3");
 
@@ -43,9 +45,13 @@ export class SolverOrchestratorV3 {
   private registry: ProviderRegistry;
   private attestation: AttestationClient;
   private config: OrchestratorV3Config;
+  private alerts: AlertService;
   private running = false;
   private unwatchIntents?: () => void;
   private unwatchQuotes?: () => void;
+  private lastWitnessCheck = 0;
+  private static readonly WITNESS_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
+  private static readonly MAX_RETRIES = 5;
 
   constructor(
     db: IntentDatabase,
@@ -59,6 +65,7 @@ export class SolverOrchestratorV3 {
     this.registry = registry;
     this.attestation = attestation;
     this.config = config;
+    this.alerts = initAlertService();
   }
 
   async start(): Promise<void> {
@@ -216,6 +223,7 @@ export class SolverOrchestratorV3 {
         await this.processQuoting();
         await this.processFulfillment();
         await this.processRetryQueue();
+        await this.checkWitnessAuthorization();
 
         consecutiveErrors = 0;
         updateHealthCheck("chain", "ok");
@@ -227,6 +235,12 @@ export class SolverOrchestratorV3 {
 
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
           updateHealthCheck("chain", "error", `${consecutiveErrors} consecutive errors: ${errorMessage}`);
+          // Alert on repeated main loop failures
+          await this.alerts.reportSystemError({
+            type: "solver_unhealthy",
+            message: `Solver main loop failing: ${consecutiveErrors} consecutive errors`,
+            details: { lastError: errorMessage, consecutiveErrors },
+          });
         } else {
           updateHealthCheck("chain", "warning", `Error: ${errorMessage}`);
         }
@@ -429,13 +443,28 @@ export class SolverOrchestratorV3 {
     if (selectedRtpn === null || selectedFiatAmount === null || !receivingInfo || !recipientName) {
       log.error({ intentId }, "Intent missing required fields for fulfillment");
       this.db.markFailed(intentId, "Missing required fields");
+      await this.alerts.reportIntentError({
+        intentId,
+        error: "Missing required fields for fulfillment",
+        stage: "unknown",
+      });
       return;
     }
 
     const canFulfill = await this.chain.canFulfill(intentId as `0x${string}`);
     if (!canFulfill) {
       log.info({ intentId }, "Intent no longer fulfillable on-chain");
+      const transferId = this.db.getTransferId(intentId);
       this.db.markFailed(intentId, "No longer fulfillable");
+      // Only alert if fiat was already sent (critical situation)
+      if (transferId) {
+        await this.alerts.reportIntentError({
+          intentId,
+          error: "Intent no longer fulfillable but fiat was already sent",
+          stage: "on_chain_fulfillment",
+          transferId,
+        });
+      }
       return;
     }
 
@@ -483,8 +512,51 @@ export class SolverOrchestratorV3 {
         });
 
         if (!result.success) {
+          // Record the provider transfer id (when present) BEFORE deciding how
+          // to fail, so an in-flight or rejected transfer is never lost for
+          // reconciliation and any retry resumes from proof generation instead
+          // of issuing a fresh send. qonto.ts returns a non-empty transferId on
+          // the declined/cancelled and instant-window-exceeded branches.
+          if (result.transferId) {
+            this.db.saveTransferId(intentId, result.transferId);
+          }
+
+          if (result.requiresReconciliation) {
+            // The fiat transfer FAILED but its outcome is unknown - it may still
+            // settle at the recipient (e.g. fell back to SEPA Standard). Keep the
+            // intent retryable so it can resume from proof generation if the
+            // payment lands (the saved transferId means retry never re-sends),
+            // and raise a CRITICAL reconciliation alert for ops.
+            log.error(
+              { intentId, transferId: result.transferId, error: result.error },
+              "Fiat transfer outcome UNKNOWN - possible in-flight settlement, manual reconciliation required"
+            );
+            this.db.markFailed(
+              intentId,
+              result.error || "Transfer outcome unknown - manual reconciliation required",
+              true
+            );
+            await this.alerts.reportIntentError({
+              intentId,
+              error: result.error || "Fiat may have settled despite failure - manual reconciliation required",
+              stage: "fiat_transfer",
+              transferId: result.transferId,
+            });
+            return;
+          }
+
+          // Clean terminal failure - no fiat left the account (VoP/declined/
+          // cancelled/API error). Permanently fail; do NOT auto-retry, because
+          // the retry path would only re-attempt proof generation for a payment
+          // that never settled. Any transferId saved above is kept for audit.
           log.error({ intentId, error: result.error }, "Fiat transfer failed");
-          this.db.markFailed(intentId, result.error || "Transfer failed");
+          this.db.markFailed(intentId, result.error || "Transfer failed", false);
+          await this.alerts.reportIntentError({
+            intentId,
+            error: result.error || "Fiat transfer failed",
+            stage: "fiat_transfer",
+            transferId: result.transferId || null,
+          });
           return;
         }
 
@@ -502,21 +574,34 @@ export class SolverOrchestratorV3 {
 
       // Step 2: Generate TLSNotary proof
       log.info({ intentId }, "Step 2/4: Generating TLSNotary proof");
-      const presentation = await this.generateTlsNotaryProof(transferId);
+      const proofs = await this.generateTlsNotaryProof(transferId);
 
-      if (!presentation) {
+      if (!proofs) {
         log.error({ intentId }, "Failed to generate TLSNotary proof");
         // Don't mark as failed - transfer completed, just needs retry for proof
+        const retryInfo = this.db.getRetryInfo(intentId);
         this.db.markFailed(intentId, "TLSNotary proof generation failed - retry will resume from Step 2");
+        await this.alerts.reportIntentError({
+          intentId,
+          error: "TLSNotary proof generation failed",
+          stage: "proof_generation",
+          retryCount: retryInfo?.retryCount,
+          maxRetries: SolverOrchestratorV3.MAX_RETRIES,
+          transferId,
+        });
         return;
       }
 
-      log.info({ intentId, proofSize: presentation.length }, "Step 2/4: TLSNotary proof generated");
+      log.info(
+        { intentId, transferProofSize: proofs.transfer.length, beneficiaryProofSize: proofs.beneficiary.length },
+        "Step 2/4: TLSNotary proofs generated"
+      );
 
       // Step 3: Get attestation from attestation service
       log.info({ intentId }, "Step 3/4: Requesting attestation");
       const attestationResponse = await this.attestation.attest({
-        presentation,
+        presentation: proofs.transfer,
+        beneficiaryPresentation: proofs.beneficiary,
         intentHash: intentId,
         expectedAmountCents: Number(fiatSent),
         expectedBeneficiaryIban: receivingInfo,
@@ -561,10 +646,33 @@ export class SolverOrchestratorV3 {
         "✅ Intent fulfilled with zkTLS verification"
       );
 
+      // Send success alert
+      await this.alerts.reportIntentSuccess({
+        intentId,
+        usdcAmount: usdcAmount,
+        fiatAmount: selectedFiatAmount,
+        currency: CURRENCY_NAMES[currency as Currency] || "???",
+        transferId,
+        txHash,
+      });
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error({ intentId, error: errorMessage }, "Failed to fulfill intent with zkTLS");
+      const retryInfo = this.db.getRetryInfo(intentId);
+      const existingTransferId = this.db.getTransferId(intentId);
       this.db.markFailed(intentId, errorMessage);
+
+      // Determine which stage based on whether transfer ID exists
+      const stage = existingTransferId ? "attestation" : "fiat_transfer";
+      await this.alerts.reportIntentError({
+        intentId,
+        error: errorMessage,
+        stage,
+        retryCount: retryInfo?.retryCount,
+        maxRetries: SolverOrchestratorV3.MAX_RETRIES,
+        transferId: existingTransferId,
+      });
     }
   }
 
@@ -574,69 +682,37 @@ export class SolverOrchestratorV3 {
    * If prover is configured, automatically generates the proof.
    * Otherwise, looks for pre-generated proofs in the storage path.
    */
-  private async generateTlsNotaryProof(transferId: string): Promise<string | null> {
-    const proofPath = this.config.proofStoragePath || "./proofs";
-    
-    try {
-      const fs = await import("fs/promises");
-      const path = await import("path");
-      
-      // First, check for existing proof
-      const proofFile = path.join(proofPath, `${transferId}.presentation.tlsn`);
-      
-      try {
-        const proofBytes = await fs.readFile(proofFile);
-        const base64Proof = proofBytes.toString("base64");
-        log.info({ transferId, proofFile }, "Found existing TLSNotary proof");
-        return base64Proof;
-      } catch {
-        // Proof file doesn't exist, try to generate
-      }
-
-      // If prover is configured, generate automatically
-      if (this.config.prover) {
-        log.info({ transferId }, "Generating TLSNotary proof automatically...");
-        
-        const result = await generateQontoProof(transferId, this.config.prover);
-        
-        if (result.success && result.presentationBase64) {
-          log.info(
-            { transferId, duration: result.duration },
-            "TLSNotary proof generated successfully"
-          );
-          return result.presentationBase64;
-        }
-        
-        log.error(
-          { transferId, error: result.error },
-          "Automatic proof generation failed"
-        );
-        return null;
-      }
-
-      // Fallback: check for the latest proof file (for testing)
-      const latestProofFile = path.join(proofPath, "qonto_transfer.presentation.tlsn");
-      try {
-        const proofBytes = await fs.readFile(latestProofFile);
-        const base64Proof = proofBytes.toString("base64");
-        log.info({ transferId, proofFile: latestProofFile }, "Using latest TLSNotary proof (testing mode)");
-        return base64Proof;
-      } catch {
-        // Latest proof file doesn't exist
-      }
-
-      log.warn(
-        { transferId, proofPath },
-        "No TLSNotary proof found - manual proof generation required"
-      );
-      log.warn("Run: cargo run --release --example qonto_prove_transfer");
-      
-      return null;
-
-    } catch (error) {
-      log.error({ transferId, error }, "Error during TLSNotary proof generation");
+  private async generateTlsNotaryProof(
+    transferId: string
+  ): Promise<{ transfer: string; beneficiary: string } | null> {
+    if (!this.config.prover) {
+      log.error({ transferId }, "No prover configured; cannot generate TLSNotary proof");
       return null;
     }
+
+    // Always regenerate both proofs (cheap; a stale cache once shipped an empty proof).
+    // Qonto won't serve transfer status + beneficiary IBAN on one notarized
+    // connection, so we prove each endpoint separately; the attestation binds them.
+    log.info({ transferId }, "Generating TLSNotary proofs (transfer + beneficiary)...");
+    const result = await generateQontoProof(transferId, this.config.prover);
+
+    if (
+      result.success &&
+      result.transferPresentationBase64 &&
+      result.beneficiaryPresentationBase64
+    ) {
+      log.info(
+        { transferId, duration: result.duration },
+        "TLSNotary proofs generated successfully"
+      );
+      return {
+        transfer: result.transferPresentationBase64,
+        beneficiary: result.beneficiaryPresentationBase64,
+      };
+    }
+
+    log.error({ transferId, error: result.error }, "Automatic proof generation failed");
+    return null;
   }
 
   // ============ Historical Sync ============
@@ -684,6 +760,42 @@ export class SolverOrchestratorV3 {
 
     this.db.setLastBlock(currentBlock);
     log.info("Historical sync complete");
+  }
+
+  // ============ Witness Authorization Check ============
+
+  /**
+   * Periodically check that the attestation service witness is still authorized.
+   * Alerts if authorization is revoked (prevents silent failures).
+   */
+  private async checkWitnessAuthorization(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastWitnessCheck < SolverOrchestratorV3.WITNESS_CHECK_INTERVAL) {
+      return; // Not time to check yet
+    }
+
+    this.lastWitnessCheck = now;
+
+    try {
+      const health = await this.attestation.healthCheck();
+      const witnessAddress = health.witnessAddress as `0x${string}`;
+      const isAuthorized = await this.chain.isWitnessAuthorized(witnessAddress);
+
+      if (!isAuthorized) {
+        log.error({ witnessAddress }, "Witness authorization revoked!");
+        updateHealthCheck("attestation", "error", "Witness not authorized");
+        await this.alerts.reportSystemError({
+          type: "witness_unauthorized",
+          message: "Attestation service witness is no longer authorized on PaymentVerifier",
+          details: { witnessAddress },
+        });
+      } else {
+        updateHealthCheck("attestation", "ok");
+      }
+    } catch (error) {
+      // Don't alert on check failure - attestation service might be temporarily down
+      log.warn({ error }, "Failed to check witness authorization");
+    }
   }
 }
 
