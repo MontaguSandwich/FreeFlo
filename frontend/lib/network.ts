@@ -23,9 +23,11 @@ export interface NetworkAddresses {
 
 const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
   mainnet: {
-    OFFRAMP_V3: "0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D",
+    // E2E TEST stack — audited contracts deployed 2026-06-10 with our own witness.
+    // NOT the live production addresses (those run pre-audit code + a witness we lack).
+    OFFRAMP_V3: "0xB017CEB882FCA97c357191a39A7450bcC7E2Ce9b",
     USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    PAYMENT_VERIFIER: "0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905",
+    PAYMENT_VERIFIER: "0x929F9536B5E91F5d7E5877A861E3bBFad4B3f06c",
   },
   testnet: {
     OFFRAMP_V3: "0x34249F4AB741F0661A38651A08213DDe1469b60f",
@@ -41,7 +43,9 @@ const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
 };
 
 const RPC_URLS: Record<NetworkName, string> = {
-  mainnet: "https://mainnet.base.org",
+  // Alchemy (dedicated) via NEXT_PUBLIC_RPC_URL; the key is restricted to our domains
+  // in the Alchemy dashboard (allowlist). Falls back to the public RPC if unset.
+  mainnet: process.env.NEXT_PUBLIC_RPC_URL || "https://mainnet.base.org",
   testnet: "https://base-sepolia-rpc.publicnode.com",
   local: "http://127.0.0.1:8545",
 };
