@@ -3,9 +3,9 @@
 // Primary: addresses follow the wallet's connected chain (Base vs Base Sepolia)
 // Fallback: NEXT_PUBLIC_NETWORK env var for SSR / non-React contexts
 
-import { base, baseSepolia, type Chain } from "viem/chains";
+import { base, baseSepolia, foundry, type Chain } from "viem/chains";
 
-export type NetworkName = "mainnet" | "testnet";
+export type NetworkName = "mainnet" | "testnet" | "local";
 
 // Env-var fallback (used at build time / SSR before wallet connects)
 export const DEFAULT_NETWORK: NetworkName =
@@ -32,16 +32,24 @@ const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
     USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     PAYMENT_VERIFIER: "0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe",
   },
+  // Local anvil (chainId 31337) — DeployLocal.s.sol deterministic addresses.
+  local: {
+    OFFRAMP_V3: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+    USDC: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    PAYMENT_VERIFIER: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  },
 };
 
 const RPC_URLS: Record<NetworkName, string> = {
   mainnet: "https://mainnet.base.org",
   testnet: "https://base-sepolia-rpc.publicnode.com",
+  local: "http://127.0.0.1:8545",
 };
 
 const CHAINS: Record<NetworkName, Chain> = {
   mainnet: base,
   testnet: baseSepolia,
+  local: foundry,
 };
 
 // ---- Chain-ID based lookup (runtime) ----
@@ -49,6 +57,7 @@ const CHAINS: Record<NetworkName, Chain> = {
 const CHAIN_ID_TO_NETWORK: Record<number, NetworkName> = {
   [base.id]: "mainnet",        // 8453
   [baseSepolia.id]: "testnet", // 84532
+  [foundry.id]: "local",       // 31337
 };
 
 /** Resolve network name from a chain ID. Falls back to DEFAULT_NETWORK. */
