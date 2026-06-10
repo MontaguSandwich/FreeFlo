@@ -180,7 +180,6 @@ contract OffRampV3 is ReentrancyGuard, Pausable, Ownable {
     error InvalidIntentStatus();
     error NotDepositor();
     error NotSelectedSolver();
-    error SolverDoesNotSupportRtpn();
     error RtpnDoesNotSupportCurrency();
     error QuoteExpired();
     error QuoteNotFound();

@@ -156,34 +156,6 @@ impl ChainClient {
         }))
     }
 
-    /// Check if an address is an authorized solver
-    /// Calls: OffRampV3.authorizedSolvers(address) returns (bool)
-    pub async fn is_solver_authorized(&self, solver: &str) -> Result<bool, String> {
-        // Function selector for authorizedSolvers(address)
-        // keccak256("authorizedSolvers(address)")[:4] = 0xf6e14bad
-        let selector = hex::decode("f6e14bad").unwrap();
-
-        let solver_bytes = hex::decode(solver.trim_start_matches("0x"))
-            .map_err(|e| format!("Invalid solver address: {}", e))?;
-
-        if solver_bytes.len() != 20 {
-            return Err("Solver address must be 20 bytes".to_string());
-        }
-
-        let mut calldata = selector;
-        calldata.extend_from_slice(&[0u8; 12]); // Pad to 32 bytes
-        calldata.extend_from_slice(&solver_bytes);
-
-        let result = self.eth_call(&calldata).await?;
-
-        // Result is 32 bytes, last byte is boolean
-        if result.len() < 32 {
-            return Ok(false);
-        }
-
-        Ok(result[31] != 0)
-    }
-
     /// Make an eth_call RPC request
     async fn eth_call(&self, calldata: &[u8]) -> Result<Vec<u8>, String> {
         let to_addr = format!("0x{}", hex::encode(self.offramp_contract.as_slice()));

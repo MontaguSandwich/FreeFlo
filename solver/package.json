@@ -1,20 +1,21 @@
 {
   "name": "iban-offramp-solver",
   "version": "0.2.0",
-  "description": "Solver service for USDC → EUR off-ramp via Swan SEPA",
-  "main": "dist/index.js",
+  "description": "Solver service for USDC → EUR off-ramp via Qonto SEPA",
+  "main": "dist/index-v3.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/index-v3.js",
     "start:v3": "node dist/index-v3.js",
-    "start:swan": "node dist/index-swan.js",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/index-v3.ts",
     "dev:v3": "tsx watch src/index-v3.ts",
-    "dev:swan": "tsx watch src/index-swan.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "debug": "tsx scripts/debug-intent.ts",
+    "debug:retry": "tsx scripts/debug-intent.ts retry",
+    "debug:status": "tsx scripts/debug-intent.ts status"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
