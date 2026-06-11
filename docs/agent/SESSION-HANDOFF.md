@@ -3,6 +3,52 @@
 > Resume note for the audit + 4-phase remediation + live E2E work. Read this first.
 > Branch: **`audit-fixes`** (off `claude/venmo-sepa-integration-gVIwz`). Date: 2026-06-09/10.
 
+## PRODUCTION GO-LIVE (2026-06-11) — ✅ COMPLETE: first real-EUR trustless offramp settled
+**Fulfill tx `0xbb4df085326d349a2929bf0b4a5092a54b139e9c91c9dd677f927f7c119eaaa5`** (Base 8453, status 1):
+user deposited 0.1 USDC → solver sent **€0.08 real SEPA** (received) → two TLSNotary proofs (transfer +
+beneficiary, prod Qonto) → attestation verified both + bound IBAN + signed → `fulfillIntentWithProof`
+→ 0.1 USDC released to solver `0x2f92…` (`verifiedByZkTLS: true`). Recipient `FR76…8570` (trusted, no SCA 428).
+- **Prover gotcha (cost us a stuck fulfillment):** `TLSN_EXAMPLES_PATH` must be the **LOCAL absolute path**
+  (`providers/prover/adapters/qonto`). The template's VPS default `/opt/FreeFlo/…` doesn't exist locally →
+  `spawn("cargo",…,{cwd})` fails as a misleading **`spawn cargo ENOENT`** → proof gen fails *after* the EUR is
+  already sent. The SEPA is idempotent (deterministic `offramp-<intentId>` key) + transferId persisted, so the
+  solver retried (exp. backoff, max 5) and completed once the path was fixed — no double-send.
+- TODO: rotate transcript-exposed Qonto client-secret + API-secret; sweep 0.1 USDC from solver key.
+
+## PRODUCTION GO-LIVE (2026-06-11) — audited stack DEPLOYED + verified; awaiting EUR funding + tokens
+Switched sandbox→**production Qonto** and deployed the **audited** stack to Base mainnet with a
+**securely-generated witness** (every private key lives only in gitignored env files — never in transcript).
+
+**Deployed (Base 8453, audited code, prod witness):**
+- PaymentVerifier `0x5602D796052ABDaD862FEf8011CA2cedB5132A9b` (deploy tx `0xe83cd832…`)
+- OffRampV3       `0x57c621994616110a50bD820388e4E8a41F00b4D7` (deploy tx `0x7841fd59…`)
+- Witness  `0xf68E2A4f1A1124e872239Da4e0A2BdB371332DdD` — authorized on PaymentVerifier ✓
+- Notary   `0x9650604C31cB83e37a27De7DB6eb804BCAfA280B` (SEC1 `0x048795e6…` pinned in attestation `NOTARY_PUBLIC_KEYS`)
+- Solver   `0x2f92Dce3a6eA32d95Eaa166958EfDea441a640E3` — seeded 0.0002 ETH (tx `0x134d4192…`),
+  registered setSolverRtpn(0,true) (tx `0x26ad4af7…`), `solverSupportsRtpn[solver][0]=true` ✓
+- Deployer/owner `0x6b8D7Bdf49Fa5c52E466043d9787452fdF529c10`
+- Keys in gitignored `solver/.env.production` + `attestation/.env.production` + `contracts/.env.deploy`.
+- Deploy helper `contracts/_deploy-prod.sh` (parameterized, no hardcoded keys).
+
+**Verified preflight:** EIP-712 domain separator computed == on-chain `DOMAIN_SEPARATOR()`
+`0x137b974a8e7699ebcea74c2066023f78511a1626db8b452ce6743f74e171e533`
+(name WisePaymentVerifier / version 1 / chain 8453 / verifier 0x5602…). Bytecode present on both;
+`OffRampV3.paymentVerifier()==0x5602…`.
+
+**Qonto prod:** creds validated against `thirdparty.qonto.com` (HTTP 200). Bank UUID
+`019b224e-3c54-78cc-a6cb-b29a798874b0` (slug `ei-malyen-malek-4902-bank-account-1`). Trusted
+beneficiary marked. `scripts/qonto-oauth.mjs` patched: `QONTO_ENV_FILE=.env.production` writes the
+minted tokens straight into the env (self-service, no print). `MIN_USDC_AMOUNT=100000` (0.1 USDC) in solver env.
+
+**BLOCKING the go-live test (both user-side):**
+1. EUR balance still **€0.00** — the €1 send hasn't landed; the SEPA leg needs funds.
+2. OAuth tokens not yet minted —
+   `cd solver && QONTO_USE_SANDBOX=false QONTO_ENV_FILE=.env.production node scripts/qonto-oauth.mjs`
+   → fills the last 2 placeholders (`QONTO_ACCESS_TOKEN` / `QONTO_REFRESH_TOKEN`).
+Then boot attestation (`.env.production`) + solver (`ENV_FILE=.env.production`) + frontend; user offramps
+0.1 USDC (~€0.09 — watch Qonto min-transfer + VoP `NO_MATCH`). **TODO after test:** rotate the
+transcript-exposed Qonto client-secret + API-secret.
+
 ## TL;DR — where things stand
 - A full Opus-4.8 security audit found the **core trust model was collapsed** (a solver could forge a payment proof and drain USDC without paying). Report: `docs/agent/AUDIT-2026-06-09.md` (+ `.findings.json`). 3 Critical, 7 High, 6 Med, 33 Low, 13 Nit.
 - All fixes are implemented + tested on branch `audit-fixes` across 4 phases (commits below). Every component builds + tests green.

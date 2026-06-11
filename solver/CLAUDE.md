@@ -29,8 +29,15 @@ IMPORTANT: Use ENV_FILE=.env.testnet for testnet. Never set -a && source for sol
 
 ## Prover
 
-PROVER_TIMEOUT=300000 (5 min). First run compiles Rust.
-TLSN_EXAMPLES_PATH=/opt/FreeFlo/providers/prover/adapters/qonto
+`PROVER_TIMEOUT=300000` (5 min). **`TLSN_EXAMPLES_PATH` MUST be a real local directory** — the prover
+spawns with it as the CWD. A bad/absent path (e.g. the old VPS default `/opt/FreeFlo/...` on a dev box)
+fails as a **misleading `spawn cargo ENOENT`** (the missing thing is the cwd, not cargo) — and only
+AFTER the fiat is sent, stranding the intent in `pending_retry`. The solver now hardens this:
+- validates the path at boot and **fails loudly** if `PROVER_ENABLED` and it isn't a directory;
+- prefers the **prebuilt binaries** `providers/prover/target/release/qonto_{prove,present}_transfer`
+  over `cargo run` (no cargo-on-PATH, no recompile); falls back to `cargo run` only if absent;
+- defaults `TLSN_EXAMPLES_PATH` repo-relative (`providers/prover/adapters/qonto`) when unset.
+Build once with `cargo build --release` in `providers/prover/` to skip the first-run compile.
 
 ## Testing
 
@@ -83,12 +90,20 @@ would carry both) is **empty in sandbox**. So the solver generates **two** TLSNo
 
 - Refreshed OAuth tokens are **rotating/one-time**; the solver persists them to `process.env.ENV_FILE`
   (a prior bug wrote a non-existent `.env.testnet` → tokens lost → restart failed with
-  `invalid_grant: refresh token was already used`). Re-mint via `scripts/qonto-oauth.mjs`, OR
-  non-interactively: `POST <oauth>/token grant_type=refresh_token` (works while the token is unused).
+  `invalid_grant: refresh token was already used`). Re-mint via `scripts/qonto-oauth.mjs` —
+  **self-service:** `QONTO_USE_SANDBOX=false QONTO_ENV_FILE=.env.production node scripts/qonto-oauth.mjs`
+  reads CLIENT_ID/SECRET from that env file and writes the minted tokens back into it (nothing printed).
+  Non-interactive refresh: `POST <oauth>/token grant_type=refresh_token` (works while the token is unused).
 - Use a **dedicated RPC** (Alchemy) — public RPCs (mainnet.base.org, publicnode) 429 the
   historical-sync `eth_getLogs` storm (`CHUNK_SIZE=9` over a large gap = hundreds of calls).
 - Use a **distinct `DB_PATH` per network** — a stale `lastBlock` from another chain's DB (e.g. an
   anvil run left block 3) makes the mainnet sync grind from block 4 onward.
+- The real DB file is `DB_PATH` with a **`-v3` suffix** (`./solver-production.db` →
+  `solver-production-v3.db`) — inspect the `-v3` file, not the literal `DB_PATH`.
+- **Restart after the fiat is sent is safe**: the solver persists `provider_transfer_id` and uses a
+  deterministic Qonto idempotency key `offramp-<intentId>`, so a re-run reuses the existing transfer
+  (no double-send). Post-fiat failures go to `pending_retry` with exp. backoff (1/2/4/8/16 min, max 5),
+  resumed by the 5s poll loop once `next_retry_at` passes — a restart does NOT lose the queued retry.
 
 ## Local / mainnet dev (VPS access lost)
 

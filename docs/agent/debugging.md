@@ -59,6 +59,20 @@ RPC "over rate limit" / HTTP 429 on eth_getLogs (solver crashes at boot during s
     https://base-mainnet.g.alchemy.com/v2/<key>). Also use a per-network DB_PATH — a stale lastBlock
     (e.g. block 3 from an anvil DB) makes the sync replay a huge block range.
 
+Prover "Failed to generate TLSNotary proof ... spawn cargo ENOENT":
+  - MISLEADING — it's the spawn CWD (TLSN_EXAMPLES_PATH), not cargo, that is missing. The old default
+    was the VPS path /opt/FreeFlo/... which doesn't exist on dev/local machines → ENOENT. It fails
+    AFTER the fiat is sent, leaving the intent in pending_retry (it retries with exp backoff and
+    recovers once fixed — no double-send). Fix: point TLSN_EXAMPLES_PATH at the real local adapter dir
+    (providers/prover/adapters/qonto). The solver now validates it at boot (fails loudly) and prefers
+    the prebuilt binary providers/prover/target/release/qonto_{prove,present}_transfer. See solver/CLAUDE.md.
+
+Which deadline? FulfillmentWindowExpired vs QuoteWindowClosed (0x88366b0a):
+  - OffRampV3 has THREE windows: QUOTE_WINDOW 5min (solver quotes, from createdAt), SELECTION_WINDOW
+    +10min (user selects), FULFILLMENT_WINDOW 30min (solver fulfills, from committedAt). The "5 min" in
+    QuoteWindowClosed is the QUOTE phase only — once COMMITTED, the solver has 30 min to fulfill. Don't
+    panic about the 5-min figure when a post-fiat retry is mid-flight; check committedAt + 30min.
+
 ## ZKP2P Integration Errors
 
 Missing gatingServiceSignature/signatureExpiration:

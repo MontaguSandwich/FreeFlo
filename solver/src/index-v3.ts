@@ -14,6 +14,8 @@ import { registry, createQontoProvider } from "./providers/index.js";
 import { startHealthServer, updateHealthCheck, setHealthDatabase } from "./health.js";
 import { createAttestationClient } from "./attestation/client.js";
 import { createQuoteApiServer } from "./api/quote-api.js";
+import { findPrebuiltBinary, type ProverConfig } from "./attestation/prover.js";
+import { existsSync, statSync } from "fs";
 
 const log = createLogger("main-v3");
 
@@ -124,19 +126,45 @@ async function main() {
     log.info({ port: quoteApiPort }, "Quote API server started");
   });
 
-  // Create prover config if enabled
-  const proverConfig = config.prover.enabled && config.prover.tlsnExamplesPath ? {
-    tlsnExamplesPath: config.prover.tlsnExamplesPath,
-    proofStoragePath: config.prover.proofStoragePath,
-    // Use prover-specific API key credentials (not OAuth)
-    qontoApiKeyLogin: config.prover.qontoApiKeyLogin || config.qonto.apiKeyLogin,
-    qontoApiKeySecret: config.prover.qontoApiKeySecret || config.qonto.apiKeySecret,
-    qontoBankAccountSlug: config.prover.qontoBankAccountSlug,
-    timeout: config.prover.timeout,
-  } : undefined;
-
-  if (proverConfig) {
-    log.info({ tlsnPath: proverConfig.tlsnExamplesPath }, "Automatic TLSNotary proof generation enabled");
+  // Create prover config if enabled. Validate the path up front and fail loudly: a bad
+  // TLSN_EXAMPLES_PATH otherwise only surfaces mid-fulfillment as "spawn cargo ENOENT" —
+  // AFTER the fiat has already been sent (this exact bug stuck a live mainnet offramp).
+  let proverConfig: ProverConfig | undefined;
+  if (config.prover.enabled) {
+    const tlsnPath = config.prover.tlsnExamplesPath;
+    if (!tlsnPath) {
+      throw new Error(
+        "PROVER_ENABLED=true but TLSN_EXAMPLES_PATH is empty. Point it at the prover adapter " +
+        "directory (e.g. <repo>/providers/prover/adapters/qonto)."
+      );
+    }
+    if (!existsSync(tlsnPath) || !statSync(tlsnPath).isDirectory()) {
+      throw new Error(
+        `PROVER_ENABLED=true but TLSN_EXAMPLES_PATH is not an existing directory: ${tlsnPath}. ` +
+        "Proof generation would fail AFTER the fiat transfer is sent — fix the path before starting."
+      );
+    }
+    proverConfig = {
+      tlsnExamplesPath: tlsnPath,
+      proofStoragePath: config.prover.proofStoragePath,
+      // Use prover-specific API key credentials (not OAuth)
+      qontoApiKeyLogin: config.prover.qontoApiKeyLogin || config.qonto.apiKeyLogin,
+      qontoApiKeySecret: config.prover.qontoApiKeySecret || config.qonto.apiKeySecret,
+      qontoBankAccountSlug: config.prover.qontoBankAccountSlug,
+      timeout: config.prover.timeout,
+    };
+    const usesPrebuilt = findPrebuiltBinary(tlsnPath, "qonto_prove_transfer") !== null;
+    log.info(
+      { tlsnPath, mode: usesPrebuilt ? "prebuilt-binary" : "cargo-run" },
+      "Automatic TLSNotary proof generation enabled"
+    );
+    if (!usesPrebuilt) {
+      log.warn(
+        { tlsnPath },
+        "No prebuilt prover binary (target/release/qonto_prove_transfer); will use `cargo run` — " +
+        "needs cargo on PATH + a slow first-run compile. Run `cargo build --release` in providers/prover to avoid this."
+      );
+    }
   } else {
     log.info("Manual TLSNotary proof generation mode (set PROVER_ENABLED=true to automate)");
   }
