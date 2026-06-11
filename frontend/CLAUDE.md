@@ -24,6 +24,19 @@ lib/network.ts maps chain IDs to addresses. All hooks use dynamic addresses from
 
 useCreateIntent, useApproveUSDC, useCommitQuote, usePollFulfillment all use dynamic addresses.
 
+## Transaction History (address-linked, multi-deployment)
+
+A History icon by the balance (`OfframpInput.tsx`, gated on `isConnected`, with a reclaimable-badge dot)
+opens `TransactionHistory.tsx` — a Dialog listing the connected wallet's intents pulled from CHAIN, not
+localStorage: `useAddressIntents` runs `getLogs` on `IntentCreated` filtered by the indexed `depositor`,
+merged with the `intentsStore` cache. It scans MULTIPLE OffRampV3 deployments — the active one plus
+`lib/network.ts` `legacyOffRamps` (e.g. the sandbox/E2E stack `0xB017…`) — so funds on a superseded
+contract stay visible + reclaimable. Each intent carries its own `offramp` address; `IntentRow` reads
+`getIntent` and calls `cancelIntent(intentId, offramp)` against the intent's OWN contract. `getLogs` MUST
+use the Alchemy client (`getPublicClient` in `lib/quotes.ts`) — `usePublicClient()` is the rate-limited
+public RPC that caps log ranges. Per-network `deployBlock` floors each scan; `useReclaimableCount` (the
+badge) is store-scoped for cheapness. The old always-on "Your intents" card was removed.
+
 ## Environment
 
 SOLVER_API_URL must be set in Vercel env vars. If quote API returns 404, check this first.

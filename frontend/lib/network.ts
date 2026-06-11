@@ -19,6 +19,11 @@ export interface NetworkAddresses {
   OFFRAMP_V3: `0x${string}`;
   USDC: `0x${string}`;
   PAYMENT_VERIFIER: `0x${string}`;
+  // Block the OffRampV3 was deployed at — the floor for IntentCreated getLogs history scans.
+  deployBlock: bigint;
+  // Older OffRampV3 deployments to ALSO scan for history + reclaim (read-only; not used for new
+  // intents). Lets users see/reclaim funds stuck on a superseded contract (e.g. a sandbox test stack).
+  legacyOffRamps: { address: `0x${string}`; deployBlock: bigint; label: string }[];
 }
 
 const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
@@ -27,17 +32,26 @@ const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
     OFFRAMP_V3: "0x57c621994616110a50bD820388e4E8a41F00b4D7",
     USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     PAYMENT_VERIFIER: "0x5602D796052ABDaD862FEf8011CA2cedB5132A9b",
+    deployBlock: BigInt(47189592), // OffRampV3 0x57c6… creation block on Base
+    legacyOffRamps: [
+      // 2026-06-10 E2E test stack (sandbox Qonto). Same audited code; held stuck test intents.
+      { address: "0xB017CEB882FCA97c357191a39A7450bcC7E2Ce9b", deployBlock: BigInt(47150000), label: "Sandbox (E2E)" },
+    ],
   },
   testnet: {
     OFFRAMP_V3: "0x34249F4AB741F0661A38651A08213DDe1469b60f",
     USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     PAYMENT_VERIFIER: "0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe",
+    deployBlock: BigInt(0), // TODO: set to 0x3424… creation block (history is bounded by MAX_LOOKBACK meanwhile)
+    legacyOffRamps: [],
   },
   // Local anvil (chainId 31337) — DeployLocal.s.sol deterministic addresses.
   local: {
     OFFRAMP_V3: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
     USDC: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
     PAYMENT_VERIFIER: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+    deployBlock: BigInt(0),
+    legacyOffRamps: [],
   },
 };
 

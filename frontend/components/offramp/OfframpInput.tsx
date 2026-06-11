@@ -14,11 +14,18 @@ import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
 import Card from "@mui/material/Card";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
+import HistoryIcon from "@mui/icons-material/History";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import Badge from "@mui/material/Badge";
 import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useApproveUSDC } from "@/hooks/useApproveUSDC";
 import { QuoteCard, QuoteCardSkeleton, NoQuotesMessage } from "./QuoteCard";
+import { TransactionHistory } from "./TransactionHistory";
+import { useHistoryUiStore } from "@/stores/historyUiStore";
+import { useReclaimableCount } from "@/hooks/useReclaimableCount";
 import {
   Currency,
   CURRENCIES,
@@ -49,6 +56,11 @@ const CURRENCY_ORDER: Currency[] = ["EUR", "GBP", "USD", "BRL", "INR"];
 export function OfframpInput({ onStartExecution }: OfframpInputProps) {
   // ---- Wallet ----------------------------------------------------------
   const { isConnected, address } = useAccount();
+
+  // ---- History dialog --------------------------------------------------
+  const historyOpen = useHistoryUiStore((s) => s.open);
+  const setHistoryOpen = useHistoryUiStore((s) => s.setOpen);
+  const reclaimableCount = useReclaimableCount(address);
 
   // ---- Stores ----------------------------------------------------------
   const {
@@ -189,19 +201,34 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
             >
               You send
             </Typography>
-            {formattedBalance !== undefined && (
-              <Typography
-                variant="caption"
-                sx={{ color: "rgb(113, 113, 122)" }}
-              >
-                Balance:{" "}
-                {parseFloat(formattedBalance).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-              </Typography>
-            )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              {formattedBalance !== undefined && (
+                <Typography variant="caption" sx={{ color: "rgb(113, 113, 122)" }}>
+                  Balance:{" "}
+                  {parseFloat(formattedBalance).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </Typography>
+              )}
+              {isConnected && (
+                <Tooltip title="Transaction history">
+                  <IconButton
+                    size="small"
+                    onClick={() => setHistoryOpen(true)}
+                    aria-label="transaction history"
+                    sx={{ color: "rgb(113, 113, 122)", "&:hover": { color: "rgb(52, 211, 153)" } }}
+                  >
+                    <Badge variant="dot" color="error" overlap="circular" invisible={reclaimableCount === 0}>
+                      <HistoryIcon sx={{ fontSize: 18 }} />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
           </Box>
+
+          <TransactionHistory open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
           <TextField
             fullWidth

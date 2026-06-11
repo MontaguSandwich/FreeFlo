@@ -3,6 +3,22 @@
 > Resume note for the audit + 4-phase remediation + live E2E work. Read this first.
 > Branch: **`audit-fixes`** (off `claude/venmo-sepa-integration-gVIwz`). Date: 2026-06-09/10.
 
+## Mainnet OffRampV3 deployments — contracts are PROVIDER-AGNOSTIC
+One OffRampV3 + PaymentVerifier pair handles ALL providers/currencies/rails — it only verifies a
+witness-signed EIP-712 attestation + a nullifier. "Qonto sandbox vs prod" is purely a SOLVER (off-chain)
+config — the contracts don't know. Multiple mainnet deploys exist for **code version + witness key**, NOT providers:
+
+| Stack | OffRampV3 | PaymentVerifier | Witness | Code |
+|---|---|---|---|---|
+| Pre-audit live | `0x5072…2083D` | `0x5eFc…8905` | `0x3438…1a27` (not held) | pre-audit ⚠️ unusable |
+| E2E test (06-10) | `0xB017…2Ce9b` | `0x929F…3f06c` | `0x1b0b2332…` (exposed) | audited · SANDBOX Qonto |
+| Production (06-11) | `0x57c6…0b4D7` | `0x5602…2A9b` | `0xf68E2A4f…` (secure) | audited · PROD Qonto |
+
+Testnet (Base Sepolia): OffRampV3 `0x34249F4AB741F0661A38651A08213DDe1469b60f`, PaymentVerifier
+`0xd72ddbFAfFc390947CB6fE26afCA8b054abF21fe`. Each PaymentVerifier bakes in ONE witness at deploy →
+changing the witness means a fresh pair. The frontend `lib/network.ts` scans the active + `legacyOffRamps`
+for history/reclaim.
+
 ## PRODUCTION GO-LIVE (2026-06-11) — ✅ COMPLETE: first real-EUR trustless offramp settled
 **Fulfill tx `0xbb4df085326d349a2929bf0b4a5092a54b139e9c91c9dd677f927f7c119eaaa5`** (Base 8453, status 1):
 user deposited 0.1 USDC → solver sent **€0.08 real SEPA** (received) → two TLSNotary proofs (transfer +

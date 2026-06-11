@@ -1,29 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Box from "@mui/material/Box";
-import Card from "@mui/material/Card";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
-import IconButton from "@mui/material/IconButton";
-import CloseIcon from "@mui/icons-material/Close";
 import { useReadContract } from "wagmi";
 import { OFFRAMP_V2_ABI, IntentStatus } from "@/lib/contracts";
-import { useNetworkAddresses } from "@/hooks/useNetworkAddresses";
-import { useIntentsStore, type TrackedIntent } from "@/stores/intentsStore";
 import { useCancelIntent, computeCancelEligibility } from "@/hooks/useCancelIntent";
 
 // Fallback window values (seconds) matching the contract, used until the on-chain
 // constants resolve.
-const DEFAULT_WINDOWS = { quote: 300, selection: 600, fulfillment: 1800 };
+export const DEFAULT_WINDOWS = { quote: 300, selection: 600, fulfillment: 1800 };
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 type ChipColor = "default" | "warning" | "info" | "success" | "error";
-const STATUS_META: Record<number, { label: string; color: ChipColor }> = {
+export const STATUS_META: Record<number, { label: string; color: ChipColor }> = {
   [IntentStatus.NONE]: { label: "Unknown", color: "default" },
   [IntentStatus.PENDING_QUOTE]: { label: "Pending quote", color: "warning" },
   [IntentStatus.COMMITTED]: { label: "Committed", color: "info" },
@@ -32,7 +27,7 @@ const STATUS_META: Record<number, { label: string; color: ChipColor }> = {
   [IntentStatus.EXPIRED]: { label: "Expired", color: "default" },
 };
 
-function formatDuration(sec: number): string {
+export function formatDuration(sec: number): string {
   if (sec <= 0) return "now";
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -40,95 +35,70 @@ function formatDuration(sec: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-interface OnchainIntent {
+export interface OnchainIntent {
   depositor: `0x${string}`;
   status: number;
   createdAt: bigint;
   committedAt: bigint;
 }
 
-export function MyIntents() {
-  const intents = useIntentsStore((s) => s.intents);
-  const { OFFRAMP_V3: offramp } = useNetworkAddresses();
-
-  // Window constants (uint64). Cached by wagmi; fall back to defaults while loading.
-  const { data: quoteW } = useReadContract({ address: offramp, abi: OFFRAMP_V2_ABI, functionName: "QUOTE_WINDOW" });
-  const { data: selW } = useReadContract({ address: offramp, abi: OFFRAMP_V2_ABI, functionName: "SELECTION_WINDOW" });
-  const { data: fulfW } = useReadContract({ address: offramp, abi: OFFRAMP_V2_ABI, functionName: "FULFILLMENT_WINDOW" });
-  const windows = {
-    quote: quoteW != null ? Number(quoteW) : DEFAULT_WINDOWS.quote,
-    selection: selW != null ? Number(selW) : DEFAULT_WINDOWS.selection,
-    fulfillment: fulfW != null ? Number(fulfW) : DEFAULT_WINDOWS.fulfillment,
-  };
-
-  // 1s ticker for countdowns.
-  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  if (intents.length === 0) return null;
-
-  return (
-    <Card
-      elevation={0}
-      sx={{
-        maxWidth: 480,
-        mx: "auto",
-        mt: 3,
-        width: "100%",
-        borderRadius: 3,
-        border: "1px solid",
-        borderColor: "divider",
-        p: 2.5,
-        backgroundColor: "background.paper",
-      }}
-    >
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5, color: "text.primary" }}>
-        Your intents
-      </Typography>
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-        {intents.map((it) => (
-          <IntentRow key={it.intentId} intent={it} offramp={offramp} windows={windows} nowSec={nowSec} />
-        ))}
-      </Box>
-    </Card>
-  );
+/** Minimal display shape — satisfied by both TrackedIntent (+ offramp) and AddressIntent. */
+export interface IntentRowData {
+  intentId: `0x${string}`;
+  offramp: `0x${string}`; // the contract this intent lives on (read + reclaim target)
+  deploymentLabel?: string; // shown for legacy/non-current deployments
+  amountUsdc: string;
+  currency: string;
+  receivingInfo?: string;
+  recipientName?: string;
 }
 
-function IntentRow({
+/**
+ * One intent row: live status chip + reclaim ("unstuck") button, read/cancelled against the
+ * intent's OWN contract (`intent.offramp`) so legacy/sandbox intents work too.
+ *
+ * - If `onchain` is provided (parent batch-read status via multicall), it is used and the per-row
+ *   read is disabled — avoids a duplicate getIntent call per row.
+ * - After a successful cancel, refresh via `onReclaimed` (parent) or the own read.
+ */
+export function IntentRow({
   intent,
-  offramp,
   windows,
   nowSec,
+  onchain,
+  onReclaimed,
 }: {
-  intent: TrackedIntent;
-  offramp: `0x${string}`;
+  intent: IntentRowData;
   windows: { quote: number; selection: number; fulfillment: number };
   nowSec: number;
+  onchain?: OnchainIntent;
+  onReclaimed?: () => void;
 }) {
-  const removeIntent = useIntentsStore((s) => s.removeIntent);
   const { data, refetch, isLoading } = useReadContract({
-    address: offramp,
+    address: intent.offramp,
     abi: OFFRAMP_V2_ABI,
     functionName: "getIntent",
     args: [intent.intentId],
+    query: { enabled: !onchain },
   });
   const cancel = useCancelIntent();
 
-  // After a successful cancel, re-read so the row reflects CANCELLED.
+  // After a successful cancel, re-read so the row reflects CANCELLED/EXPIRED.
   useEffect(() => {
-    if (cancel.isSuccess) void refetch();
-  }, [cancel.isSuccess, refetch]);
+    if (cancel.isSuccess) {
+      if (onReclaimed) onReclaimed();
+      else void refetch();
+    }
+  }, [cancel.isSuccess, onReclaimed, refetch]);
 
-  const onchain = data as OnchainIntent | undefined;
-  const exists = !!onchain && onchain.depositor.toLowerCase() !== ZERO_ADDRESS;
-  const status = exists ? Number(onchain!.status) : IntentStatus.NONE;
+  const effective = onchain ?? (data as OnchainIntent | undefined);
+  const loading = onchain ? false : isLoading;
+  const exists = !!effective && effective.depositor.toLowerCase() !== ZERO_ADDRESS;
+  const status = exists ? Number(effective!.status) : IntentStatus.NONE;
   const meta = STATUS_META[status] ?? STATUS_META[IntentStatus.NONE];
   const isActive = status === IntentStatus.PENDING_QUOTE || status === IntentStatus.COMMITTED;
   const elig = exists
-    ? computeCancelEligibility(status, Number(onchain!.createdAt), Number(onchain!.committedAt), windows, nowSec)
+    ? computeCancelEligibility(status, Number(effective!.createdAt), Number(effective!.committedAt), windows, nowSec)
     : { canCancel: false, secondsUntilEligible: 0, reason: "" };
 
   return (
@@ -137,16 +107,19 @@ function IntentRow({
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {intent.amountUsdc} USDC &rarr; {intent.currency}
         </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {isLoading ? (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+          {intent.deploymentLabel && (
+            <Chip
+              size="small"
+              label={intent.deploymentLabel}
+              variant="outlined"
+              sx={{ height: 20, fontSize: "0.65rem", color: "text.secondary", borderColor: "divider" }}
+            />
+          )}
+          {loading ? (
             <CircularProgress size={14} />
           ) : (
             <Chip size="small" label={meta.label} color={meta.color} variant="outlined" />
-          )}
-          {!isActive && (
-            <IconButton size="small" onClick={() => removeIntent(intent.intentId)} aria-label="dismiss">
-              <CloseIcon sx={{ fontSize: 16 }} />
-            </IconButton>
           )}
         </Box>
       </Box>
@@ -163,7 +136,7 @@ function IntentRow({
             variant="outlined"
             color="error"
             disabled={!elig.canCancel || cancel.isPending || cancel.isConfirming}
-            onClick={() => cancel.cancelIntent(intent.intentId)}
+            onClick={() => cancel.cancelIntent(intent.intentId, intent.offramp)}
             sx={{ textTransform: "none" }}
           >
             {cancel.isPending || cancel.isConfirming

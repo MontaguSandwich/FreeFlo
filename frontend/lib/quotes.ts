@@ -376,7 +376,7 @@ import { OFFRAMP_V2_ABI } from './contracts';
 // Cache public clients per chain to avoid recreating on every call
 const clientCache = new Map<number, PublicClient>();
 
-function getPublicClient(chainId: number | undefined): PublicClient {
+export function getPublicClient(chainId: number | undefined): PublicClient {
   const id = chainId ?? 8453;
   if (!clientCache.has(id)) {
     clientCache.set(id, createPublicClient({
