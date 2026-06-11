@@ -1,5 +1,8 @@
 import { config as loadEnv } from "dotenv";
 import type { Address, Hex } from "viem";
+import { existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
 
 // Load env file with override: true to prevent inherited shell env var contamination
 // (critical for dual-deployment where testnet/mainnet pm2 instances share a shell)
@@ -17,6 +20,25 @@ function requireEnv(name: string): string {
 
 function optionalEnv(name: string, defaultValue: string): string {
   return process.env[name] || defaultValue;
+}
+
+/**
+ * Default TLSNotary prover adapter dir, used only when TLSN_EXAMPLES_PATH is unset.
+ * Walks up from this module looking for providers/prover/adapters/qonto so it resolves
+ * whether the solver runs from src (tsx) or dist (compiled). Replaces the old hardcoded
+ * /opt VPS default, which on any other machine failed late as "spawn cargo ENOENT".
+ */
+function defaultTlsnExamplesPath(): string {
+  const rel = "providers/prover/adapters/qonto";
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 10; i++) {
+    const candidate = resolve(dir, rel);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(process.cwd(), rel);
 }
 
 export const config = {
@@ -102,7 +124,7 @@ export const config = {
   // ==========================================================================
   prover: {
     enabled: optionalEnv("PROVER_ENABLED", "false") === "true",
-    tlsnExamplesPath: optionalEnv("TLSN_EXAMPLES_PATH", ""),
+    tlsnExamplesPath: optionalEnv("TLSN_EXAMPLES_PATH", "") || defaultTlsnExamplesPath(),
     proofStoragePath: optionalEnv("PROOF_STORAGE_PATH", "./proofs"),
     timeout: parseInt(optionalEnv("PROVER_TIMEOUT", "180000")), // 3 minutes (first run needs compilation)
     // API key credentials for TLSNotary (reads from Qonto API)

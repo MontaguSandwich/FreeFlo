@@ -1,17 +1,47 @@
 #!/usr/bin/env node
 /**
  * Qonto OAuth Flow Script
- * 
+ *
  * Usage:
  *   QONTO_CLIENT_ID=xxx QONTO_CLIENT_SECRET=yyy node scripts/qonto-oauth.mjs
+ *
+ * Self-service (reads CLIENT_ID/SECRET from an env file and writes the minted
+ * tokens straight back into it — nothing sensitive is printed to the terminal):
+ *   QONTO_USE_SANDBOX=false QONTO_ENV_FILE=.env.production node scripts/qonto-oauth.mjs
  */
 
 import http from "http";
 import { exec } from "child_process";
+import fs from "fs";
+
+// --- Self-service env I/O: load creds from / write tokens to QONTO_ENV_FILE ---
+function parseEnvFile(filePath) {
+  try {
+    const out = {};
+    for (const line of fs.readFileSync(filePath, "utf8").split("\n")) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m) out[m[1]] = m[2];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function upsertEnvVar(filePath, key, value) {
+  let content = fs.readFileSync(filePath, "utf8");
+  const re = new RegExp(`^${key}=.*$`, "m");
+  const line = `${key}=${value}`;
+  content = re.test(content)
+    ? content.replace(re, line)
+    : content + (content.endsWith("\n") ? "" : "\n") + line + "\n";
+  fs.writeFileSync(filePath, content);
+}
 
 // ============ CONFIGURATION ============
-const CLIENT_ID = process.env.QONTO_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.QONTO_CLIENT_SECRET || "";
+const ENV_FILE = process.env.QONTO_ENV_FILE || "";
+const ENV_FROM_FILE = ENV_FILE ? parseEnvFile(ENV_FILE) : {};
+const CLIENT_ID = process.env.QONTO_CLIENT_ID || ENV_FROM_FILE.QONTO_CLIENT_ID || "";
+const CLIENT_SECRET = process.env.QONTO_CLIENT_SECRET || ENV_FROM_FILE.QONTO_CLIENT_SECRET || "";
 const REDIRECT_URI = "http://localhost:3456/callback";
 
 // Sandbox vs production endpoints (set QONTO_USE_SANDBOX=true for the staging env).
@@ -81,7 +111,7 @@ async function getOrganization(accessToken) {
 function openBrowser(url) {
   const platform = process.platform;
   let cmd;
-  
+
   if (platform === "darwin") {
     cmd = `open "${url}"`;
   } else if (platform === "win32") {
@@ -89,7 +119,7 @@ function openBrowser(url) {
   } else {
     cmd = `xdg-open "${url}"`;
   }
-  
+
   exec(cmd, (err) => {
     if (err) {
       console.log("(Could not auto-open browser - please open the URL manually)\n");
@@ -103,12 +133,15 @@ async function main() {
   if (!CLIENT_ID || !CLIENT_SECRET) {
     console.log("❌ Missing CLIENT_ID or CLIENT_SECRET!");
     console.log("\nUsage:");
-    console.log("  QONTO_CLIENT_ID=xxx QONTO_CLIENT_SECRET=yyy node scripts/qonto-oauth.mjs\n");
+    console.log("  QONTO_CLIENT_ID=xxx QONTO_CLIENT_SECRET=yyy node scripts/qonto-oauth.mjs");
+    console.log("  (or) QONTO_ENV_FILE=.env.production node scripts/qonto-oauth.mjs\n");
     process.exit(1);
   }
 
   console.log("Client ID:", CLIENT_ID);
   console.log("Redirect URI:", REDIRECT_URI);
+  console.log("Environment:", USE_SANDBOX ? "SANDBOX" : "PRODUCTION");
+  if (ENV_FILE) console.log("Token sink:", ENV_FILE, "(tokens written here, not printed)");
   console.log("\n⚠️  Make sure you've added this redirect URI to your Qonto app!\n");
 
   // Build authorization URL
@@ -170,24 +203,32 @@ async function main() {
 
           console.log("✅ Organization info retrieved!\n");
           console.log("=".repeat(60));
-          console.log("🎉 SUCCESS! Update your solver/.env file with these:");
-          console.log("=".repeat(60));
-          console.log("");
-          console.log("# Change auth method to oauth");
-          console.log("QONTO_AUTH_METHOD=oauth");
-          console.log("");
-          console.log("# OAuth tokens");
-          console.log(`QONTO_ACCESS_TOKEN=${tokens.access_token}`);
-          console.log(`QONTO_REFRESH_TOKEN=${tokens.refresh_token}`);
-          console.log(`# Token expires in ${tokens.expires_in} seconds`);
-          
+
+          if (ENV_FILE) {
+            upsertEnvVar(ENV_FILE, "QONTO_ACCESS_TOKEN", tokens.access_token);
+            upsertEnvVar(ENV_FILE, "QONTO_REFRESH_TOKEN", tokens.refresh_token);
+            console.log(`🎉 SUCCESS! Wrote QONTO_ACCESS_TOKEN + QONTO_REFRESH_TOKEN to ${ENV_FILE}`);
+            console.log("   (token values not printed — read the file if you need them).");
+            console.log(`   Expires in ${tokens.expires_in}s; the solver auto-refreshes on 401 and persists rotations.`);
+          } else {
+            console.log("🎉 SUCCESS! Update your solver/.env file with these:");
+            console.log("=".repeat(60));
+            console.log("");
+            console.log("# Change auth method to oauth");
+            console.log("QONTO_AUTH_METHOD=oauth");
+            console.log("");
+            console.log("# OAuth tokens");
+            console.log(`QONTO_ACCESS_TOKEN=${tokens.access_token}`);
+            console.log(`QONTO_REFRESH_TOKEN=${tokens.refresh_token}`);
+            console.log(`# Token expires in ${tokens.expires_in} seconds`);
+          }
+
           if (org.bank_accounts && org.bank_accounts.length > 0) {
             console.log("");
-            console.log("# Available bank accounts:");
+            console.log("# Bank accounts (id = UUID for QONTO_BANK_ACCOUNT_ID):");
             org.bank_accounts.forEach((acc, i) => {
-              console.log(`# ${i + 1}. ${acc.name} - ${acc.iban} (Balance: €${(acc.balance / 100).toFixed(2)})`);
+              console.log(`# ${i + 1}. ${acc.name} — ${acc.iban} — id=${acc.id} (balance: ${acc.balance} ${acc.currency})`);
             });
-            console.log(`QONTO_BANK_ACCOUNT_ID=${org.bank_accounts[0].id}`);
           }
 
           console.log("");
@@ -227,4 +268,3 @@ async function main() {
 }
 
 main().catch(console.error);
-

@@ -23,11 +23,10 @@ export interface NetworkAddresses {
 
 const ADDRESSES: Record<NetworkName, NetworkAddresses> = {
   mainnet: {
-    // E2E TEST stack — audited contracts deployed 2026-06-10 with our own witness.
-    // NOT the live production addresses (those run pre-audit code + a witness we lack).
-    OFFRAMP_V3: "0xB017CEB882FCA97c357191a39A7450bcC7E2Ce9b",
+    // PRODUCTION stack — audited contracts deployed 2026-06-11 with a securely-managed witness.
+    OFFRAMP_V3: "0x57c621994616110a50bD820388e4E8a41F00b4D7",
     USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    PAYMENT_VERIFIER: "0x929F9536B5E91F5d7E5877A861E3bBFad4B3f06c",
+    PAYMENT_VERIFIER: "0x5602D796052ABDaD862FEf8011CA2cedB5132A9b",
   },
   testnet: {
     OFFRAMP_V3: "0x34249F4AB741F0661A38651A08213DDe1469b60f",

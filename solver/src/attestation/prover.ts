@@ -6,6 +6,7 @@
  */
 
 import { spawn } from "child_process";
+import { existsSync } from "fs";
 import { readFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { createLogger } from "../utils/logger.js";
@@ -132,7 +133,27 @@ export async function generateQontoProof(
 }
 
 /**
- * Run a cargo binary and wait for completion
+ * Resolve a prebuilt release binary for `binaryName`, if one exists. Walks up from
+ * `workingDir` checking `<dir>/target/release/<binaryName>` at each level, so it finds
+ * the binary at the cargo WORKSPACE root (where `target/` lives) even when the adapter
+ * is a member crate. Returns its absolute path, or null to fall back to `cargo run`.
+ * Using the prebuilt binary avoids needing cargo on PATH and skips the recompile.
+ */
+export function findPrebuiltBinary(workingDir: string, binaryName: string): string | null {
+  let dir = workingDir;
+  for (let i = 0; i < 10; i++) {
+    const bin = join(dir, "target", "release", binaryName);
+    if (existsSync(bin)) return bin;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Run a prover binary and wait for completion. Prefers the prebuilt release binary
+ * (no cargo/PATH dependency, no recompile) and falls back to `cargo run`.
  */
 async function runCargoBinary(
   workingDir: string,
@@ -141,7 +162,14 @@ async function runCargoBinary(
   timeout: number
 ): Promise<{ success: boolean; stdout: string; stderr: string; error?: string }> {
   return new Promise((resolve) => {
-    const child = spawn("cargo", ["run", "--release", "--bin", binaryName], {
+    const prebuilt = findPrebuiltBinary(workingDir, binaryName);
+    const command = prebuilt ?? "cargo";
+    const args = prebuilt ? [] : ["run", "--release", "--bin", binaryName];
+    log.debug(
+      { binaryName, mode: prebuilt ? "prebuilt-binary" : "cargo-run", command },
+      "Spawning prover process"
+    );
+    const child = spawn(command, args, {
       cwd: workingDir,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -206,15 +234,19 @@ async function runCargoBinary(
  * Check if the TLSNotary toolchain is available
  */
 export async function checkProverAvailable(tlsnExamplesPath: string): Promise<boolean> {
+  // A prebuilt binary means we don't even need cargo on PATH.
+  if (findPrebuiltBinary(tlsnExamplesPath, "qonto_prove_transfer")) {
+    return true;
+  }
   try {
     const result = await runCargoBinary(
       tlsnExamplesPath,
-      "qonto_prove_transfer", // Check if the binary exists
-      { QONTO_REFERENCE: "__check__" }, // Will fail but tells us if cargo is available
+      "qonto_prove_transfer", // probe: did the toolchain spawn at all?
+      { QONTO_REFERENCE: "__check__" }, // will error, but distinguishes "ran" from "couldn't spawn"
       5000
     );
-    // If cargo ran at all (even with error), we're good
-    return true;
+    // A spawn failure (cargo missing / bad cwd) is the only hard "unavailable" signal.
+    return !result.error?.startsWith("Failed to spawn process");
   } catch {
     return false;
   }
