@@ -120,6 +120,8 @@ type FlowStep =
   | "zkp2p_signal"
   | "zkp2p_send_venmo"
   | "zkp2p_verify"
+  | "zkp2p_authenticating"
+  | "zkp2p_select_payment"
   | "zkp2p_fulfilling"
   | "router_waiting"
   | "router_commit"
@@ -170,6 +172,10 @@ interface FlowData {
 
 // Use production environment for ZKP2P (PostIntentHook now permissionless)
 const ZKP2P_ENVIRONMENT = 'production' as const;
+
+// Peer's production TEE attestation service — proves the buyer's fiat payment inside
+// the enclave. Distinct from FreeFlo's own offramp attestation service.
+const PEER_ATTESTATION_URL = 'https://attestation-service.zkp2p.xyz' as const;
 
 function useZkp2pClient() {
   const { data: walletClient } = useWalletClient();
@@ -364,7 +370,8 @@ export function FiatToFiatFlow() {
     };
     const earlySteps: FlowStep[] = [
       "select_flow", "input_all", "finding_quotes", "select_maker",
-      "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify", "zkp2p_fulfilling",
+      "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify",
+      "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
     ];
     const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
     if (Number(pt.status) === 1 && earlySteps.includes(step) && pt.intentId && pt.intentId !== ZERO) {
@@ -414,6 +421,16 @@ export function FiatToFiatFlow() {
   // ============ Check Peer Extension ============
 
   const [isConnecting, setIsConnecting] = useState(false);
+
+  // TEE proof capture from peer.onMetadataMessage: the buyer's recent payment rows
+  // to choose from + the encrypted session material the attestation enclave needs.
+  const [verifyData, setVerifyData] = useState<{
+    rows: { amount?: string; currency?: string; recipient?: string; paymentId?: string; params?: Record<string, string | number | boolean>; originalIndex: number }[];
+    encryptedSessionMaterial: string;
+    platform: string;
+    actionType: string;
+  } | null>(null);
+  const metadataUnsubRef = useRef<(() => void) | null>(null);
 
   const refreshExtensionState = useCallback(async (): Promise<string> => {
     try {
@@ -878,37 +895,83 @@ export function FiatToFiatFlow() {
 
     setError(null);
 
+    const platform = (flowData.zkp2pQuote?.processorName || "revolut").toLowerCase();
+    const actionType = `transfer_${platform}`;
+
     try {
-      const peerSdk = createPeerExtensionSdk();
+      const peer = createPeerExtensionSdk();
 
-      // Observe fulfillment of OUR exact intent instead of blind-polling. The
-      // same fulfillIntent tx that this fires on also runs the post-intent hook
-      // (FiatToFiatRouter.execute) → TransferInitiated, which the log poller
-      // below uses to advance. This callback confirms the on-chain fulfill tx
-      // and self-unsubscribes once it matches.
-      const unsubscribe = peerSdk.onIntentFulfilled((result) => {
-        if (result.intentHash?.toLowerCase() !== intentHash.toLowerCase()) return;
-        console.log("Peer intent fulfilled:", result.status, "tx:", result.fulfillTxHash);
-        unsubscribe();
+      // The extension performs the provider sign-in + buyer-TEE capture, then posts
+      // back the encrypted session material + the user's recent payments here. We
+      // render those for selection and build the proof ourselves (the app owns the
+      // intent lifecycle in the TEE/redirect model).
+      metadataUnsubRef.current?.();
+      metadataUnsubRef.current = peer.onMetadataMessage((message) => {
+        if (message.errorMessage) {
+          setError(`Peer capture failed: ${message.errorMessage}`);
+          setStep("zkp2p_verify");
+          return;
+        }
+        const cap = message.buyerTeeCapture?.encryptedSessionMaterial;
+        if (!cap) return;
+        const rows = (message.metadata || [])
+          .filter((r) => !r.hidden)
+          .map((r) => ({
+            amount: r.amount, currency: r.currency, recipient: r.recipient,
+            paymentId: r.paymentId, params: r.params, originalIndex: r.originalIndex,
+          }));
+        setVerifyData({ rows, encryptedSessionMaterial: cap, platform, actionType });
+        setStep("zkp2p_select_payment");
       });
 
-      // Drive the extension onramp for this intent with full context so it
-      // targets the right deposit/payment instead of guessing from intentHash.
-      peerSdk.onramp({
-        intentHash,
-        paymentPlatform: flowData.zkp2pQuote?.processorName,
-        amountUsdc: flowData.usdcAmount > BigInt(0) ? flowData.usdcAmount : undefined,
-        recipientAddress: address,
+      peer.authenticate({
+        actionType,
+        platform,
+        captureMode: "buyerTee",
+        attestationServiceUrl: PEER_ATTESTATION_URL,
+        attestationActionType: actionType,
       });
+      setStep("zkp2p_authenticating");
     } catch (err) {
-      console.error("Failed to open peer extension:", err);
-      setError("Could not open the ZKP2P/Peer extension. Make sure it's installed and connected.");
-      return;
+      console.error("Peer authenticate failed:", err);
+      setError("Could not open the Peer extension. Make sure it's installed and connected, then retry.");
     }
+  };
 
-    // Fulfilling: the extension proves + fulfills, the hook fires, and the
-    // TransferInitiated poller moves us to router_waiting.
+  // Build the buyer-TEE proof from the selected payment and submit fulfillIntent. The
+  // SDK requests the attestation from Peer's enclave and sends the on-chain tx, which
+  // runs our post-intent hook (FiatToFiatRouter.execute) → TransferInitiated.
+  const handleSelectAndFulfill = async (
+    row: NonNullable<typeof verifyData>["rows"][number],
+  ) => {
+    const intentHash = flowData.zkp2pIntentHash;
+    if (!intentHash || !verifyData || !zkp2pClient) return;
+    setError(null);
     setStep("zkp2p_fulfilling");
+    try {
+      const proof: Record<string, unknown> = {
+        proofType: "buyerTee",
+        encryptedSessionMaterial: verifyData.encryptedSessionMaterial,
+        params: { ...(row.params || {}), index: row.originalIndex },
+        actionPlatform: verifyData.platform,
+        actionType: verifyData.actionType,
+      };
+      await zkp2pClient.fulfillIntent({
+        intentHash,
+        proof,
+        attestationServiceUrl: PEER_ATTESTATION_URL,
+        callbacks: {
+          onAttestationStart: () => console.log("TEE attestation requested…"),
+          onTxSent: (h) => console.log("fulfill tx sent", h),
+          onTxMined: (h) => console.log("fulfill mined", h),
+        },
+      });
+      // Fulfilled → hook fired. The TransferInitiated poller advances to router_waiting.
+    } catch (err: any) {
+      console.error("fulfillIntent failed:", err);
+      setError(`Verification failed: ${err?.message || "unknown error"}. Pick the payment again or retry.`);
+      setStep("zkp2p_select_payment");
+    }
   };
 
   // Poll for FreeFlo quotes when in router_waiting
@@ -964,7 +1027,7 @@ export function FiatToFiatFlow() {
   const formatUsdc = (amount: bigint) => `${(Number(amount) / 1_000_000).toFixed(2)} USDC`;
 
   const getProgress = (): { stage: 1 | 2; percent: number; label: string } => {
-    const stage1Steps = ["input_all", "finding_quotes", "select_maker", "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify", "zkp2p_fulfilling"];
+    const stage1Steps = ["input_all", "finding_quotes", "select_maker", "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify", "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling"];
     const stage2Steps = ["router_waiting", "router_commit", "freeflo_pending"];
 
     if (stage1Steps.includes(step)) {
@@ -990,6 +1053,9 @@ export function FiatToFiatFlow() {
     setIbanInput("");
     setNameInput("");
     setSelectedPlatform("venmo");
+    setVerifyData(null);
+    metadataUnsubRef.current?.();
+    metadataUnsubRef.current = null;
     setSelectedCurrency("USD");
     setError(null);
   };
@@ -1477,6 +1543,41 @@ export function FiatToFiatFlow() {
             >
               {isCancelling ? "Cancelling Intent..." : "Cancel Intent"}
             </Button>
+          </Box>
+        )}
+
+        {/* Authenticating with provider (extension capture in progress) */}
+        {step === "zkp2p_authenticating" && (
+          <Box sx={{ textAlign: 'center', py: 6 }}>
+            <CircularProgress size={48} sx={{ color: '#3b82f6', mb: 2 }} />
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>Sign in with your provider</Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>Complete the sign-in the Peer extension just opened. Your recent payments will load here to verify.</Typography>
+            <Button onClick={() => setStep("zkp2p_verify")} sx={{ mt: 3, px: 3, py: 1, borderRadius: 3, bgcolor: 'transparent', color: '#a1a1aa', border: '1px solid rgba(113,113,122,0.3)', textTransform: 'none', fontSize: '0.8125rem' }}>Back</Button>
+          </Box>
+        )}
+
+        {/* Select the payment to prove inside the TEE */}
+        {step === "zkp2p_select_payment" && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 0.5 }}>Select your payment</Typography>
+              <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Pick the payment to prove. It is verified inside Peer&apos;s secure enclave.</Typography>
+            </Box>
+            {(verifyData?.rows.length ?? 0) === 0 ? (
+              <Typography variant="body2" sx={{ color: '#fbbf24' }}>No payments found yet. Make sure the payment is complete, then refresh.</Typography>
+            ) : (
+              verifyData!.rows.map((r, i) => (
+                <Button
+                  key={r.paymentId || `${r.originalIndex}-${i}`}
+                  onClick={() => handleSelectAndFulfill(r)}
+                  sx={{ justifyContent: 'space-between', textTransform: 'none', px: 2, py: 1.5, borderRadius: 3, bgcolor: 'rgba(39,39,42,0.5)', border: '1px solid #27272a', color: 'white', '&:hover': { bgcolor: 'rgba(39,39,42,0.9)' } }}
+                >
+                  <Typography sx={{ color: 'white', fontWeight: 600 }}>{r.amount ? `${r.amount} ${r.currency || ''}`.trim() : `Payment #${r.originalIndex}`}</Typography>
+                  <Typography variant="caption" sx={{ color: '#a1a1aa' }}>{r.recipient || ''}</Typography>
+                </Button>
+              ))
+            )}
+            <Button onClick={handleVerifyPayment} sx={{ mt: 1, py: 1, borderRadius: 3, bgcolor: 'transparent', color: '#60a5fa', textTransform: 'none', fontSize: '0.8125rem' }}>Refresh payments</Button>
           </Box>
         )}
 
