@@ -907,23 +907,32 @@ export function FiatToFiatFlow() {
       // intent lifecycle in the TEE/redirect model).
       metadataUnsubRef.current?.();
       metadataUnsubRef.current = peer.onMetadataMessage((message) => {
+        console.log("Peer onMetadataMessage ←", message);
         if (message.errorMessage) {
           setError(`Peer capture failed: ${message.errorMessage}`);
           setStep("zkp2p_verify");
           return;
         }
-        const cap = message.buyerTeeCapture?.encryptedSessionMaterial;
-        if (!cap) return;
         const rows = (message.metadata || [])
           .filter((r) => !r.hidden)
           .map((r) => ({
             amount: r.amount, currency: r.currency, recipient: r.recipient,
             paymentId: r.paymentId, params: r.params, originalIndex: r.originalIndex,
           }));
-        setVerifyData({ rows, encryptedSessionMaterial: cap, platform, actionType });
+        const cap = message.buyerTeeCapture?.encryptedSessionMaterial || "";
+        // Show rows as soon as they arrive; retain the capture across messages in
+        // case rows and the encrypted session material come separately.
+        if (rows.length === 0 && !cap) return;
+        setVerifyData((prev) => ({
+          rows: rows.length ? rows : (prev?.rows ?? []),
+          encryptedSessionMaterial: cap || prev?.encryptedSessionMaterial || "",
+          platform,
+          actionType,
+        }));
         setStep("zkp2p_select_payment");
       });
 
+      console.log("Peer authenticate →", { actionType, platform, attestationServiceUrl: PEER_ATTESTATION_URL });
       peer.authenticate({
         actionType,
         platform,

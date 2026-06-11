@@ -13,8 +13,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>
+    // suppressHydrationWarning: the Peer (PeerAuth/TEE) extension injects a
+    // `data-peer-injected` attribute onto <html> before React hydrates. Without this,
+    // the root-element attribute mismatch breaks App Router hydration, leaving the app
+    // non-interactive (wallet shows disconnected, clicks dead).
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>
