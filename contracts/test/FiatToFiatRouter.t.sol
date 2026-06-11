@@ -691,6 +691,50 @@ contract FiatToFiatRouterTest is Test {
         vm.stopPrank();
     }
 
+    // After a COMMITTED transfer's OffRampV3 intent is FULFILLED, the SAME wallet can
+    // start a new onramp — the prior (done) slot is overwritten, not blocked. Guard
+    // fix: block only while the prior transfer is genuinely in-flight (no markComplete
+    // required first). 0x4c0b07ac = UserAlreadyHasPendingTransfer was hit in live E2E.
+    function test_Execute_AllowsNewTransferAfterPriorFulfilled() public {
+        uint256 amount = 100_000_000;
+        bytes32 intentId = _executeHook(USER, amount);
+        _submitSolverQuote(intentId);
+        vm.prank(USER);
+        router.commit(SOLVER);
+
+        // Solver fulfills the offramp intent (witness-signed attestation).
+        PaymentVerifier.PaymentAttestation memory attestation = PaymentVerifier.PaymentAttestation({
+            intentHash: intentId,
+            amount: 9200,
+            timestamp: block.timestamp,
+            paymentId: "sepa-tx-allow-new",
+            dataHash: keccak256("proof")
+        });
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256("PaymentAttestation(bytes32 intentHash,uint256 amount,uint256 timestamp,string paymentId,bytes32 dataHash)"),
+            attestation.intentHash, attestation.amount, attestation.timestamp,
+            keccak256(bytes(attestation.paymentId)), attestation.dataHash
+        ));
+        bytes32 domainSeparator = keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256("WisePaymentVerifier"), keccak256("1"), block.chainid, address(verifier)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(WITNESS_PK, digest);
+        vm.prank(SOLVER);
+        offRamp.fulfillIntentWithProof(intentId, attestation, abi.encodePacked(r, s, v));
+        assertEq(uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED));
+
+        // A new onramp for the SAME user now succeeds (prior transfer is done).
+        bytes32 newIntentId = _executeHook(USER, amount);
+        assertTrue(newIntentId != intentId);
+        assertEq(
+            uint256(router.getPendingTransfer(USER).status),
+            uint256(FiatToFiatRouter.TransferStatus.PENDING)
+        );
+        assertEq(router.getPendingTransfer(USER).intentId, newIntentId);
+    }
+
     // ============ execute() length-bound tests ============
 
     function test_Execute_RevertsOversizedIban() public {
