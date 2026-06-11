@@ -46,7 +46,7 @@ Both ZKP2P and FreeFlo use EIP-712 PaymentAttestation signed by authorized witne
 
 ## PostIntentHooks
 
-VenmoToSepaRouter IS a PostIntentHook: receives USDC from ZKP2P Venmo onramp, then creates a FreeFlo intent to offramp to SEPA EUR.
+FiatToFiatRouter IS a PostIntentHook: receives USDC from ZKP2P Venmo onramp, then creates a FreeFlo intent to offramp to SEPA EUR.
 
 ### V1 vs V2 PostIntentHook Policy
 
@@ -60,7 +60,7 @@ V1 (Orchestrator): WHITELISTED ONLY
 - Currently only AcrossBridgeHook and AcrossBridgeHookV2 are whitelisted
 - Error if not whitelisted: PostIntentHookNotWhitelisted
 
-VenmoToSepaRouter uses OrchestratorV2 (permissionless) and targets EscrowV2 deposits only.
+FiatToFiatRouter uses OrchestratorV2 (permissionless) and targets EscrowV2 deposits only.
 
 ## Key Packages
 
@@ -69,7 +69,7 @@ VenmoToSepaRouter uses OrchestratorV2 (permissionless) and targets EscrowV2 depo
 
 ## ZKP2P Contracts (Base Mainnet)
 
-V2 Stack (use for VenmoToSepaRouter):
+V2 Stack (use for FiatToFiatRouter):
 - OrchestratorV2: 0x888888359E981B5225CA48fbCdCeff702FC3b888
 - EscrowV2: 0x777777779d229cdF3110e9de47943791c26300Ef
 - OrchestratorRegistry: 0xBe9fED15ED7A4B915C03EFcEcb9662739C3382A9

@@ -127,11 +127,52 @@ Funding cleared; the fixed stack is **deployed to Base mainnet** and all service
 
 > ⚠️ The **live mainnet contracts** `OffRampV3 0x5072…`/`PaymentVerifier 0x5eFc…` are the **pre-audit code** and authorize the **production witness `0x3438…1a27`** (key we don't have). That's why we deploy a fresh fixed stack with our own witness — do NOT point this test at the live contracts.
 
+## FiatToFiat router (formerly VenmoToSepa): full audit + redeploy runbook (2026-06-11)
+Generic **fiat→fiat via USDC**: ZKP2P/Peer on-ramp + a PostIntentHook (`FiatToFiatRouter`,
+renamed from `VenmoToSepaRouter`) → FreeFlo off-ramp. Route is now `/fiat-to-fiat`. The off-ramp
+leg is already proven (audited stack); the on-ramp→hook→off-ramp full flow had never run E2E.
+
+**Audit verdict:** contract logic is SOUND, deployment was STALE, on-ramp fulfill seam was brittle.
+- Validated correct vs canonical source: hook PULL model matches `AcrossBridgeHookV2.execute`
+  (`safeTransferFrom(orchestrator,…)`); `intent.to`=user; signal `data`=hook `signalHookData`;
+  gating uses `/v3/intent` (callerAddress+referralFees[]); tuple payload encoding matches `abi.decode`.
+- **Root blocker (CONFIRMED on-chain):** live router `0x8558…` `offRamp` (immutable) = pre-audit
+  OffRampV3 `0x5072…`; its verifier `0x5eFc…` does NOT authorize our witness `0xf68E…` (cast → false),
+  so every fulfillment reverts `NotAuthorizedWitness (0x41110897)`. Audited verifier `0x5602…` DOES
+  authorize `0xf68E…` (true). ⇒ **redeploy mandatory. ✅ DONE 2026-06-11:** redeployed `FiatToFiatRouter`
+  to **`0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967`** (tx `0xb4732534…`); cast-verified offRamp=`0x57c6`,
+  verifier→witness=true, `COMMIT_TIMEOUT`=900; `FIAT_TO_FIAT_ROUTER_ADDRESS` set in the frontend.
+
+**✅ FIRST FULL E2E SUCCEEDED 2026-06-11 (real EUR):** Revolut €0.10 → USDC (Peer TEE onramp) → router
+hook `execute()` (TransferInitiated tx `0x2eb3f294…`) → FreeFlo offramp intent `0x192ba075…` → solver
+quoted €0.09, user committed → **€0.09 real SEPA Instant settled** (Qonto, `transferId 019eb734…`, VoP
+MATCH) → two TLSNotary proofs → attestation → `fulfillIntentWithProof` tx `0xbf8f82fb…` (block 47200408,
+verifiedByZkTLS, intent FULFILLED). Two issues fixed live: (a) `/v3/intent` injects a mandatory ~0.95%
+referralFee and signs it — must submit `intentData.referralFees` to signalIntent (else InvalidSignature);
+(b) the TEE PeerAuth extension doesn't inject `window.peer` on localhost (SDK 0.1.1 can't detect it) — user
+proved on peer.xyz, hook fired anyway; a resume-on-load path now lets a reloaded UI still reach commit. The
+0.5.0 SDK (redirect-onramp) is needed for our frontend to own the proof step.
+
+**Done this session (branch `audit-fixes`; 41 forge tests + frontend tsc green):**
+- Renamed VenmoToSepa→FiatToFiat across contract/test/scripts/frontend/route/docs (dated AUDIT-*.snapshots left as-is).
+- `DeployRouter.s.sol` default offRamp `0x5072`→**`0x57c6…`**; removed obsolete `DeployMainnet.s.sol` (it used V1 orchestrator + the unheld witness `0x3438…`).
+- Path B: `handleVerifyPayment` no longer fire-and-forget — guards extension readiness, observes `onIntentFulfilled` for the exact `intentHash`, adds a stuck-state escape (was: silent infinite poll if no extension).
+- `COMMIT_TIMEOUT` 30m→15m to match OffRampV3's selection window (closes the rescue dead-zone) + regression test.
+
+**Router redeploy runbook (USER runs — needs a funded Base key):**
+1. `cd contracts && DEPLOYER_PRIVATE_KEY=<funded> forge script script/DeployRouter.s.sol:DeployRouterScript --rpc-url https://mainnet.base.org --broadcast`
+   — defaults are now correct: OffRampV3 `0x57c6…`, OrchestratorV2 `0x8888…3b888`, real USDC. No hook registration (V2 is permissionless).
+2. Copy the printed address → set `FIAT_TO_FIAT_ROUTER_ADDRESS` in `frontend/lib/router-contracts.ts` (replace the `0x000…` sentinel).
+3. Solver + attestation already target audited OffRampV3 `0x57c6…`, so router-created intents show up as normal intents and the prod solver quotes + fulfills them — no solver change.
+4. E2E preconditions still external: (a) a live **EscrowV2 deposit** on the chosen platform (quote proxy defaults `revolut`, UI defaults `venmo` — pick one with liquidity); (b) **Peer browser extension** installed; (c) a real source-fiat payment to prove.
+
+**Flagged / deferred:** literal app-side `client.fulfillIntent({proof})` (the TEE redirect-onramp model) needs upgrading `@zkp2p/sdk` 0.1.1→0.5.0 — a broad SDK migration (getQuote/signalIntent/client all changed), NOT done; current Path B uses installed 0.1.1 `onramp()`+`onIntentFulfilled`. `markComplete()`/`COMPLETED` still cosmetic.
+
 ## Gotchas (also see solver/CLAUDE.md, security-invariants.md)
 - **cross-2-4 — solver self-registration**: `isAuthorizedSolver()` checks `solverSupportsRtpn[solver][SEPA_INSTANT(0)]`; a fresh solver throws *"Solver is not authorized on the contract!"* + fatal at boot until it calls `setSolverRtpn(0,true)`. (The real fix — removing the gate — is a deferred product decision.)
 - **Qonto sandbox**: `X-Qonto-Staging-Token` must be on **every** request, **including OAuth endpoints**. Browser OAuth `…/oauth2/auth` **404s unless you're logged into the Sandbox web-app first** (developers.qonto.com → Toolkit → Sandbox web app). Token URL: `https://oauth-sandbox.staging.qonto.co/oauth2/token`. The repo's `qonto-oauth.mjs` is now sandbox-aware (`QONTO_USE_SANDBOX=true` + staging headers); redirect URI `http://localhost:3456/callback` must be registered on the app. Refresh tokens are one-time-use/rotating.
 - **Prover env inheritance**: the solver spawns the prover with `env: {...process.env, ...}`, so one `solver/.env` drives both. `prove_transfer.rs` now reads `QONTO_HOST`/`QONTO_STAGING_TOKEN`/`QONTO_ACCESS_TOKEN` (bearer-or-api-key) — sandbox-capable.
-- **WIP entanglement**: this branch inherited uncommitted venmo-sepa WIP. A few touched files (`VenmoToSepaRouter.sol`, `VenmoToSepaFlow.tsx`, `router-contracts.ts`, frontend `package.json`) carry that WIP folded into the audit-fix commits — review before merging.
+- **WIP entanglement (RESOLVED 2026-06-11)**: the venmo-sepa WIP was audited + finished — router renamed `FiatToFiatRouter`, redeploy target fixed, Path B fulfill reworked, timeout aligned (see the "FiatToFiat router" section above). The redeploy broadcast is the only remaining gate.
 - **IPv6 trap**: use `127.0.0.1`, not `localhost`, for `ATTESTATION_SERVICE_URL`.
 
 ## Deferred (not done — flag to user)

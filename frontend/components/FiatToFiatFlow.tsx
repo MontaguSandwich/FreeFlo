@@ -17,8 +17,8 @@ import {
 } from "viem";
 import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, PEER_EXTENSION_CHROME_URL, getPaymentMethodsCatalog, resolvePaymentMethodHashFromCatalog, resolveFiatCurrencyBytes32 } from "@zkp2p/sdk";
 import {
-  VENMO_TO_SEPA_ROUTER_ADDRESS,
-  VENMO_TO_SEPA_ROUTER_ABI,
+  FIAT_TO_FIAT_ROUTER_ADDRESS,
+  FIAT_TO_FIAT_ROUTER_ABI,
   RouterTransferStatus,
 } from "@/lib/router-contracts";
 import {
@@ -276,7 +276,7 @@ function formatCountdown(seconds: number): string {
 
 // ============ Component ============
 
-export function VenmoToSepaFlow() {
+export function FiatToFiatFlow() {
   const { OFFRAMP_V3: OFFRAMP_V3_ADDRESS } = useNetworkAddresses();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -346,19 +346,44 @@ export function VenmoToSepaFlow() {
 
   // Read pending transfer from Router
   const { data: pendingTransfer, refetch: refetchPendingTransfer } = useReadContract({
-    address: VENMO_TO_SEPA_ROUTER_ADDRESS,
-    abi: VENMO_TO_SEPA_ROUTER_ABI,
+    address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+    abi: FIAT_TO_FIAT_ROUTER_ABI,
     functionName: "getPendingTransfer",
     args: address ? [address] : undefined,
-    query: { enabled: !!address && step.startsWith("router") },
+    query: { enabled: !!address },
   });
+
+  // Resume a pending transfer after a reload / lost flow state: if the connected
+  // wallet already has a PENDING transfer on the router (the onramp hook fired but
+  // the UI state was lost), jump straight to the commit flow so the offramp leg can
+  // still be finished within the selection window.
+  useEffect(() => {
+    if (!pendingTransfer) return;
+    const pt = pendingTransfer as unknown as {
+      intentId: `0x${string}`; usdcAmount: bigint; createdAt: bigint; status: number;
+    };
+    const earlySteps: FlowStep[] = [
+      "select_flow", "input_all", "finding_quotes", "select_maker",
+      "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify", "zkp2p_fulfilling",
+    ];
+    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    if (Number(pt.status) === 1 && earlySteps.includes(step) && pt.intentId && pt.intentId !== ZERO) {
+      setFlowData((prev) => ({
+        ...prev,
+        routerIntentId: pt.intentId,
+        usdcAmount: BigInt(pt.usdcAmount),
+        routerIntentCreatedAt: Number(pt.createdAt),
+      }));
+      setStep("router_waiting");
+    }
+  }, [pendingTransfer, step]);
 
   // ============ Event Polling (replaces useWatchContractEvent) ============
 
   // Poll for Router TransferInitiated event
   useLogPoller(
     step === "zkp2p_fulfilling",
-    VENMO_TO_SEPA_ROUTER_ADDRESS,
+    FIAT_TO_FIAT_ROUTER_ADDRESS,
     "event TransferInitiated(address indexed user, bytes32 indexed intentId, bytes32 indexed zkp2pIntentHash, uint256 usdcAmount, string iban, string recipientName, uint256 minEurAmount)",
     useCallback((log: Log) => {
       const args = (log as any).args;
@@ -593,7 +618,7 @@ export function VenmoToSepaFlow() {
     paymentMethod: string; // bytes32 hash from quote
     postIntentHook: string; // Router address for hook
     data: string; // Encoded hook payload
-  }): Promise<{ signature: `0x${string}`; expiration: string } | null> => {
+  }): Promise<{ signature: `0x${string}`; expiration: string; referralFees: { recipient: `0x${string}`; fee: string }[] } | null> => {
     // Resolve payment method and fiat currency hashes (same as SDK does)
     const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
     const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
@@ -636,6 +661,7 @@ export function VenmoToSepaFlow() {
       return {
         signature: result.signature as `0x${string}`,
         expiration: result.expiration,
+        referralFees: result.referralFees ?? [],
       };
     } catch (err) {
       console.error("Failed to fetch gating signature:", err);
@@ -671,7 +697,7 @@ export function VenmoToSepaFlow() {
         conversionRate: quote.conversionRate,
         escrowAddress: quote.escrowAddress,
         paymentMethod: quote.paymentMethod,
-        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
         data: hookPayload,
       });
 
@@ -697,7 +723,7 @@ export function VenmoToSepaFlow() {
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: quote.conversionRate,
         escrowAddress: quote.escrowAddress,
-        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
         dataLength: hookPayload.length,
         hasGatingSignature: !!gatingSignature,
       });
@@ -711,8 +737,14 @@ export function VenmoToSepaFlow() {
         fiatCurrencyCode: quote.fiatCurrencyCode,
         conversionRate: BigInt(quote.conversionRate),
         escrowAddress: quote.escrowAddress as `0x${string}`,
-        postIntentHook: VENMO_TO_SEPA_ROUTER_ADDRESS,
+        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
         data: hookPayload,
+        // Submit the EXACT referral fees the gating service signed (ZKP2P injects a
+        // mandatory protocol fee) — otherwise the orchestrator reverts InvalidSignature().
+        referralFees: (gatingResult.referralFees ?? []).map((f) => ({
+          recipient: f.recipient as `0x${string}`,
+          fee: BigInt(f.fee),
+        })),
         gatingServiceSignature: gatingSignature,
         signatureExpiration: BigInt(signatureExpiration),
       });
@@ -800,20 +832,52 @@ export function VenmoToSepaFlow() {
   };
 
   const handleVerifyPayment = () => {
-    // Open ZKP2P peer extension for verification
-    if (extensionState === "ready") {
-      try {
-        const peerSdk = createPeerExtensionSdk();
-        peerSdk.onramp({
-          intentHash: flowData.zkp2pIntentHash || undefined,
-        });
-      } catch (err) {
-        console.error("Failed to open peer extension:", err);
-      }
+    const intentHash = flowData.zkp2pIntentHash;
+    if (!intentHash) {
+      setError("No ZKP2P intent to verify — signal an intent first.");
+      return;
     }
 
-    // Move to fulfilling state - the extension handles proof generation + fulfillment
-    // We poll for the Router TransferInitiated event to know when it's done
+    // Guard: the Peer extension drives proof generation + fulfillIntent. If it
+    // isn't installed/connected, DON'T silently advance into an unobservable
+    // poll loop (the old bug) — surface it and let the user install/refresh.
+    if (extensionState !== "ready") {
+      setError("ZKP2P/Peer extension not ready. Install it and refresh, then verify.");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const peerSdk = createPeerExtensionSdk();
+
+      // Observe fulfillment of OUR exact intent instead of blind-polling. The
+      // same fulfillIntent tx that this fires on also runs the post-intent hook
+      // (FiatToFiatRouter.execute) → TransferInitiated, which the log poller
+      // below uses to advance. This callback confirms the on-chain fulfill tx
+      // and self-unsubscribes once it matches.
+      const unsubscribe = peerSdk.onIntentFulfilled((result) => {
+        if (result.intentHash?.toLowerCase() !== intentHash.toLowerCase()) return;
+        console.log("Peer intent fulfilled:", result.status, "tx:", result.fulfillTxHash);
+        unsubscribe();
+      });
+
+      // Drive the extension onramp for this intent with full context so it
+      // targets the right deposit/payment instead of guessing from intentHash.
+      peerSdk.onramp({
+        intentHash,
+        paymentPlatform: flowData.zkp2pQuote?.processorName,
+        amountUsdc: flowData.usdcAmount > BigInt(0) ? flowData.usdcAmount : undefined,
+        recipientAddress: address,
+      });
+    } catch (err) {
+      console.error("Failed to open peer extension:", err);
+      setError("Could not open the ZKP2P/Peer extension. Make sure it's installed and connected.");
+      return;
+    }
+
+    // Fulfilling: the extension proves + fulfills, the hook fires, and the
+    // TransferInitiated poller moves us to router_waiting.
     setStep("zkp2p_fulfilling");
   };
 
@@ -847,8 +911,8 @@ export function VenmoToSepaFlow() {
     if (!flowData.selectedSolver) return;
 
     routerCommit({
-      address: VENMO_TO_SEPA_ROUTER_ADDRESS,
-      abi: VENMO_TO_SEPA_ROUTER_ABI,
+      address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+      abi: FIAT_TO_FIAT_ROUTER_ABI,
       functionName: "commit",
       // commit(address solver) — slippage is now enforced on-chain against the
       // real quote, so no caller-supplied EUR amount is passed.
@@ -1380,8 +1444,25 @@ export function VenmoToSepaFlow() {
           <Box sx={{ textAlign: 'center', py: 6 }}>
             <CircularProgress size={48} sx={{ color: '#3b82f6', mb: 2 }} />
             <Typography variant="h6" sx={{ fontWeight: 700, color: 'white', mb: 1 }}>Completing ZKP2P Transfer</Typography>
-            <Typography sx={{ color: '#a1a1aa' }}>Releasing USDC and creating SEPA intent...</Typography>
+            <Typography sx={{ color: '#a1a1aa' }}>Proving payment in the extension, then releasing USDC and creating the SEPA intent...</Typography>
             <Typography variant="body2" sx={{ color: '#71717a', mt: 1 }}>Waiting for on-chain confirmation</Typography>
+            {/* Escape hatch: the extension drives proof + fulfillment off-screen.
+                If it errors or the user closes it, this avoids being stuck here
+                forever — they can reclaim the ZKP2P intent and retry. */}
+            <Button
+              onClick={handleCancelIntent}
+              disabled={isCancelling}
+              sx={{
+                mt: 3, px: 3, py: 1, borderRadius: 3,
+                bgcolor: 'transparent', color: '#f87171',
+                border: '1px solid rgba(239,68,68,0.3)',
+                fontWeight: 500, fontSize: '0.8125rem', textTransform: 'none',
+                '&:hover': { bgcolor: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.5)' },
+                '&:disabled': { color: '#71717a', borderColor: 'rgba(113,113,122,0.3)' }
+              }}
+            >
+              {isCancelling ? "Cancelling..." : "Extension stuck? Cancel intent"}
+            </Button>
           </Box>
         )}
 

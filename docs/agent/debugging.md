@@ -147,7 +147,7 @@ V2 Stack (permissionless hooks):
   - OrchestratorRegistry: 0xBe9fED15ED7A4B915C03EFcEcb9662739C3382A9
   - No PostIntentHookRegistry - any valid contract can be a hook
 
-VenmoToSepaRouter (0x8558D9701C80A5805E6ea940AfD05e36cfE27B23):
+FiatToFiatRouter (0x8558D9701C80A5805E6ea940AfD05e36cfE27B23):
   - Configured for OrchestratorV2
   - Works with EscrowV2 deposits without whitelisting
   - Does NOT work with V1 Escrow deposits (would need whitelisting)

@@ -10,10 +10,10 @@ import BoltIcon from "@mui/icons-material/Bolt";
 
 export function Header() {
   const pathname = usePathname();
-  const isVenmoPage = pathname === "/venmo-to-sepa";
+  const isBridgePage = pathname === "/fiat-to-fiat";
 
-  const gradientFrom = isVenmoPage ? "#3b82f6" : "#10b981";
-  const gradientTo = isVenmoPage ? "#10b981" : "#14b8a6";
+  const gradientFrom = isBridgePage ? "#3b82f6" : "#10b981";
+  const gradientTo = isBridgePage ? "#10b981" : "#14b8a6";
 
   return (
     <Box
@@ -92,11 +92,11 @@ export function Header() {
             </Button>
             <Button
               component={Link}
-              href="/venmo-to-sepa"
+              href="/fiat-to-fiat"
               size="small"
               sx={{
-                color: isVenmoPage ? "white" : "text.secondary",
-                bgcolor: isVenmoPage ? "rgba(39, 39, 42, 0.5)" : "transparent",
+                color: isBridgePage ? "white" : "text.secondary",
+                bgcolor: isBridgePage ? "rgba(39, 39, 42, 0.5)" : "transparent",
                 "&:hover": {
                   bgcolor: "rgba(39, 39, 42, 0.5)",
                   color: "white",
@@ -108,7 +108,7 @@ export function Header() {
                 minWidth: "auto",
               }}
             >
-              Venmo to SEPA
+              Fiat to Fiat
             </Button>
           </Box>
         </Box>

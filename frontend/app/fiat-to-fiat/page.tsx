@@ -7,9 +7,9 @@ import Chip from "@mui/material/Chip";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Background } from "@/components/Background";
-import { VenmoToSepaFlow } from "@/components/VenmoToSepaFlow";
+import { FiatToFiatFlow } from "@/components/FiatToFiatFlow";
 
-export default function VenmoToSepaPage() {
+export default function FiatToFiatPage() {
   return (
     <Box
       component="main"
@@ -133,8 +133,8 @@ export default function VenmoToSepaPage() {
               </Typography>
             </Box>
 
-            {/* VenmoToSepaFlow */}
-            <VenmoToSepaFlow />
+            {/* FiatToFiatFlow */}
+            <FiatToFiatFlow />
 
             {/* Info Cards */}
             <Box

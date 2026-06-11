@@ -6,7 +6,7 @@ Trustless USDC-to-fiat offramp on Base. User deposits USDC, solver sends fiat (S
 
 frontend/       Next.js (Vercel) - user-facing offramp wizard
 solver/         TypeScript - intent watcher, fiat executor, proof generator
-contracts/      Solidity (Foundry) - OffRampV3, PaymentVerifier, VenmoToSepaRouter
+contracts/      Solidity (Foundry) - OffRampV3, PaymentVerifier, FiatToFiatRouter
 attestation/    Rust - TLSNotary proof verification + EIP-712 signing
 providers/      Rust - TLSNotary prover adapters (Qonto)
 
@@ -29,10 +29,11 @@ Attestation:  cd attestation && cargo build --release
 
 ## Contracts (Base Mainnet)
 
-OffRampV3: 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D
-PaymentVerifier: 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
-VenmoToSepaRouter V3: 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23
+OffRampV3 (audited prod): 0x57c621994616110a50bD820388e4E8a41F00b4D7
+PaymentVerifier (audited prod): 0x5602D796052ABDaD862FEf8011CA2cedB5132A9b
+FiatToFiatRouter (audited, prod): 0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967 — deployed 2026-06-11 (pre-audit 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23 DEPRECATED)
 USDC (Base): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+Pre-audit (superseded, witness not held): OffRampV3 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D, PaymentVerifier 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
 
 ## ZKP2P V2 Contracts (Base Mainnet) - Use These
 

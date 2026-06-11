@@ -7,13 +7,13 @@ Deployed at free-flo.vercel.app. Uses wagmi for wallet connection.
 - app/api/quote/ - Proxy to solver Quote API (avoids CORS)
 - app/api/zkp2p-quote/ - Proxy to ZKP2P quote API (staging/production routing)
 - app/api/zkp2p-gating/ - Proxy to ZKP2P gating signature API
-- app/venmo-to-sepa/ - Venmo USD to SEPA EUR cross-border page
+- app/fiat-to-fiat/ - Venmo USD to SEPA EUR cross-border page
 - components/OffRampForm.tsx - Main offramp wizard (multi-step)
-- components/VenmoToSepaFlow.tsx - Cross-border flow component
+- components/FiatToFiatFlow.tsx - Cross-border flow component
 - hooks/useNetworkAddresses.ts - Runtime chain detection (reads useChainId from wagmi)
 - lib/network.ts - Central address/RPC config per chain ID
 - lib/quotes.ts - Quote fetching logic
-- lib/router-contracts.ts - VenmoToSepaRouter ABI and helpers
+- lib/router-contracts.ts - FiatToFiatRouter ABI and helpers
 
 ## Chain Detection (Dual Deploy)
 
@@ -44,7 +44,7 @@ NEXT_PUBLIC_ZKP2P_API_KEY - Required for ZKP2P quote/gating APIs. Server-side pr
 
 ## ZKP2P Integration
 
-VenmoToSepaFlow uses ZKP2P SDK with production environment.
+FiatToFiatFlow uses ZKP2P SDK with production environment.
 - Production API: api.zkp2p.xyz (x-api-key header)
 - SDK does NOT auto-fetch gating signatures; they must come from quote response
 - API response wraps quotes in `responseObject` - must unwrap before extracting
@@ -62,15 +62,17 @@ Using the wrong endpoint causes `InvalidSignature()` - the signature is generate
 V2 Stack (use this - permissionless PostIntentHooks):
 - EscrowV2: 0x777777779d229cdF3110e9de47943791c26300Ef
 - OrchestratorV2: 0x888888359E981B5225CA48fbCdCeff702FC3b888
-- No hook whitelist - VenmoToSepaRouter works without registration
+- No hook whitelist - FiatToFiatRouter works without registration
 
 V1 Stack (requires whitelisting - avoid):
 - Escrow: 0x2f121CDDCA6d652f35e8B3E560f9760898888888
 - Orchestrator: 0x88888883Ed048FF0a415271B28b2F52d431810D0
 - PostIntentHookRegistry: 0x9B128EBAD4d874199A2Dc57E93186796c5EcAdE9
-- VenmoToSepaRouter NOT whitelisted here
+- FiatToFiatRouter NOT whitelisted here
 
-VenmoToSepaRouter: 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23
+FiatToFiatRouter (active): 0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967 — deployed 2026-06-11, wired to audited OffRampV3 0x57c621994616110a50bD820388e4E8a41F00b4D7.
+- Pre-audit 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23 is DEPRECATED: its immutable offRamp = old OffRampV3
+  0x5072… whose verifier doesn't authorize our witness → NotAuthorizedWitness (0x41110897). Don't route there.
 - Configured for OrchestratorV2 (permissionless)
 - Quote API must filter to EscrowV2 only: escrowAddresses: [0x777...]
 - If PostIntentHookNotWhitelisted error: deposit is on V1 Escrow, filter it out
