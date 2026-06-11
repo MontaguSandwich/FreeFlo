@@ -413,17 +413,43 @@ export function FiatToFiatFlow() {
 
   // ============ Check Peer Extension ============
 
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const state = await getPeerExtensionState();
-        setExtensionState(state);
-      } catch {
-        setExtensionState("needs_install");
-      }
-    };
-    check();
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const refreshExtensionState = useCallback(async (): Promise<string> => {
+    try {
+      const state = await getPeerExtensionState();
+      setExtensionState(state);
+      return state;
+    } catch {
+      setExtensionState("needs_install");
+      return "needs_install";
+    }
   }, []);
+
+  useEffect(() => { refreshExtensionState(); }, [refreshExtensionState]);
+
+  // Ask the installed extension to authorize this site. The newer PeerAuth (TEE)
+  // build reports "needs_connection" — window.peer is injected but not yet connected
+  // to this origin — until requestConnection() succeeds. Without this step the UI
+  // looked like the extension wasn't installed at all (we only ever showed "install").
+  const connectExtension = useCallback(async () => {
+    if (!isPeerExtensionAvailable()) {
+      setExtensionState("needs_install");
+      setError("Peer extension not found on this tab. Install it (and allow it on localhost), then reload.");
+      return;
+    }
+    setIsConnecting(true);
+    setError(null);
+    try {
+      await createPeerExtensionSdk().requestConnection();
+      await refreshExtensionState();
+    } catch (err) {
+      console.error("Peer connect failed:", err);
+      setError("Could not connect the Peer extension. Open it on this tab to authorize, then retry.");
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [refreshExtensionState]);
 
   // ============ Quote Fetching ============
 
@@ -842,7 +868,11 @@ export function FiatToFiatFlow() {
     // isn't installed/connected, DON'T silently advance into an unobservable
     // poll loop (the old bug) — surface it and let the user install/refresh.
     if (extensionState !== "ready") {
-      setError("ZKP2P/Peer extension not ready. Install it and refresh, then verify.");
+      setError(
+        extensionState === "needs_install" || extensionState === "unknown"
+          ? "Peer extension not detected on this tab. Install it (and allow it on localhost), then reload."
+          : "Peer extension isn't connected yet — click Connect below, approve in the extension, then Verify."
+      );
       return;
     }
 
@@ -1407,15 +1437,26 @@ export function FiatToFiatFlow() {
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </Box>
               {extensionState === "ready" ? (
-                <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Click below to open the ZKP2P extension and verify your Venmo payment</Typography>
+                <Typography variant="body2" sx={{ color: '#a1a1aa' }}>Click below to open the Peer extension and prove your payment.</Typography>
+              ) : extensionState === "needs_connection" ? (
+                <Typography variant="body2" sx={{ color: '#fbbf24' }}>Peer extension detected but not connected to this site. Click Connect to authorize it.</Typography>
               ) : (
                 <Typography variant="body2" sx={{ color: '#fbbf24' }}>
-                  ZKP2P extension not detected.{" "}
-                  <a href={PEER_EXTENSION_CHROME_URL} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>Install it</a> and refresh.
+                  Peer extension not detected on this tab.{" "}
+                  <a href={PEER_EXTENSION_CHROME_URL} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>Install it</a>, allow it on localhost, then reload.
                 </Typography>
               )}
-              <Typography variant="caption" sx={{ color: '#71717a', mt: 1, display: 'block' }}>Zero-knowledge proof - your email stays private</Typography>
+              <Typography variant="caption" sx={{ color: '#71717a', mt: 1, display: 'block' }}>Zero-knowledge proof — your data stays private</Typography>
             </Box>
+            {extensionState === "needs_connection" && (
+              <Button
+                onClick={connectExtension}
+                disabled={isConnecting}
+                sx={{ width: '100%', py: 1.5, borderRadius: 3, bgcolor: '#10b981', color: 'white', fontWeight: 600, fontSize: '0.9375rem', textTransform: 'none', '&:hover': { bgcolor: '#059669' }, '&:disabled': { bgcolor: '#374151', color: '#9ca3af' } }}
+              >
+                {isConnecting ? "Connecting…" : "Connect Peer extension"}
+              </Button>
+            )}
             <Button
               onClick={handleVerifyPayment}
               sx={{ width: '100%', py: 2, borderRadius: 3, bgcolor: '#3b82f6', color: 'white', fontWeight: 600, fontSize: '1rem', textTransform: 'none', '&:hover': { bgcolor: '#2563eb' } }}
