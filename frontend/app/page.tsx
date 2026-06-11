@@ -6,7 +6,6 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Background } from "@/components/Background";
 import { OfframpWidget } from "@/components/offramp/OfframpWidget";
-import { MyIntents } from "@/components/offramp/MyIntents";
 
 export default function Home() {
   return (
@@ -49,7 +48,6 @@ export default function Home() {
 
             {/* Main Widget */}
             <OfframpWidget />
-            <MyIntents />
           </Box>
         </Box>
 

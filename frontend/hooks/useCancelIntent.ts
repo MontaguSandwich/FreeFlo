@@ -48,9 +48,11 @@ export function useCancelIntent() {
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const cancelIntent = useCallback(
-    (intentId: `0x${string}`) => {
+    // `offramp` overrides the target contract so legacy/sandbox intents are cancelled on their
+    // OWN deployment (not the current one); defaults to the active OffRampV3.
+    (intentId: `0x${string}`, offramp?: `0x${string}`) => {
       writeContract({
-        address: offrampAddress,
+        address: offramp ?? offrampAddress,
         abi: OFFRAMP_V2_ABI,
         functionName: "cancelIntent",
         args: [intentId],
