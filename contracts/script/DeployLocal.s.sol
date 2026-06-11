@@ -5,7 +5,7 @@ import { Script, console } from "forge-std/Script.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 import { OffRampV3 } from "../src/OffRampV3.sol";
-import { VenmoToSepaRouter } from "../src/VenmoToSepaRouter.sol";
+import { FiatToFiatRouter } from "../src/FiatToFiatRouter.sol";
 
 /// @dev Minimal 6-decimal USDC stand-in for local/anvil deployments only.
 contract MockUSDC is ERC20 {
@@ -21,7 +21,7 @@ contract MockUSDC is ERC20 {
 }
 
 /// @notice Local-only deployment for the FreeFlo stack against anvil (chainId 31337).
-/// Deploys a mock USDC + PaymentVerifier(witness) + OffRampV3 + VenmoToSepaRouter.
+/// Deploys a mock USDC + PaymentVerifier(witness) + OffRampV3 + FiatToFiatRouter.
 /// The witness defaults to the deployer so the attestation service's
 /// WITNESS_PRIVATE_KEY can equal DEPLOYER_PRIVATE_KEY locally.
 contract DeployLocalScript is Script {
@@ -36,8 +36,8 @@ contract DeployLocalScript is Script {
         MockUSDC usdc = new MockUSDC();
         PaymentVerifier verifier = new PaymentVerifier(witness);
         OffRampV3 offRamp = new OffRampV3(address(usdc), address(verifier));
-        VenmoToSepaRouter router =
-            new VenmoToSepaRouter(address(usdc), address(offRamp), orchestrator);
+        FiatToFiatRouter router =
+            new FiatToFiatRouter(address(usdc), address(offRamp), orchestrator);
 
         // Seed the deployer with USDC for local testing.
         usdc.mint(deployer, 1_000_000e6);

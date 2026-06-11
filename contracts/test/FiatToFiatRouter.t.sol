@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { VenmoToSepaRouter } from "../src/VenmoToSepaRouter.sol";
+import { FiatToFiatRouter } from "../src/FiatToFiatRouter.sol";
 import { IPostIntentHookV2 } from "../src/interfaces/IPostIntentHookV2.sol";
 import { OffRampV3 } from "../src/OffRampV3.sol";
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
@@ -22,11 +22,11 @@ contract MockUSDC is ERC20 {
     }
 }
 
-contract VenmoToSepaRouterTest is Test {
+contract FiatToFiatRouterTest is Test {
     MockUSDC public usdc;
     PaymentVerifier public verifier;
     OffRampV3 public offRamp;
-    VenmoToSepaRouter public router;
+    FiatToFiatRouter public router;
 
     address constant ORCHESTRATOR = address(0xBEEF);
     address constant USER = address(0x1111);
@@ -66,7 +66,7 @@ contract VenmoToSepaRouterTest is Test {
         usdc = new MockUSDC();
         verifier = new PaymentVerifier(witness);
         offRamp = new OffRampV3(address(usdc), address(verifier));
-        router = new VenmoToSepaRouter(
+        router = new FiatToFiatRouter(
             address(usdc), address(offRamp), ORCHESTRATOR
         );
     }
@@ -108,7 +108,7 @@ contract VenmoToSepaRouterTest is Test {
         uint256 minEur
     ) internal pure returns (bytes memory) {
         return abi.encode(
-            VenmoToSepaRouter.HookPayload({
+            FiatToFiatRouter.HookPayload({
                 iban: iban,
                 recipientName: name,
                 minEurAmount: minEur
@@ -134,7 +134,7 @@ contract VenmoToSepaRouterTest is Test {
         vm.stopPrank();
 
         // Read the pending transfer to get the intentId
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(user);
         return transfer.intentId;
     }
@@ -158,7 +158,7 @@ contract VenmoToSepaRouterTest is Test {
         bytes32 intentId = _executeHook(USER, amount);
 
         // Verify router state
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(USER);
         assertEq(transfer.user, USER);
         assertEq(transfer.usdcAmount, amount);
@@ -167,7 +167,7 @@ contract VenmoToSepaRouterTest is Test {
         assertEq(transfer.minEurAmount, 8500);
         assertEq(
             uint256(transfer.status),
-            uint256(VenmoToSepaRouter.TransferStatus.PENDING)
+            uint256(FiatToFiatRouter.TransferStatus.PENDING)
         );
 
         // Verify OffRampV3 intent was created
@@ -213,7 +213,7 @@ contract VenmoToSepaRouterTest is Test {
             _buildExecutionContext(USER, 100_000_000, payload);
 
         vm.prank(USER);
-        vm.expectRevert(VenmoToSepaRouter.OnlyZKP2POrchestrator.selector);
+        vm.expectRevert(FiatToFiatRouter.OnlyZKP2POrchestrator.selector);
         router.execute(ctx, "");
     }
 
@@ -231,7 +231,7 @@ contract VenmoToSepaRouterTest is Test {
             _buildExecutionContext(USER, 100_000_000, payload);
 
         vm.expectRevert(
-            VenmoToSepaRouter.UserAlreadyHasPendingTransfer.selector
+            FiatToFiatRouter.UserAlreadyHasPendingTransfer.selector
         );
         router.execute(ctx, "");
         vm.stopPrank();
@@ -246,7 +246,7 @@ contract VenmoToSepaRouterTest is Test {
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
 
-        vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
+        vm.expectRevert(FiatToFiatRouter.InvalidPayload.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }
@@ -264,7 +264,7 @@ contract VenmoToSepaRouterTest is Test {
         // Change token to a different address
         ctx.token = address(0xDEAD);
 
-        vm.expectRevert(VenmoToSepaRouter.TokenMismatch.selector);
+        vm.expectRevert(FiatToFiatRouter.TokenMismatch.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }
@@ -283,11 +283,11 @@ contract VenmoToSepaRouterTest is Test {
         router.commit(SOLVER);
 
         // Verify router state
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(USER);
         assertEq(
             uint256(transfer.status),
-            uint256(VenmoToSepaRouter.TransferStatus.COMMITTED)
+            uint256(FiatToFiatRouter.TransferStatus.COMMITTED)
         );
 
         // Verify OffRampV3 state
@@ -317,7 +317,7 @@ contract VenmoToSepaRouterTest is Test {
         vm.prank(USER);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VenmoToSepaRouter.SlippageExceeded.selector, 8000, 8500
+                FiatToFiatRouter.SlippageExceeded.selector, 8000, 8500
             )
         );
         router.commit(SOLVER);
@@ -325,7 +325,7 @@ contract VenmoToSepaRouterTest is Test {
 
     function test_Commit_RevertsWhenNotPending() public {
         vm.prank(USER);
-        vm.expectRevert(VenmoToSepaRouter.NoPendingTransfer.selector);
+        vm.expectRevert(FiatToFiatRouter.NoPendingTransfer.selector);
         router.commit(SOLVER);
     }
 
@@ -356,11 +356,11 @@ contract VenmoToSepaRouterTest is Test {
         assertEq(usdc.balanceOf(address(router)), 0);
 
         // Transfer status is CANCELLED
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(USER);
         assertEq(
             uint256(transfer.status),
-            uint256(VenmoToSepaRouter.TransferStatus.CANCELLED)
+            uint256(FiatToFiatRouter.TransferStatus.CANCELLED)
         );
     }
 
@@ -373,7 +373,7 @@ contract VenmoToSepaRouterTest is Test {
         router.commit(SOLVER);
 
         vm.prank(USER);
-        vm.expectRevert(VenmoToSepaRouter.TransferNotPending.selector);
+        vm.expectRevert(FiatToFiatRouter.TransferNotPending.selector);
         router.cancel();
     }
 
@@ -401,18 +401,18 @@ contract VenmoToSepaRouterTest is Test {
 
         assertEq(usdc.balanceOf(USER), amount);
 
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(USER);
         assertEq(
             uint256(transfer.status),
-            uint256(VenmoToSepaRouter.TransferStatus.EXPIRED)
+            uint256(FiatToFiatRouter.TransferStatus.EXPIRED)
         );
     }
 
     function test_RescueTimedOut_RevertsBeforeTimeout() public {
         _executeHook(USER, 100_000_000);
 
-        vm.expectRevert(VenmoToSepaRouter.NotTimedOutYet.selector);
+        vm.expectRevert(FiatToFiatRouter.NotTimedOutYet.selector);
         router.rescueTimedOut(USER);
     }
 
@@ -425,6 +425,24 @@ contract VenmoToSepaRouterTest is Test {
         vm.expectEmit(true, true, false, true);
         emit TransferExpired(USER, intentId, amount);
         router.rescueTimedOut(USER);
+    }
+
+    // Regression guard for COMMIT_TIMEOUT = 15m: past OffRampV3's selection window
+    // (QUOTE 5m + SELECTION 10m), commit() can no longer succeed AND rescueTimedOut()
+    // opens at the SAME boundary — so there is no dead zone where USDC is stuck.
+    function test_RescueTimedOut_OpensAtSelectionWindowClose() public {
+        uint256 amount = 100_000_000;
+        _executeHook(USER, amount);
+
+        // 16 minutes: past both the 15m selection window and the 15m COMMIT_TIMEOUT.
+        vm.warp(block.timestamp + 16 minutes);
+
+        router.rescueTimedOut(USER);
+        assertEq(usdc.balanceOf(USER), amount);
+        assertEq(
+            uint256(router.getPendingTransfer(USER).status),
+            uint256(FiatToFiatRouter.TransferStatus.EXPIRED)
+        );
     }
 
     // ============ markComplete() tests ============
@@ -490,11 +508,11 @@ contract VenmoToSepaRouterTest is Test {
         // Mark complete on router
         router.markComplete(USER);
 
-        VenmoToSepaRouter.PendingTransfer memory transfer =
+        FiatToFiatRouter.PendingTransfer memory transfer =
             router.getPendingTransfer(USER);
         assertEq(
             uint256(transfer.status),
-            uint256(VenmoToSepaRouter.TransferStatus.COMPLETED)
+            uint256(FiatToFiatRouter.TransferStatus.COMPLETED)
         );
     }
 
@@ -507,7 +525,7 @@ contract VenmoToSepaRouterTest is Test {
         router.commit(SOLVER);
 
         // Try to mark complete before fulfillment
-        vm.expectRevert(VenmoToSepaRouter.TransferNotCommitted.selector);
+        vm.expectRevert(FiatToFiatRouter.TransferNotCommitted.selector);
         router.markComplete(USER);
     }
 
@@ -535,8 +553,8 @@ contract VenmoToSepaRouterTest is Test {
             router.encodePayload("DE89370400440532013000", "John Doe", 8500);
 
         // Decode it the same way the contract does
-        VenmoToSepaRouter.HookPayload memory decoded =
-            abi.decode(encoded, (VenmoToSepaRouter.HookPayload));
+        FiatToFiatRouter.HookPayload memory decoded =
+            abi.decode(encoded, (FiatToFiatRouter.HookPayload));
 
         assertEq(decoded.iban, "DE89370400440532013000");
         assertEq(decoded.recipientName, "John Doe");
@@ -564,11 +582,11 @@ contract VenmoToSepaRouterTest is Test {
 
         assertEq(
             uint256(router.getPendingTransfer(USER).status),
-            uint256(VenmoToSepaRouter.TransferStatus.CANCELLED)
+            uint256(FiatToFiatRouter.TransferStatus.CANCELLED)
         );
         assertEq(
             uint256(router.getPendingTransfer(user2).status),
-            uint256(VenmoToSepaRouter.TransferStatus.PENDING)
+            uint256(FiatToFiatRouter.TransferStatus.PENDING)
         );
     }
 
@@ -625,7 +643,7 @@ contract VenmoToSepaRouterTest is Test {
         assertEq(usdc.balanceOf(USER), amount);
         assertEq(
             uint256(router.getPendingTransfer(USER).status),
-            uint256(VenmoToSepaRouter.TransferStatus.EXPIRED)
+            uint256(FiatToFiatRouter.TransferStatus.EXPIRED)
         );
         assertEq(
             uint256(offRamp.getIntent(intentId).status),
@@ -647,7 +665,7 @@ contract VenmoToSepaRouterTest is Test {
 
     function test_RescueCommitted_RevertsWhenNotCommitted() public {
         _executeHook(USER, 100_000_000); // PENDING, not COMMITTED
-        vm.expectRevert(VenmoToSepaRouter.TransferNotCommitted.selector);
+        vm.expectRevert(FiatToFiatRouter.TransferNotCommitted.selector);
         router.rescueCommitted(USER);
     }
 
@@ -668,7 +686,7 @@ contract VenmoToSepaRouterTest is Test {
             _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, amount, payload);
-        vm.expectRevert(VenmoToSepaRouter.UserAlreadyHasPendingTransfer.selector);
+        vm.expectRevert(FiatToFiatRouter.UserAlreadyHasPendingTransfer.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }
@@ -682,7 +700,7 @@ contract VenmoToSepaRouterTest is Test {
         bytes memory payload = _encodePayload(_repeat("A", 257), "John Doe", 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
-        vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
+        vm.expectRevert(FiatToFiatRouter.InvalidPayload.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }
@@ -695,7 +713,7 @@ contract VenmoToSepaRouterTest is Test {
             _encodePayload("DE89370400440532013000", _repeat("B", 71), 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
-        vm.expectRevert(VenmoToSepaRouter.InvalidPayload.selector);
+        vm.expectRevert(FiatToFiatRouter.InvalidPayload.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }

@@ -107,10 +107,15 @@ export async function POST(request: NextRequest) {
     const result = await response.json();
     console.log('Gating API response:', JSON.stringify(result, null, 2).slice(0, 500));
 
-    // Extract signature and expiration from response
+    // Extract signature, expiration, and the EXACT referralFees the gating service
+    // signed over. ZKP2P's API injects a mandatory protocol referral fee and signs it
+    // into the intent even when we send referralFees: []. The on-chain signalIntent
+    // MUST submit these same fees or the orchestrator rebuilds a different hash and
+    // reverts InvalidSignature(). See intentData.referralFees in the API response.
     const signature = result?.responseObject?.signedIntent;
     const expiration = result?.responseObject?.intentData?.signatureExpiration
       ?? result?.responseObject?.signatureExpiration;
+    const referralFees = result?.responseObject?.intentData?.referralFees ?? [];
 
     if (!signature || !expiration) {
       console.error('Missing signature or expiration in response:', result);
@@ -128,6 +133,7 @@ export async function POST(request: NextRequest) {
       success: true,
       signature,
       expiration: expiration.toString(),
+      referralFees,
     });
 
   } catch (error) {

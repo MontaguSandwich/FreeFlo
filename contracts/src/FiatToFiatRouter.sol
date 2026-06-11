@@ -9,19 +9,20 @@ import { IPostIntentHookV2 } from "./interfaces/IPostIntentHookV2.sol";
 import { OffRampV3 } from "./OffRampV3.sol";
 
 /**
- * @title VenmoToSepaRouter
- * @notice Routes USDC from ZKP2P V3 onramp to FreeFlo offramp for Venmo->SEPA transfers
+ * @title FiatToFiatRouter
+ * @notice Routes USDC from a ZKP2P/Peer onramp into a FreeFlo offramp: a generic
+ *         fiat->fiat transfer bridged through USDC (e.g. Venmo USD -> SEPA EUR).
  * @dev Implements ZKP2P's IPostIntentHookV2 interface (permissionless in V3)
  *
  * Flow:
- * 1. User calls ZKP2P signalIntent with this contract as postIntentHook and SEPA details in data
- * 2. User completes Venmo payment and proves via ZKP2P
+ * 1. User calls ZKP2P signalIntent with this contract as postIntentHook and payout details in data
+ * 2. User completes the source fiat payment and proves it via ZKP2P/Peer
  * 3. ZKP2P fulfillIntent triggers execute() on this contract
  * 4. Router pulls USDC, creates FreeFlo intent, stores pending transfer
- * 5. User calls commit() to select solver quote and commit to SEPA transfer
- * 6. FreeFlo solver fulfills, EUR arrives in user's bank
+ * 5. User calls commit() to select solver quote and commit to the payout transfer
+ * 6. FreeFlo solver fulfills, fiat arrives in the user's destination account
  */
-contract VenmoToSepaRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
+contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     // ============ Structs ============
@@ -63,8 +64,11 @@ contract VenmoToSepaRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
 
     // ============ Constants ============
 
-    /// @notice Timeout for user to commit (30 minutes)
-    uint256 public constant COMMIT_TIMEOUT = 30 minutes;
+    /// @notice Window for the user to commit, aligned with OffRampV3's selection
+    /// window (QUOTE_WINDOW 5m + SELECTION_WINDOW 10m = 15m). Past this, OffRampV3
+    /// rejects selectQuoteAndCommit, so the USDC becomes rescuable at the same
+    /// boundary — no dead zone where neither commit nor rescue works.
+    uint256 public constant COMMIT_TIMEOUT = 15 minutes;
 
     // ============ Immutables ============
 
