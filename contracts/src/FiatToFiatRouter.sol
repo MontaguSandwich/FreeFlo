@@ -165,12 +165,26 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
         // Get user address from intent context
         address user = _ctx.intent.to;
 
-        // Block a new transfer while the user has an active one. Allowing a second
-        // onramp during PENDING *or* COMMITTED would overwrite the single slot and
-        // orphan the first intent, stranding its USDC.
+        // Block a new transfer only while the user's existing one is genuinely
+        // in-flight. A PENDING slot always blocks: its USDC sits in this router
+        // awaiting commit, so overwriting would strand it. A COMMITTED slot blocks
+        // only while its OffRampV3 intent is still PENDING_QUOTE/COMMITTED — once the
+        // solver has FULFILLED it (or it was cancelled/expired), the prior transfer
+        // is done and a returning wallet may start a new one (the slot is safely
+        // overwritten; no markComplete needed first).
         TransferStatus existing = pendingTransfers[user].status;
-        if (existing == TransferStatus.PENDING || existing == TransferStatus.COMMITTED) {
+        if (existing == TransferStatus.PENDING) {
             revert UserAlreadyHasPendingTransfer();
+        }
+        if (existing == TransferStatus.COMMITTED) {
+            OffRampV3.IntentStatus prior =
+                offRamp.getIntent(pendingTransfers[user].intentId).status;
+            if (
+                prior == OffRampV3.IntentStatus.PENDING_QUOTE
+                    || prior == OffRampV3.IntentStatus.COMMITTED
+            ) {
+                revert UserAlreadyHasPendingTransfer();
+            }
         }
 
         // Decode payload from signalHookData (passed during signalIntent)
