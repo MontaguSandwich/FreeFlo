@@ -1,0 +1,1187 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  useAccount,
+  useChainId,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useReadContract,
+  usePublicClient,
+  useWalletClient,
+} from "wagmi";
+import {
+  encodeAbiParameters,
+  parseAbiItem,
+  type Log,
+} from "viem";
+import { Zkp2pClient, isPeerExtensionAvailable, createPeerExtensionSdk, getPeerExtensionState, getPaymentMethodsCatalog, resolvePaymentMethodHashFromCatalog, resolveFiatCurrencyBytes32 } from "@zkp2p/sdk";
+import {
+  FIAT_TO_FIAT_ROUTER_ADDRESS,
+  FIAT_TO_FIAT_ROUTER_ABI,
+} from "@/lib/router-contracts";
+import { useNetworkAddresses } from "@/hooks/useNetworkAddresses";
+import { USDC_MAINNET_ADDRESS } from "@/lib/zkp2p-contracts";
+import {
+  PLATFORMS,
+  getPlatformCurrencies,
+  getDefaultCurrency,
+} from "@/lib/platforms";
+
+// ============ Constants ============
+
+// OffRampV3: QUOTE_WINDOW (5 min) + SELECTION_WINDOW (10 min) = 15 min
+export const OFFRAMP_DEADLINE_SECONDS = 15 * 60;
+
+// ZKP2P V3 contracts (fully permissionless PostIntentHook with IPostIntentHookV2)
+export const ZKP2P_V3_ORCHESTRATOR = "0x888888359E981B5225CA48fbCdCeff702FC3b888" as const;
+export const ZKP2P_V3_ESCROW = "0x777777779d229cdF3110e9de47943791c26300Ef" as const;
+export const ZKP2P_V3_PROTOCOL_VIEWER = "0xC8A622e1614BB58141E72e1D6023B16f08677d6c" as const;
+export const ZKP2P_API_URL = "https://api.zkp2p.xyz" as const;
+
+// Minimal Orchestrator ABI for signalIntent and cancelIntent
+export const ORCHESTRATOR_ABI = [
+  {
+    name: "signalIntent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "intent",
+        type: "tuple",
+        components: [
+          { name: "escrow", type: "address" },
+          { name: "depositId", type: "uint256" },
+          { name: "amount", type: "uint256" },
+          { name: "to", type: "address" },
+          { name: "paymentMethod", type: "bytes32" },
+          { name: "fiatCurrency", type: "bytes32" },
+          { name: "conversionRate", type: "uint256" },
+          { name: "referrer", type: "address" },
+          { name: "referrerFee", type: "uint256" },
+          { name: "gatingServiceSignature", type: "bytes" },
+          { name: "signatureExpiration", type: "uint256" },
+          { name: "postIntentHook", type: "address" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    name: "cancelIntent",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "intentHash", type: "bytes32" }],
+    outputs: [],
+  },
+  // IntentSignaled event to extract intent hash from logs
+  {
+    name: "IntentSignaled",
+    type: "event",
+    inputs: [
+      { name: "intentHash", type: "bytes32", indexed: true },
+      { name: "escrow", type: "address", indexed: true },
+      { name: "depositId", type: "uint256", indexed: true },
+      { name: "paymentMethod", type: "bytes32", indexed: false },
+      { name: "to", type: "address", indexed: false },
+      { name: "funder", type: "address", indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "fiatCurrency", type: "bytes32", indexed: false },
+      { name: "conversionRate", type: "uint256", indexed: false },
+      { name: "timestamp", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+// ============ Types ============
+
+export type FlowStep =
+  | "select_flow"
+  | "input_all"
+  | "finding_quotes"
+  | "select_maker"
+  | "zkp2p_signal"
+  | "zkp2p_send_venmo"
+  | "zkp2p_verify"
+  | "zkp2p_authenticating"
+  | "zkp2p_select_payment"
+  | "zkp2p_fulfilling"
+  | "router_waiting"
+  | "router_commit"
+  | "freeflo_pending"
+  | "success"
+  | "error";
+
+export interface ZkpQuote {
+  depositId: string;
+  escrowAddress: string;
+  processorName: string;
+  amount: string;
+  toAddress: string;
+  payeeDetails: string;
+  payeeUsername: string; // Human-readable username (e.g., Revolut username)
+  fiatCurrencyCode: string;
+  conversionRate: string;
+  fiatAmount: string;
+  fiatAmountFormatted: string;
+  tokenAmount: string;
+  tokenAmountFormatted: string;
+  paymentMethod: string;
+  // Gating service fields required for signalIntent
+  gatingServiceSignature?: `0x${string}`;
+  signatureExpiration?: string | bigint;
+}
+
+export interface FlowData {
+  usdAmount: number;
+  eurIban: string;
+  recipientName: string;
+  minEurAmount: number;
+
+  // ZKP2P stage
+  zkp2pQuote: ZkpQuote | null;
+  zkp2pIntentHash: `0x${string}` | null;
+  venmoPayee: string;
+  usdcAmount: bigint;
+
+  // Router/FreeFlo stage
+  routerIntentId: `0x${string}` | null;
+  routerIntentCreatedAt: number | null;
+  selectedSolver: `0x${string}` | null;
+  quotedEurAmount: number;
+}
+
+// ============ Hooks ============
+
+// Use production environment for ZKP2P (PostIntentHook now permissionless)
+export const ZKP2P_ENVIRONMENT = 'production' as const;
+
+// Peer's production TEE attestation service — proves the buyer's fiat payment inside
+// the enclave. Distinct from FreeFlo's own offramp attestation service.
+export const PEER_ATTESTATION_URL = 'https://attestation-service.zkp2p.xyz' as const;
+
+export function useZkp2pClient() {
+  const { data: walletClient } = useWalletClient();
+  const chainId = useChainId();
+
+  return useMemo(() => {
+    if (!walletClient) return null;
+    try {
+      // Let SDK handle API routing based on runtimeEnv
+      return new Zkp2pClient({
+        walletClient,
+        chainId,
+        apiKey: process.env.NEXT_PUBLIC_ZKP2P_API_KEY || '',
+        runtimeEnv: ZKP2P_ENVIRONMENT,
+      });
+    } catch {
+      return null;
+    }
+  }, [walletClient, chainId]);
+}
+
+/** Poll eth_getLogs for a specific event instead of useWatchContractEvent */
+export function useLogPoller(
+  enabled: boolean,
+  address: `0x${string}`,
+  eventSignature: string,
+  onLog: (log: Log) => void,
+  intervalMs = 3000,
+) {
+  const publicClient = usePublicClient();
+  const lastBlockRef = useRef<bigint>(BigInt(0));
+  const onLogRef = useRef(onLog);
+  onLogRef.current = onLog;
+
+  useEffect(() => {
+    if (!enabled || !publicClient || !address) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const currentBlock = await publicClient.getBlockNumber();
+        const fromBlock = lastBlockRef.current > BigInt(0)
+          ? lastBlockRef.current + BigInt(1)
+          : currentBlock - BigInt(50); // look back 50 blocks on first poll
+
+        if (fromBlock > currentBlock) return;
+
+        const logs = await publicClient.getLogs({
+          address,
+          event: parseAbiItem(eventSignature) as any,
+          fromBlock,
+          toBlock: currentBlock,
+        });
+
+        lastBlockRef.current = currentBlock;
+
+        for (const log of logs) {
+          if (!cancelled) onLogRef.current(log);
+        }
+      } catch (err) {
+        console.error("Log poll error:", err);
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [enabled, publicClient, address, eventSignature, intervalMs]);
+}
+
+/** Countdown hook: returns seconds remaining from a start timestamp */
+export function useCountdown(startTimestamp: number | null, durationSeconds: number): number {
+  const [remaining, setRemaining] = useState(durationSeconds);
+
+  useEffect(() => {
+    if (!startTimestamp) {
+      setRemaining(durationSeconds);
+      return;
+    }
+
+    const tick = () => {
+      const elapsed = Math.floor(Date.now() / 1000) - startTimestamp;
+      setRemaining(Math.max(0, durationSeconds - elapsed));
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [startTimestamp, durationSeconds]);
+
+  return remaining;
+}
+
+export function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ============ Headless flow hook ============
+
+export function useFiatToFiatFlow() {
+  const { OFFRAMP_V3: OFFRAMP_V3_ADDRESS } = useNetworkAddresses();
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
+  const zkp2pClient = useZkp2pClient();
+
+  // Flow state
+  const [step, setStep] = useState<FlowStep>("select_flow");
+  const [flowData, setFlowData] = useState<FlowData>({
+    usdAmount: 0,
+    eurIban: "",
+    recipientName: "",
+    minEurAmount: 0,
+    zkp2pQuote: null,
+    zkp2pIntentHash: null,
+    venmoPayee: "",
+    usdcAmount: BigInt(0),
+    routerIntentId: null,
+    routerIntentCreatedAt: null,
+    selectedSolver: null,
+    quotedEurAmount: 0,
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  // Form inputs
+  const [usdInput, setUsdInput] = useState("");
+  const [ibanInput, setIbanInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [slippagePercent] = useState(2);
+
+  // Platform and currency selection
+  const [selectedPlatform, setSelectedPlatform] = useState<string>("venmo");
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("USD");
+  const availableCurrencies = useMemo(() => getPlatformCurrencies(selectedPlatform), [selectedPlatform]);
+
+  // Update currency when platform changes (if current currency not supported)
+  useEffect(() => {
+    const platformCurrencies = getPlatformCurrencies(selectedPlatform);
+    if (!platformCurrencies.find(c => c.code === selectedCurrency)) {
+      const defaultCurrency = getDefaultCurrency(selectedPlatform);
+      if (defaultCurrency) {
+        setSelectedCurrency(defaultCurrency.code);
+      }
+    }
+  }, [selectedPlatform, selectedCurrency]);
+
+  // ZKP2P quotes
+  const [zkp2pQuotes, setZkp2pQuotes] = useState<ZkpQuote[]>([]);
+
+  // FreeFlo quotes
+  const [freefloQuotes, setFreefloQuotes] = useState<any[]>([]);
+
+  // Peer extension state
+  const [extensionState, setExtensionState] = useState<string>("unknown");
+
+  // Contract interactions
+  const { writeContract: routerCommit, data: routerCommitHash } = useWriteContract();
+  const { isSuccess: isRouterCommitConfirmed } = useWaitForTransactionReceipt({ hash: routerCommitHash });
+
+  // Local state for signaling and cancelling
+  const [isSignaling, setIsSignaling] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  // OffRampV3 deadline countdown (starts when Router creates the FreeFlo intent)
+  const deadlineRemaining = useCountdown(flowData.routerIntentCreatedAt, OFFRAMP_DEADLINE_SECONDS);
+
+  // Read pending transfer from Router
+  const { data: pendingTransfer, refetch: refetchPendingTransfer } = useReadContract({
+    address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+    abi: FIAT_TO_FIAT_ROUTER_ABI,
+    functionName: "getPendingTransfer",
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  });
+
+  // ---- Persist the in-flight flow across refreshes (keyed by wallet). Without this,
+  // a reload mid-onramp (e.g. to re-detect the extension) wipes the ZKP2P intent while
+  // it's still active on-chain, leaving a stranded "active order" (409 on retry). ----
+  const flowStorageKey = address ? `ff-flow-${address.toLowerCase()}` : null;
+  const rehydratedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!flowStorageKey || rehydratedKeyRef.current === flowStorageKey) return;
+    rehydratedKeyRef.current = flowStorageKey;
+    try {
+      const raw = localStorage.getItem(flowStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw, (_k, v) =>
+        typeof v === "string" && v.startsWith("__bigint__") ? BigInt(v.slice(10)) : v,
+      ) as { step: FlowStep; flowData: FlowData };
+      if (!saved?.flowData?.zkp2pIntentHash && !saved?.flowData?.routerIntentId) return;
+      setFlowData((prev) => ({ ...prev, ...saved.flowData }));
+      // The extension's TEE capture can't survive a reload, so re-enter the proof at
+      // the verify screen — the on-chain intent is still active and re-provable.
+      const proofStage: FlowStep[] = ["zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling"];
+      setStep(proofStage.includes(saved.step) ? "zkp2p_verify" : saved.step);
+    } catch {
+      /* corrupt/unparseable persisted flow — start fresh */
+    }
+  }, [flowStorageKey]);
+
+  useEffect(() => {
+    if (!flowStorageKey) return;
+    if (step === "select_flow" || step === "input_all" || step === "error") return;
+    if (step === "success") { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } return; }
+    try {
+      localStorage.setItem(
+        flowStorageKey,
+        JSON.stringify({ step, flowData }, (_k, v) => (typeof v === "bigint" ? `__bigint__${v.toString()}` : v)),
+      );
+    } catch { /* ignore quota/serialization */ }
+  }, [flowStorageKey, step, flowData]);
+
+  // Resume a pending transfer after a reload / lost flow state: if the connected
+  // wallet already has a PENDING transfer on the router (the onramp hook fired but
+  // the UI state was lost), jump straight to the commit flow so the offramp leg can
+  // still be finished within the selection window.
+  useEffect(() => {
+    if (!pendingTransfer) return;
+    const pt = pendingTransfer as unknown as {
+      intentId: `0x${string}`; usdcAmount: bigint; createdAt: bigint; status: number;
+    };
+    const earlySteps: FlowStep[] = [
+      "select_flow", "input_all", "finding_quotes", "select_maker",
+      "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify",
+      "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
+    ];
+    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    if (Number(pt.status) === 1 && earlySteps.includes(step) && pt.intentId && pt.intentId !== ZERO) {
+      setFlowData((prev) => ({
+        ...prev,
+        routerIntentId: pt.intentId,
+        usdcAmount: BigInt(pt.usdcAmount),
+        routerIntentCreatedAt: Number(pt.createdAt),
+      }));
+      setStep("router_waiting");
+    }
+  }, [pendingTransfer, step]);
+
+  // ============ Event Polling (replaces useWatchContractEvent) ============
+
+  // Poll for Router TransferInitiated event
+  useLogPoller(
+    step === "zkp2p_fulfilling",
+    FIAT_TO_FIAT_ROUTER_ADDRESS,
+    "event TransferInitiated(address indexed user, bytes32 indexed intentId, bytes32 indexed zkp2pIntentHash, uint256 usdcAmount, string iban, string recipientName, uint256 minEurAmount)",
+    useCallback((log: Log) => {
+      const args = (log as any).args;
+      if (args?.user?.toLowerCase() === address?.toLowerCase()) {
+        setFlowData((prev) => ({
+          ...prev,
+          routerIntentId: args.intentId as `0x${string}`,
+          usdcAmount: BigInt(args.usdcAmount),
+          routerIntentCreatedAt: Math.floor(Date.now() / 1000),
+        }));
+        setStep("router_waiting");
+      }
+    }, [address]),
+  );
+
+  // Poll for FreeFlo IntentFulfilled event
+  useLogPoller(
+    step === "freeflo_pending" && !!flowData.routerIntentId,
+    OFFRAMP_V3_ADDRESS,
+    "event IntentFulfilled(bytes32 indexed intentId, address indexed solver, bytes32 transferId, uint256 fiatSent, bool verifiedByZkTLS)",
+    useCallback((log: Log) => {
+      const args = (log as any).args;
+      if (args?.intentId === flowData.routerIntentId) {
+        setStep("success");
+      }
+    }, [flowData.routerIntentId]),
+  );
+
+  // ============ Check Peer Extension ============
+
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  // TEE proof capture from peer.onMetadataMessage: the buyer's recent payment rows
+  // to choose from + the encrypted session material the attestation enclave needs.
+  const [verifyData, setVerifyData] = useState<{
+    rows: { amount?: string; currency?: string; recipient?: string; paymentId?: string; params?: Record<string, string | number | boolean>; originalIndex: number }[];
+    encryptedSessionMaterial: string;
+    platform: string;
+    actionType: string;
+  } | null>(null);
+  const metadataUnsubRef = useRef<(() => void) | null>(null);
+
+  const refreshExtensionState = useCallback(async (): Promise<string> => {
+    try {
+      const state = await getPeerExtensionState();
+      setExtensionState(state);
+      return state;
+    } catch {
+      setExtensionState("needs_install");
+      return "needs_install";
+    }
+  }, []);
+
+  // Detect the Peer extension robustly. PeerAuth injects asynchronously after
+  // load (it mutates <html> post-hydration — hence suppressHydrationWarning), so a
+  // single on-mount check often latches "needs_install" and would need a manual
+  // reload. Instead: poll briefly until the state resolves, AND re-check when the
+  // tab regains focus / becomes visible (e.g. after the user clicks the extension
+  // or returns from the provider tab) — no reload needed.
+  useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      if (cancelled) return;
+      const state = await refreshExtensionState();
+      attempts += 1;
+      const resolved = state === "ready" || state === "needs_connection";
+      if (!resolved && attempts < 12 && !cancelled) {
+        timer = setTimeout(poll, 600); // ~7s of grace for late async injection
+      }
+    };
+    poll();
+
+    const recheck = () => { if (!cancelled) void refreshExtensionState(); };
+    const onVisible = () => { if (document.visibilityState === "visible") recheck(); };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshExtensionState]);
+
+  // Ask the installed extension to authorize this site. The newer PeerAuth (TEE)
+  // build reports "needs_connection" — window.peer is injected but not yet connected
+  // to this origin — until requestConnection() succeeds. Without this step the UI
+  // looked like the extension wasn't installed at all (we only ever showed "install").
+  const connectExtension = useCallback(async () => {
+    if (!isPeerExtensionAvailable()) {
+      setExtensionState("needs_install");
+      setError("Peer extension not found on this tab. Install it (and allow it on localhost), then reload.");
+      return;
+    }
+    setIsConnecting(true);
+    setError(null);
+    try {
+      await createPeerExtensionSdk().requestConnection();
+      await refreshExtensionState();
+    } catch (err) {
+      console.error("Peer connect failed:", err);
+      setError("Could not connect the Peer extension. Open it on this tab to authorize, then retry.");
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [refreshExtensionState]);
+
+  // ============ Quote Fetching ============
+
+  const calculateEstimatedEur = useCallback((usdAmount: number): number => {
+    const usdcEstimate = usdAmount * 0.999; // ~0.1% ZKP2P fee
+    const eurEstimate = usdcEstimate * 0.92; // Approximate USD/EUR rate
+    return Math.floor(eurEstimate * 100) / 100;
+  }, []);
+
+  // Fetch ZKP2P quotes via server-side proxy (avoids CORS)
+  const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
+    if (!address) {
+      return [];
+    }
+
+    try {
+
+      // Use server-side proxy to avoid CORS issues with ZKP2P API
+      const params = new URLSearchParams({
+        amount: fiatAmount.toString(),
+        fiatCurrency: currency,
+        user: address,
+        recipient: address,
+        destinationChainId: chainId.toString(),
+        destinationToken: USDC_MAINNET_ADDRESS,
+        paymentPlatforms: platform,
+        isExactFiat: "true",
+        quotesToReturn: "10",
+      });
+
+      const response = await fetch(`/api/zkp2p-quote?${params}`);
+      const data = await response.json();
+
+
+      if (!response.ok) {
+        console.error("Proxy quote error:", data);
+        return [];
+      }
+
+      // ZKP2P API wraps response in responseObject
+      const responseData = data.responseObject || data;
+      const quotes = responseData.quotes || responseData.nearbySuggestions || [];
+
+      if (!quotes || quotes.length === 0) {
+        return [];
+      }
+
+      // Map API response to our ZkpQuote interface
+      const mapped: ZkpQuote[] = quotes.map((q: any) => {
+        // The readable handle the buyer must pay (e.g. a Revolut/Venmo username) lives
+        // in the quote's curator-registered `payeeData.offchainId`. The previous
+        // `maker.depositData.*Username` path does NOT exist on the /v2/quote response,
+        // so it always fell back to "" → the send screen rendered "@unknown".
+        // `intent.payeeDetails` is the HASHED on-chain id (kept for the gating call and
+        // for the apiGetPayeeDetails fallback when a maker has no curated payeeData).
+        const payeeUsername: string =
+          q.payeeData?.offchainId
+          || q.payeeData?.telegramUsername
+          || "";
+
+        return {
+          depositId: q.intent?.depositId?.toString() || q.depositId?.toString() || "",
+          escrowAddress: q.intent?.escrowAddress || q.escrowAddress || ZKP2P_V3_ESCROW,
+          processorName: q.intent?.processorName || q.processorName || platform,
+          amount: q.intent?.amount?.toString() || q.amount?.toString() || "",
+          toAddress: q.intent?.toAddress || q.toAddress || address,
+          payeeDetails: q.intent?.payeeDetails || q.payeeDetails || "",
+          payeeUsername,
+          fiatCurrencyCode: q.intent?.fiatCurrencyCode || q.fiatCurrencyCode || currency,
+          conversionRate: q.conversionRate?.toString() || "",
+          fiatAmount: q.fiatAmount?.toString() || "",
+          fiatAmountFormatted: q.fiatAmountFormatted || `${fiatAmount.toFixed(2)} ${currency}`,
+          tokenAmount: q.tokenAmount?.toString() || "",
+          tokenAmountFormatted: q.tokenAmountFormatted || "",
+          paymentMethod: q.paymentMethod || "",
+          gatingServiceSignature: q.gatingServiceSignature,
+          signatureExpiration: q.signatureExpiration,
+        };
+      });
+
+      setZkp2pQuotes(mapped);
+      return mapped;
+    } catch (err) {
+      console.error("Proxy getQuote failed:", err);
+      return [];
+    }
+  }, [address, chainId]);
+
+  // Fetch FreeFlo solver quotes
+  const fetchFreefloQuotes = useCallback(async (usdcAmount: bigint) => {
+    try {
+      const amountNum = Number(usdcAmount) / 1_000_000;
+      const response = await fetch(`/api/quote?amount=${amountNum}&currency=EUR`);
+      if (response.ok) {
+        const data = await response.json();
+        setFreefloQuotes(data.quotes || []);
+        return data.quotes || [];
+      }
+    } catch (err) {
+      console.error("Failed to fetch FreeFlo quotes:", err);
+    }
+    return [];
+  }, []);
+
+  // Encode hook payload for ZKP2P signalIntent data field
+  const encodeHookPayload = useCallback((iban: string, recipientName: string, minEurAmount: bigint): `0x${string}` => {
+    // Single tuple matching the contract's HookPayload struct (not three flat
+    // params — that layout makes the contract's abi.decode revert).
+    return encodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "iban", type: "string" },
+            { name: "recipientName", type: "string" },
+            { name: "minEurAmount", type: "uint256" },
+          ],
+        },
+      ],
+      [{ iban, recipientName, minEurAmount }]
+    );
+  }, []);
+
+  // ============ Flow Handlers ============
+
+  const handleStart = () => {
+    setStep("input_all");
+  };
+
+  const handleInputSubmit = async () => {
+    const amount = parseFloat(usdInput);
+    if (isNaN(amount) || amount <= 0) {
+      setError("Please enter a valid amount");
+      return;
+    }
+    if (!ibanInput || ibanInput.length < 15) {
+      setError("Please enter a valid IBAN");
+      return;
+    }
+    if (!nameInput || nameInput.length < 2) {
+      setError("Please enter the recipient name");
+      return;
+    }
+
+    const estimatedEur = calculateEstimatedEur(amount);
+    const minEur = estimatedEur * (1 - slippagePercent / 100);
+
+    setFlowData((prev) => ({
+      ...prev,
+      usdAmount: amount,
+      eurIban: ibanInput,
+      recipientName: nameInput,
+      minEurAmount: minEur,
+    }));
+
+    setStep("finding_quotes");
+    setError(null);
+
+    const quotes = await fetchZkp2pQuotes(amount, selectedPlatform, selectedCurrency);
+    if (quotes.length > 0) {
+      setStep("select_maker");
+    } else {
+      const platformName = PLATFORMS[selectedPlatform]?.name || selectedPlatform;
+      setError(`No ${platformName} makers available for this amount. Try a different amount or platform.`);
+      setStep("input_all");
+    }
+  };
+
+  const handleSelectMaker = (quote: ZkpQuote) => {
+    const usdcAmount = BigInt(quote.tokenAmount);
+    setFlowData((prev) => ({
+      ...prev,
+      zkp2pQuote: quote,
+      usdcAmount,
+      venmoPayee: quote.payeeDetails,
+    }));
+    setStep("zkp2p_signal");
+
+    // The handle usually arrives on the quote (payeeData.offchainId). If this maker
+    // has no curated payee data, resolve it from the hashed on-chain id so the send
+    // screen shows who to pay instead of "@unknown". Only the selected maker is
+    // resolved (not all 10 quotes), and only when the handle is actually missing.
+    if (!quote.payeeUsername && quote.payeeDetails && quote.processorName) {
+      void resolvePayeeUsername(quote);
+    }
+  };
+
+  // Lazily fetch a maker's readable handle via the server proxy (GET /v2/makers/...)
+  // and patch it onto the in-flight quote. Best-effort: a failure leaves the neutral
+  // fallback label rather than blocking the flow.
+  const resolvePayeeUsername = useCallback(async (quote: ZkpQuote) => {
+    try {
+      const params = new URLSearchParams({
+        processorName: quote.processorName,
+        hashedOnchainId: quote.payeeDetails,
+      });
+      const res = await fetch(`/api/zkp2p-payee?${params}`);
+      if (!res.ok) return;
+      const { offchainId } = (await res.json()) as { offchainId?: string };
+      if (!offchainId) return;
+      setFlowData((prev) =>
+        prev.zkp2pQuote?.depositId === quote.depositId
+          ? { ...prev, zkp2pQuote: { ...prev.zkp2pQuote, payeeUsername: offchainId } }
+          : prev,
+      );
+    } catch {
+      /* keep the neutral fallback; the send screen still works */
+    }
+  }, []);
+
+  // Fetch gating signature via server-side proxy (keeps API key secret)
+  const fetchGatingSignature = async (params: {
+    depositId: string;
+    amount: string;
+    toAddress: string;
+    processorName: string;
+    payeeDetails: string;
+    fiatCurrencyCode: string;
+    conversionRate: string;
+    escrowAddress: string;
+    paymentMethod: string; // bytes32 hash from quote
+    postIntentHook: string; // Router address for hook
+    data: string; // Encoded hook payload
+  }): Promise<{ signature: `0x${string}`; expiration: string; referralFees: { recipient: `0x${string}`; fee: string }[] } | null> => {
+    // Resolve payment method and fiat currency hashes (same as SDK does)
+    const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
+    const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
+    const fiatCurrencyHash = resolveFiatCurrencyBytes32(params.fiatCurrencyCode);
+
+    const requestBody = {
+      processorName: params.processorName,
+      payeeDetails: params.payeeDetails,
+      depositId: params.depositId,
+      amount: params.amount,
+      toAddress: params.toAddress,
+      paymentMethod: paymentMethodHash,
+      fiatCurrency: fiatCurrencyHash,
+      conversionRate: params.conversionRate,
+      chainId: chainId.toString(),
+      escrowAddress: params.escrowAddress,
+      postIntentHook: params.postIntentHook,
+      data: params.data,
+    };
+
+
+    try {
+      // Use server-side proxy to keep API key secret
+      const response = await fetch('/api/zkp2p-gating', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        console.error("Gating API error:", response.status, result);
+        return null;
+      }
+
+
+      return {
+        signature: result.signature as `0x${string}`,
+        expiration: result.expiration,
+        referralFees: result.referralFees ?? [],
+      };
+    } catch (err) {
+      console.error("Failed to fetch gating signature:", err);
+      return null;
+    }
+  };
+
+  const handleSignalIntent = async () => {
+    if (!address || !flowData.zkp2pQuote || !zkp2pClient) return;
+
+    const quote = flowData.zkp2pQuote;
+
+    // Encode SEPA details as hook payload
+    const hookPayload = encodeHookPayload(
+      flowData.eurIban,
+      flowData.recipientName,
+      BigInt(Math.floor(flowData.minEurAmount * 100)), // EUR cents
+    );
+
+    setIsSignaling(true);
+    setError(null);
+
+    try {
+      // Fetch gating signature via our server-side proxy
+      const gatingResult = await fetchGatingSignature({
+        depositId: quote.depositId,
+        amount: quote.amount,
+        toAddress: address,
+        processorName: quote.processorName,
+        payeeDetails: quote.payeeDetails,
+        fiatCurrencyCode: quote.fiatCurrencyCode,
+        conversionRate: quote.conversionRate,
+        escrowAddress: quote.escrowAddress,
+        paymentMethod: quote.paymentMethod,
+        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        data: hookPayload,
+      });
+
+      if (!gatingResult) {
+        throw new Error("Failed to fetch gating signature from API");
+      }
+
+      const gatingSignature = gatingResult.signature;
+      const signatureExpiration = gatingResult.expiration;
+
+      const hash = await zkp2pClient.signalIntent({
+        depositId: BigInt(quote.depositId),
+        amount: BigInt(quote.amount),
+        toAddress: address,
+        processorName: quote.processorName,
+        payeeDetails: quote.payeeDetails,
+        fiatCurrencyCode: quote.fiatCurrencyCode,
+        conversionRate: BigInt(quote.conversionRate),
+        escrowAddress: quote.escrowAddress as `0x${string}`,
+        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        data: hookPayload,
+        // Submit the EXACT referral fees the gating service signed (ZKP2P injects a
+        // mandatory protocol fee) — otherwise the orchestrator reverts InvalidSignature().
+        referralFees: (gatingResult.referralFees ?? []).map((f) => ({
+          recipient: f.recipient as `0x${string}`,
+          fee: BigInt(f.fee),
+        })),
+        gatingServiceSignature: gatingSignature,
+        signatureExpiration: BigInt(signatureExpiration),
+      });
+
+
+      if (hash && publicClient) {
+        // Wait for receipt and extract the actual intent hash from logs
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` });
+
+        // Find IntentSignaled event - intent hash is in topics[1]
+        const intentSignaledLog = receipt.logs.find(
+          (log) => log.address.toLowerCase() === ZKP2P_V3_ORCHESTRATOR.toLowerCase() &&
+                   log.topics[0] === "0xf8c114f83581b2cf0b9f130782a93024aa8933e7d188901156bd68bdd558a20a" // IntentSignaled event signature
+        );
+
+        if (intentSignaledLog && intentSignaledLog.topics[1]) {
+          const intentHash = intentSignaledLog.topics[1] as `0x${string}`;
+          setFlowData((prev) => ({ ...prev, zkp2pIntentHash: intentHash }));
+        } else {
+          // Fallback to tx hash if we can't find the event
+          setFlowData((prev) => ({ ...prev, zkp2pIntentHash: hash as `0x${string}` }));
+        }
+        setStep("zkp2p_send_venmo");
+      }
+    } catch (err: any) {
+      console.error("Signal intent failed:", err);
+      console.error("Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
+
+      // Check if it's a 409 conflict (active intent exists)
+      const errorMsg = err.message || "Unknown error";
+      if (errorMsg.includes("409") || errorMsg.includes("active order")) {
+        setError("You have an active intent. Cancel it first or wait for it to expire.");
+      } else {
+        setError(`Failed to signal intent: ${errorMsg}`);
+      }
+    } finally {
+      setIsSignaling(false);
+    }
+  };
+
+  const handleCancelIntent = async () => {
+    if (!flowData.zkp2pIntentHash || !walletClient || !publicClient) {
+      setError("No active intent to cancel");
+      return;
+    }
+
+    setIsCancelling(true);
+    setError(null);
+
+    try {
+
+      const { request } = await publicClient.simulateContract({
+        address: ZKP2P_V3_ORCHESTRATOR,
+        abi: ORCHESTRATOR_ABI,
+        functionName: "cancelIntent",
+        args: [flowData.zkp2pIntentHash],
+        account: walletClient.account,
+      });
+
+      const txHash = await walletClient.writeContract(request);
+
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      // Reset flow state
+      setFlowData((prev) => ({ ...prev, zkp2pIntentHash: null, zkp2pQuote: null }));
+      setStep("select_maker");
+      setError(null);
+    } catch (err: any) {
+      console.error("Cancel intent failed:", err);
+      setError(`Failed to cancel intent: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const handleVenmoSent = () => {
+    setStep("zkp2p_verify");
+  };
+
+  const handleVerifyPayment = () => {
+    const intentHash = flowData.zkp2pIntentHash;
+    if (!intentHash) {
+      setError("No ZKP2P intent to verify — signal an intent first.");
+      return;
+    }
+
+    // Guard: the Peer extension drives proof generation + fulfillIntent. If it
+    // isn't installed/connected, DON'T silently advance into an unobservable
+    // poll loop (the old bug) — surface it and let the user install/refresh.
+    if (extensionState !== "ready") {
+      setError(
+        extensionState === "needs_install" || extensionState === "unknown"
+          ? "Peer extension not detected on this tab. Install it (and allow it on localhost), then reload."
+          : "Peer extension isn't connected yet — click Connect below, approve in the extension, then Verify."
+      );
+      return;
+    }
+
+    setError(null);
+
+    const platform = (flowData.zkp2pQuote?.processorName || "revolut").toLowerCase();
+    const actionType = `transfer_${platform}`;
+
+    try {
+      const peer = createPeerExtensionSdk();
+
+      // The extension performs the provider sign-in + buyer-TEE capture, then posts
+      // back the encrypted session material + the user's recent payments here. We
+      // render those for selection and build the proof ourselves (the app owns the
+      // intent lifecycle in the TEE/redirect model).
+      metadataUnsubRef.current?.();
+      metadataUnsubRef.current = peer.onMetadataMessage((message) => {
+        if (message.errorMessage) {
+          setError(`Peer capture failed: ${message.errorMessage}`);
+          setStep("zkp2p_verify");
+          return;
+        }
+        const rows = (message.metadata || [])
+          .filter((r) => !r.hidden)
+          .map((r) => ({
+            amount: r.amount, currency: r.currency, recipient: r.recipient,
+            paymentId: r.paymentId, params: r.params, originalIndex: r.originalIndex,
+          }));
+        const cap = message.buyerTeeCapture?.encryptedSessionMaterial || "";
+        // Show rows as soon as they arrive; retain the capture across messages in
+        // case rows and the encrypted session material come separately.
+        if (rows.length === 0 && !cap) return;
+        setVerifyData((prev) => ({
+          rows: rows.length ? rows : (prev?.rows ?? []),
+          encryptedSessionMaterial: cap || prev?.encryptedSessionMaterial || "",
+          platform,
+          actionType,
+        }));
+        setStep("zkp2p_select_payment");
+      });
+
+      peer.authenticate({
+        actionType,
+        platform,
+        captureMode: "buyerTee",
+        attestationServiceUrl: PEER_ATTESTATION_URL,
+        attestationActionType: actionType,
+      });
+      setStep("zkp2p_authenticating");
+    } catch (err) {
+      console.error("Peer authenticate failed:", err);
+      setError("Could not open the Peer extension. Make sure it's installed and connected, then retry.");
+    }
+  };
+
+  // Build the buyer-TEE proof from the selected payment and submit fulfillIntent. The
+  // SDK requests the attestation from Peer's enclave and sends the on-chain tx, which
+  // runs our post-intent hook (FiatToFiatRouter.execute) → TransferInitiated.
+  const handleSelectAndFulfill = async (
+    row: NonNullable<typeof verifyData>["rows"][number],
+  ) => {
+    const intentHash = flowData.zkp2pIntentHash;
+    if (!intentHash || !verifyData || !zkp2pClient) return;
+    setError(null);
+    setStep("zkp2p_fulfilling");
+    try {
+      const proof: Record<string, unknown> = {
+        proofType: "buyerTee",
+        encryptedSessionMaterial: verifyData.encryptedSessionMaterial,
+        params: { ...(row.params || {}), index: row.originalIndex },
+        actionPlatform: verifyData.platform,
+        actionType: verifyData.actionType,
+      };
+      await zkp2pClient.fulfillIntent({
+        intentHash,
+        proof,
+        attestationServiceUrl: PEER_ATTESTATION_URL,
+      });
+      // Fulfilled → hook fired. The TransferInitiated poller advances to router_waiting.
+    } catch (err: any) {
+      console.error("fulfillIntent failed:", err);
+      setError(`Verification failed: ${err?.message || "unknown error"}. Pick the payment again or retry.`);
+      setStep("zkp2p_select_payment");
+    }
+  };
+
+  // Poll for FreeFlo quotes when in router_waiting
+  useEffect(() => {
+    if (step !== "router_waiting" || !flowData.routerIntentId) return;
+
+    const pollQuotes = async () => {
+      // Use the router's on-chain amount as source of truth — flowData.usdcAmount can
+      // be 0 after a localStorage resume (it isn't restored there).
+      const ptAmt = pendingTransfer
+        ? BigInt((pendingTransfer as { usdcAmount: bigint }).usdcAmount)
+        : BigInt(0);
+      const quotes = await fetchFreefloQuotes(ptAmt > BigInt(0) ? ptAmt : flowData.usdcAmount);
+      const best = quotes[0];
+      // /api/quote returns fiatAmount in euros (not outputAmount). Guard against a
+      // missing/NaN amount so we never advance to commit with a bad figure.
+      const eur = Number(best?.fiatAmount);
+      if (best?.solver?.address && Number.isFinite(eur) && eur > 0) {
+        setFlowData((prev) => ({
+          ...prev,
+          selectedSolver: best.solver.address,
+          quotedEurAmount: eur,
+        }));
+        setStep("router_commit");
+      }
+    };
+
+    const interval = setInterval(pollQuotes, 2000);
+    pollQuotes();
+    return () => clearInterval(interval);
+  }, [step, flowData.routerIntentId, flowData.usdcAmount, pendingTransfer, fetchFreefloQuotes]);
+
+  // Handle Router commit
+  const handleRouterCommit = () => {
+    if (!flowData.selectedSolver) return;
+
+    routerCommit({
+      address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+      abi: FIAT_TO_FIAT_ROUTER_ABI,
+      functionName: "commit",
+      // commit(address solver) — slippage is now enforced on-chain against the
+      // real quote, so no caller-supplied EUR amount is passed.
+      args: [flowData.selectedSolver],
+    });
+  };
+
+  // Watch for commit confirmation
+  useEffect(() => {
+    if (isRouterCommitConfirmed && step === "router_commit") {
+      setStep("freeflo_pending");
+    }
+  }, [isRouterCommitConfirmed, step]);
+
+  // ============ Format Helpers ============
+
+  const formatUsd = (amount: number) => `$${amount.toFixed(2)}`;
+  const formatEur = (amount: number) => `€${amount.toFixed(2)}`;
+  const formatUsdc = (amount: bigint) => `${(Number(amount) / 1_000_000).toFixed(2)} USDC`;
+  // Prefix the handle with "@" once (offchainId may already include it); neutral
+  // fallback instead of the old alarming "@Unknown" when no handle resolved.
+  const formatPayee = (handle?: string): string => {
+    const h = (handle || "").trim();
+    if (!h) return "seller (handle unavailable)";
+    return h.startsWith("@") ? h : `@${h}`;
+  };
+
+  const getProgress = (): { stage: 1 | 2; percent: number; label: string } => {
+    const stage1Steps = ["input_all", "finding_quotes", "select_maker", "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify", "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling"];
+    const stage2Steps = ["router_waiting", "router_commit", "freeflo_pending"];
+
+    if (stage1Steps.includes(step)) {
+      const idx = stage1Steps.indexOf(step);
+      return { stage: 1, percent: ((idx + 1) / stage1Steps.length) * 100, label: "Venmo USD → USDC" };
+    } else if (stage2Steps.includes(step)) {
+      const idx = stage2Steps.indexOf(step);
+      return { stage: 2, percent: ((idx + 1) / stage2Steps.length) * 100, label: "USDC → SEPA EUR" };
+    }
+    return { stage: 1, percent: 0, label: "Getting started" };
+  };
+
+  const progress = getProgress();
+
+  const resetFlow = () => {
+    setStep("select_flow");
+    setFlowData({
+      usdAmount: 0, eurIban: "", recipientName: "", minEurAmount: 0,
+      zkp2pQuote: null, zkp2pIntentHash: null, venmoPayee: "", usdcAmount: BigInt(0),
+      routerIntentId: null, routerIntentCreatedAt: null, selectedSolver: null, quotedEurAmount: 0,
+    });
+    setUsdInput("");
+    setIbanInput("");
+    setNameInput("");
+    setSelectedPlatform("venmo");
+    setVerifyData(null);
+    metadataUnsubRef.current?.();
+    metadataUnsubRef.current = null;
+    setSelectedCurrency("USD");
+    setError(null);
+    if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
+  };
+
+  // The view references every name below verbatim (destructured 1:1), so the JSX needs
+  // no edits. State, setters, derived values, formatters, handlers, and wallet flags.
+  return {
+    // wallet / connection
+    address,
+    isConnected,
+    // flow state
+    step,
+    setStep,
+    flowData,
+    error,
+    setError,
+    extensionState,
+    isSignaling,
+    isCancelling,
+    isConnecting,
+    zkp2pQuotes,
+    verifyData,
+    // form inputs (controlled)
+    usdInput,
+    setUsdInput,
+    ibanInput,
+    setIbanInput,
+    nameInput,
+    setNameInput,
+    selectedPlatform,
+    setSelectedPlatform,
+    selectedCurrency,
+    setSelectedCurrency,
+    availableCurrencies,
+    slippagePercent,
+    // derived
+    progress,
+    deadlineRemaining,
+    // formatters / pure helpers
+    formatUsd,
+    formatEur,
+    formatUsdc,
+    formatPayee,
+    formatCountdown,
+    calculateEstimatedEur,
+    // handlers
+    handleStart,
+    handleInputSubmit,
+    handleSelectMaker,
+    handleSignalIntent,
+    handleVenmoSent,
+    handleVerifyPayment,
+    handleSelectAndFulfill,
+    handleCancelIntent,
+    handleRouterCommit,
+    connectExtension,
+    resetFlow,
+  };
+}
+
+export type FiatToFiatFlowApi = ReturnType<typeof useFiatToFiatFlow>;

@@ -19,7 +19,7 @@ export default function FiatToFiatPage() {
         overflow: "hidden",
       }}
     >
-      <Background variant="blue" />
+      <Background variant="emerald" />
 
       <Box
         sx={{
@@ -53,7 +53,7 @@ export default function FiatToFiatPage() {
                       sx={{
                         width: 8,
                         height: 8,
-                        bgcolor: "#60a5fa",
+                        bgcolor: "#34d399",
                         borderRadius: "50%",
                         animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
                         "@keyframes pulse": {
@@ -66,7 +66,7 @@ export default function FiatToFiatPage() {
                       component="span"
                       sx={{
                         fontSize: "0.75rem",
-                        color: "#60a5fa",
+                        color: "#34d399",
                         fontWeight: 500,
                       }}
                     >
@@ -75,8 +75,8 @@ export default function FiatToFiatPage() {
                   </Box>
                 }
                 sx={{
-                  bgcolor: "rgba(59, 130, 246, 0.1)",
-                  border: "1px solid rgba(59, 130, 246, 0.2)",
+                  bgcolor: "rgba(16, 185, 129, 0.1)",
+                  border: "1px solid rgba(16, 185, 129, 0.2)",
                   borderRadius: "9999px",
                   mb: 2,
                   height: "auto",
@@ -100,12 +100,12 @@ export default function FiatToFiatPage() {
                 <Box
                   component="span"
                   sx={{
-                    background: "linear-gradient(to right, #60a5fa, #34d399)",
+                    background: "linear-gradient(to right, #6ee7b7, #34d399)",
                     WebkitBackgroundClip: "text",
                     WebkitTextFillColor: "transparent",
                   }}
                 >
-                  Venmo
+                  Fiat
                 </Box>
                 {" to "}
                 <Box
@@ -116,7 +116,7 @@ export default function FiatToFiatPage() {
                     WebkitTextFillColor: "transparent",
                   }}
                 >
-                  SEPA
+                  Fiat
                 </Box>
               </Typography>
 
@@ -128,8 +128,8 @@ export default function FiatToFiatPage() {
                   mx: "auto",
                 }}
               >
-                Send USD from Venmo and receive EUR in any European bank account.
-                Trustless, fast, and low-cost.
+                Pay from the app you already use and receive EUR in any European
+                bank account. Trustless, fast, and low-cost.
               </Typography>
             </Box>
 
@@ -161,7 +161,7 @@ export default function FiatToFiatPage() {
                       width: 32,
                       height: 32,
                       borderRadius: 2,
-                      bgcolor: "rgba(59, 130, 246, 0.2)",
+                      bgcolor: "rgba(16, 185, 129, 0.2)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -169,7 +169,7 @@ export default function FiatToFiatPage() {
                   >
                     <Typography
                       sx={{
-                        color: "#60a5fa",
+                        color: "#34d399",
                         fontWeight: 700,
                         fontSize: "0.875rem",
                       }}
@@ -188,7 +188,7 @@ export default function FiatToFiatPage() {
                   </Typography>
                 </Box>
                 <Typography sx={{ fontSize: "0.75rem", color: "#71717a" }}>
-                  Convert Venmo USD to USDC using zero-knowledge proofs
+                  Convert your fiat payment into USDC, trustlessly
                 </Typography>
               </Card>
 

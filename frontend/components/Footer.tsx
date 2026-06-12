@@ -45,7 +45,7 @@ export function Footer({ variant = "default" }: FooterProps) {
             variant="caption"
             sx={{ color: "#52525b", display: { xs: "none", md: "inline" } }}
           >
-            {variant === "venmo" ? "Venmo (US) \u2192 SEPA (EU)" : "SEPA \u2022 FPS \u2022 PIX \u2022 UPI \u2022 FedNow"}
+            {variant === "venmo" ? "Fiat \u2192 SEPA EUR" : "SEPA \u2022 FPS \u2022 PIX \u2022 UPI \u2022 FedNow"}
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
