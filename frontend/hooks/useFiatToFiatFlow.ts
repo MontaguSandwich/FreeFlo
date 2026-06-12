@@ -444,6 +444,30 @@ export function useFiatToFiatFlow() {
     }, [flowData.routerIntentId]),
   );
 
+  // Detect an EXTERNAL commit (the solver/relayer called commitFor on the user's
+  // behalf — the gasless 3->2 path). Active while we'd otherwise wait for / show the
+  // manual commit; on TransferCommitted for our intent we skip straight to the
+  // pending screen. The manual commit (handleRouterCommit) stays as the fallback
+  // when no relayer is running, so this poller is purely additive.
+  useLogPoller(
+    (step === "router_waiting" || step === "router_commit") && !!flowData.routerIntentId,
+    FIAT_TO_FIAT_ROUTER_ADDRESS,
+    "event TransferCommitted(address indexed user, bytes32 indexed intentId, address solver, uint256 eurAmount)",
+    useCallback((log: Log) => {
+      const args = (log as any).args;
+      if (args?.intentId === flowData.routerIntentId) {
+        setFlowData((prev) => ({
+          ...prev,
+          selectedSolver: (args.solver as `0x${string}`) ?? prev.selectedSolver,
+          // eurAmount is on-chain cents; keep any euro figure we already resolved.
+          quotedEurAmount:
+            prev.quotedEurAmount > 0 ? prev.quotedEurAmount : Number(args.eurAmount) / 100,
+        }));
+        setStep("freeflo_pending");
+      }
+    }, [flowData.routerIntentId]),
+  );
+
   // ============ Check Peer Extension ============
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -1099,6 +1123,7 @@ export function useFiatToFiatFlow() {
   useEffect(() => {
     if (step !== "router_waiting" || !flowData.routerIntentId) return;
 
+    let cancelled = false;
     const pollQuotes = async () => {
       // Use the router's on-chain amount as source of truth — flowData.usdcAmount can
       // be 0 after a localStorage resume (it isn't restored there).
@@ -1106,6 +1131,9 @@ export function useFiatToFiatFlow() {
         ? BigInt((pendingTransfer as { usdcAmount: bigint }).usdcAmount)
         : BigInt(0);
       const quotes = await fetchFreefloQuotes(ptAmt > BigInt(0) ? ptAmt : flowData.usdcAmount);
+      // A relayer may have committed (advancing us to freeflo_pending) while this fetch
+      // was in flight — don't yank the step back to router_commit.
+      if (cancelled) return;
       const best = quotes[0];
       // /api/quote returns fiatAmount in euros (not outputAmount). Guard against a
       // missing/NaN amount so we never advance to commit with a bad figure.
@@ -1122,7 +1150,10 @@ export function useFiatToFiatFlow() {
 
     const interval = setInterval(pollQuotes, 2000);
     pollQuotes();
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [step, flowData.routerIntentId, flowData.usdcAmount, pendingTransfer, fetchFreefloQuotes]);
 
   // Handle Router commit
