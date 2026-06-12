@@ -8,33 +8,37 @@ import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import { ff, ffRamps } from "@/lib/theme";
 import { type RTPNQuote, CURRENCIES } from "@/lib/quotes";
 
 // ---------------------------------------------------------------------------
 // Speed configuration
+//
+// instant keeps the emerald→teal brand spine (the unchanged brand tokens);
+// fast/standard map to the warning + neutral token ramps.
 // ---------------------------------------------------------------------------
 
 const SPEED_GRADIENT: Record<string, string> = {
-  instant: "linear-gradient(to right, #10b981, #14b8a6)", // emerald -> teal
-  fast: "linear-gradient(to right, #f59e0b, #f97316)",    // amber -> orange
-  standard: "linear-gradient(to right, #71717a, #52525b)", // zinc-500 -> zinc-600
+  instant: `linear-gradient(to right, ${ffRamps.emerald[500]}, ${ffRamps.teal[500]})`, // brand spine
+  fast: `linear-gradient(to right, ${ffRamps.amber[500]}, #f97316)`, // amber -> orange
+  standard: `linear-gradient(to right, ${ffRamps.ink[500]}, ${ffRamps.ink[600]})`, // zinc-500 -> zinc-600
 };
 
 const SPEED_CHIP: Record<string, { label: string; bg: string; color: string }> = {
   instant: {
     label: "Instant",
     bg: "rgba(16, 185, 129, 0.12)",
-    color: "#34d399",
+    color: ff.brandStrong,
   },
   fast: {
     label: "Fast",
     bg: "rgba(245, 158, 11, 0.12)",
-    color: "#fbbf24",
+    color: ff.warning,
   },
   standard: {
     label: "Standard",
     bg: "rgba(113, 113, 122, 0.18)",
-    color: "#a1a1aa",
+    color: ff.textSecondary,
   },
 };
 
@@ -61,30 +65,24 @@ export function QuoteCard({ quote, isSelected, onSelect }: QuoteCardProps) {
 
   return (
     <Card
-      sx={{
+      sx={(t) => ({
         position: "relative",
         overflow: "hidden",
-        borderRadius: 3,
+        borderRadius: `${t.ff.radius.lg}px`,
         border: "1px solid",
-        borderColor: isSelected
-          ? "rgba(16, 185, 129, 0.6)"
-          : "rgba(39, 39, 42, 0.8)",
-        bgcolor: isSelected
-          ? "rgba(16, 185, 129, 0.04)"
-          : "rgba(24, 24, 27, 0.5)",
+        borderColor: isSelected ? t.ff.borderActive : t.ff.border,
+        bgcolor: isSelected ? "rgba(16, 185, 129, 0.04)" : t.ff.surface2,
         opacity: isExpired ? 0.45 : 1,
-        transition: "all 0.2s ease",
+        transition: `all ${t.ff.motion.base} ${t.ff.motion.ease}`,
         "&:hover": isExpired
           ? {}
           : {
-              borderColor: isSelected
-                ? "rgba(16, 185, 129, 0.6)"
-                : "rgba(63, 63, 70, 0.8)",
+              borderColor: isSelected ? t.ff.borderActive : t.ff.borderStrong,
               bgcolor: isSelected
                 ? "rgba(16, 185, 129, 0.06)"
-                : "rgba(39, 39, 42, 0.4)",
+                : t.ff.surface3,
             },
-      }}
+      })}
     >
       {/* Top gradient speed line */}
       <Box
@@ -195,7 +193,7 @@ export function QuoteCard({ quote, isSelected, onSelect }: QuoteCardProps) {
             </Typography>
             <Typography
               variant="caption"
-              sx={{ color: "#fbbf24", fontSize: "0.7rem" }}
+              sx={{ color: (t) => t.ff.warning, fontSize: "0.7rem" }}
             >
               {"★"}
               {quote.solver.rating}
@@ -223,7 +221,7 @@ export function QuoteCard({ quote, isSelected, onSelect }: QuoteCardProps) {
           }}
         >
           <CheckCircleIcon
-            sx={{ fontSize: 18, color: "#10b981" }}
+            sx={{ fontSize: 18, color: (t) => t.ff.brand }}
           />
         </Box>
       )}
@@ -238,13 +236,12 @@ export function QuoteCard({ quote, isSelected, onSelect }: QuoteCardProps) {
 export function QuoteCardSkeleton() {
   return (
     <Card
-      sx={{
+      sx={(t) => ({
         p: 1.5,
-        borderRadius: 3,
-        border: "1px solid",
-        borderColor: "rgba(39, 39, 42, 0.8)",
-        bgcolor: "rgba(24, 24, 27, 0.5)",
-      }}
+        borderRadius: `${t.ff.radius.lg}px`,
+        border: `1px solid ${t.ff.border}`,
+        bgcolor: t.ff.surface2,
+      })}
     >
       {/* Row 1 */}
       <Box
@@ -326,8 +323,8 @@ export function NoQuotesMessage({ currency }: NoQuotesMessageProps) {
         sx={{
           width: 40,
           height: 40,
-          borderRadius: 2.5,
-          bgcolor: "rgba(39, 39, 42, 0.8)",
+          borderRadius: (t) => `${t.ff.radius.md}px`,
+          bgcolor: (t) => t.ff.surface2,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -335,12 +332,12 @@ export function NoQuotesMessage({ currency }: NoQuotesMessageProps) {
         }}
       >
         <DescriptionOutlinedIcon
-          sx={{ fontSize: 20, color: "#52525b" }}
+          sx={{ fontSize: 20, color: (t) => t.ff.textDisabled }}
         />
       </Box>
       <Typography
         variant="caption"
-        sx={{ color: "text.secondary" }}
+        sx={{ color: (t) => t.ff.textSecondary }}
       >
         No quotes available for {currency}
       </Typography>

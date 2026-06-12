@@ -6,13 +6,10 @@ import { formatUnits, parseUnits } from "viem";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
-import Button from "@mui/material/Button";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
-import Alert from "@mui/material/Alert";
 import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
-import Card from "@mui/material/Card";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
 import HistoryIcon from "@mui/icons-material/History";
 import IconButton from "@mui/material/IconButton";
@@ -22,6 +19,7 @@ import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useApproveUSDC } from "@/hooks/useApproveUSDC";
+import { FlowCard, PrimaryButton, ProviderGlyph } from "@/components/fiat-to-fiat/ui";
 import { QuoteCard, QuoteCardSkeleton, NoQuotesMessage } from "./QuoteCard";
 import { TransactionHistory } from "./TransactionHistory";
 import { useHistoryUiStore } from "@/stores/historyUiStore";
@@ -172,13 +170,10 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
 
   // ---- Render ----------------------------------------------------------
   return (
-    <Card
+    <FlowCard
       sx={{
         maxWidth: 480,
         mx: "auto",
-        bgcolor: "rgb(24, 24, 27)", // zinc-900
-        border: "1px solid rgb(39, 39, 42)", // zinc-800
-        borderRadius: 3,
         overflow: "visible",
       }}
     >
@@ -197,13 +192,13 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
           >
             <Typography
               variant="body2"
-              sx={{ color: "rgb(161, 161, 170)", fontWeight: 500 }}
+              sx={{ color: (t) => t.ff.textSecondary, fontWeight: 500 }}
             >
               You send
             </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
               {formattedBalance !== undefined && (
-                <Typography variant="caption" sx={{ color: "rgb(113, 113, 122)" }}>
+                <Typography variant="caption" sx={{ color: (t) => t.ff.textTertiary }}>
                   Balance:{" "}
                   {parseFloat(formattedBalance).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
@@ -217,7 +212,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                     size="small"
                     onClick={() => setHistoryOpen(true)}
                     aria-label="transaction history"
-                    sx={{ color: "rgb(113, 113, 122)", "&:hover": { color: "rgb(52, 211, 153)" } }}
+                    sx={{ color: (t) => t.ff.textTertiary, "&:hover": { color: (t) => t.ff.brandStrong } }}
                   >
                     <Badge variant="dot" color="error" overlap="circular" invisible={reclaimableCount === 0}>
                       <HistoryIcon sx={{ fontSize: 18 }} />
@@ -241,10 +236,10 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
               style: {
                 fontSize: "1.5rem",
                 fontWeight: 700,
-                color: "#fff",
               },
             }}
             InputProps={{
+              sx: { color: (t) => t.ff.text },
               endAdornment: (
                 <InputAdornment position="end">
                   <Box
@@ -254,32 +249,11 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                       gap: 0.75,
                     }}
                   >
-                    {/* USDC blue circle badge */}
-                    <Box
-                      sx={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: "50%",
-                        bgcolor: "#2775CA",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Typography
-                        sx={{
-                          color: "#fff",
-                          fontSize: "0.75rem",
-                          fontWeight: 700,
-                          lineHeight: 1,
-                        }}
-                      >
-                        $
-                      </Typography>
-                    </Box>
+                    {/* USDC glyph (shared provider mark) */}
+                    <ProviderGlyph id="usdc" size={24} radius={12} />
                     <Typography
                       sx={{
-                        color: "rgb(161, 161, 170)",
+                        color: (t) => t.ff.textSecondary,
                         fontWeight: 600,
                         fontSize: "0.875rem",
                       }}
@@ -290,21 +264,6 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                 </InputAdornment>
               ),
             }}
-            sx={{
-              "& .MuiOutlinedInput-root": {
-                bgcolor: "rgb(9, 9, 11)", // zinc-950
-                borderRadius: 2,
-                "& fieldset": {
-                  borderColor: "rgb(39, 39, 42)", // zinc-800
-                },
-                "&:hover fieldset": {
-                  borderColor: "rgb(63, 63, 70)", // zinc-700
-                },
-                "&.Mui-focused fieldset": {
-                  borderColor: "rgb(16, 185, 129)", // emerald-500
-                },
-              },
-            }}
           />
         </Box>
 
@@ -314,7 +273,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
         <Box>
           <Typography
             variant="body2"
-            sx={{ color: "rgb(161, 161, 170)", fontWeight: 500, mb: 1 }}
+            sx={{ color: (t) => t.ff.textSecondary, fontWeight: 500, mb: 1 }}
           >
             You receive
           </Typography>
@@ -326,31 +285,15 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
             fullWidth
             sx={{
               "& .MuiToggleButtonGroup-grouped": {
-                border: "1px solid rgb(39, 39, 42)",
-                borderRadius: "12px !important",
                 mx: 0.5,
                 py: 1,
                 px: 1.5,
-                textTransform: "none",
-                color: "rgb(161, 161, 170)",
                 fontSize: "0.8125rem",
-                fontWeight: 500,
                 "&:first-of-type": {
                   ml: 0,
                 },
                 "&:last-of-type": {
                   mr: 0,
-                },
-                "&.Mui-selected": {
-                  bgcolor: "rgba(16, 185, 129, 0.1)",
-                  color: "rgb(52, 211, 153)", // emerald-400
-                  borderColor: "rgb(16, 185, 129)", // emerald-500
-                  "&:hover": {
-                    bgcolor: "rgba(16, 185, 129, 0.15)",
-                  },
-                },
-                "&:hover": {
-                  bgcolor: "rgb(39, 39, 42)",
                 },
               },
             }}
@@ -383,7 +326,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
             sx={{
               display: "block",
               mt: 0.75,
-              color: "rgb(113, 113, 122)",
+              color: (t) => t.ff.textTertiary,
               textAlign: "center",
             }}
           >
@@ -397,7 +340,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography
             variant="body2"
-            sx={{ color: "rgb(161, 161, 170)", fontWeight: 500 }}
+            sx={{ color: (t) => t.ff.textSecondary, fontWeight: 500 }}
           >
             Recipient details
           </Typography>
@@ -420,28 +363,15 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                 : undefined
             }
             variant="outlined"
-            inputProps={{
-              style: { color: "#fff" },
+            InputProps={{
+              sx: { color: (t) => t.ff.text },
             }}
             InputLabelProps={{
-              sx: { color: "rgb(113, 113, 122)" },
+              sx: { color: (t) => t.ff.textTertiary },
             }}
             sx={{
-              "& .MuiOutlinedInput-root": {
-                bgcolor: "rgb(9, 9, 11)",
-                borderRadius: 2,
-                "& fieldset": {
-                  borderColor: "rgb(39, 39, 42)",
-                },
-                "&:hover fieldset": {
-                  borderColor: "rgb(63, 63, 70)",
-                },
-                "&.Mui-focused fieldset": {
-                  borderColor: "rgb(16, 185, 129)",
-                },
-              },
-              "& .MuiFormHelperText-root": {
-                color: "rgb(239, 68, 68)", // red-500
+              "& .MuiFormHelperText-root.Mui-error": {
+                color: (t) => t.ff.destructive,
               },
             }}
           />
@@ -462,28 +392,15 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                 : undefined
             }
             variant="outlined"
-            inputProps={{
-              style: { color: "#fff" },
+            InputProps={{
+              sx: { color: (t) => t.ff.text },
             }}
             InputLabelProps={{
-              sx: { color: "rgb(113, 113, 122)" },
+              sx: { color: (t) => t.ff.textTertiary },
             }}
             sx={{
-              "& .MuiOutlinedInput-root": {
-                bgcolor: "rgb(9, 9, 11)",
-                borderRadius: 2,
-                "& fieldset": {
-                  borderColor: "rgb(39, 39, 42)",
-                },
-                "&:hover fieldset": {
-                  borderColor: "rgb(63, 63, 70)",
-                },
-                "&.Mui-focused fieldset": {
-                  borderColor: "rgb(16, 185, 129)",
-                },
-              },
-              "& .MuiFormHelperText-root": {
-                color: "rgb(239, 68, 68)",
+              "& .MuiFormHelperText-root.Mui-error": {
+                color: (t) => t.ff.destructive,
               },
             }}
           />
@@ -504,7 +421,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
             >
               <Typography
                 variant="body2"
-                sx={{ color: "rgb(161, 161, 170)", fontWeight: 500 }}
+                sx={{ color: (t) => t.ff.textSecondary, fontWeight: 500 }}
               >
                 {isLoading
                   ? "Finding routes..."
@@ -513,7 +430,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
               {isLoading && (
                 <CircularProgress
                   size={16}
-                  sx={{ color: "rgb(16, 185, 129)" }}
+                  sx={{ color: (t) => t.ff.brand }}
                 />
               )}
             </Box>
@@ -554,9 +471,7 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
         {/* =============================================================== */}
         {/*  5. Action button                                               */}
         {/* =============================================================== */}
-        <Button
-          fullWidth
-          variant="contained"
+        <PrimaryButton
           disabled={cta.disabled}
           onClick={handleSubmit}
           startIcon={
@@ -564,30 +479,10 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
               <AccountBalanceWalletIcon sx={{ fontSize: 20 }} />
             ) : undefined
           }
-          sx={{
-            py: 1.5,
-            borderRadius: 2,
-            textTransform: "none",
-            fontWeight: 600,
-            fontSize: "1rem",
-            bgcolor: cta.disabled
-              ? "rgb(39, 39, 42)" // zinc-800
-              : "rgb(16, 185, 129)", // emerald-500
-            color: cta.disabled ? "rgb(113, 113, 122)" : "#fff",
-            "&:hover": {
-              bgcolor: cta.disabled
-                ? "rgb(39, 39, 42)"
-                : "rgb(5, 150, 105)", // emerald-600
-            },
-            "&.Mui-disabled": {
-              color: "rgb(113, 113, 122)", // zinc-500
-              bgcolor: "rgb(39, 39, 42)",
-            },
-          }}
         >
           {cta.label}
-        </Button>
+        </PrimaryButton>
       </Box>
-    </Card>
+    </FlowCard>
   );
 }

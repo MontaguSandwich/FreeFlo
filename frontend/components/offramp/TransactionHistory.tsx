@@ -102,9 +102,8 @@ export function TransactionHistory({ open, onClose }: { open: boolean; onClose: 
         sx: {
           bgcolor: "background.paper",
           backgroundImage: "none",
-          border: "1px solid",
-          borderColor: "rgba(16, 185, 129, 0.4)",
-          borderRadius: 3,
+          border: (t) => `1px solid ${t.ff.borderActive}`,
+          borderRadius: (t) => `${t.ff.radius.xl}px`,
         },
       }}
     >
