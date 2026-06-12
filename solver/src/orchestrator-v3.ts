@@ -262,14 +262,20 @@ export class SolverOrchestratorV3 {
     log.info({ count: intentsNeedingQuotes.length }, "Processing intents for quoting");
 
     for (const intent of intentsNeedingQuotes) {
-      await this.submitQuotesForIntent(intent.intentId, intent.currency, BigInt(intent.usdcAmount));
+      await this.submitQuotesForIntent(
+        intent.intentId,
+        intent.currency,
+        BigInt(intent.usdcAmount),
+        intent.depositor,
+      );
     }
   }
 
   private async submitQuotesForIntent(
     intentId: string,
     currency: number,
-    usdcAmount: bigint
+    usdcAmount: bigint,
+    depositor?: string
   ): Promise<void> {
     if (usdcAmount < this.config.minUsdcAmount || usdcAmount > this.config.maxUsdcAmount) {
       log.info(
@@ -365,6 +371,15 @@ export class SolverOrchestratorV3 {
     }
 
     this.db.markQuotesSubmitted(intentId);
+
+    // Gasless 3->2: if a FiatToFiatRouter created this intent, relayer-commit it for
+    // the user now that our quote is on-chain. commitFor picks the best on-chain quote
+    // >= the user's floor, so we never route them to a worse price. Best-effort: a
+    // failure (no router configured, window closed, below floor) is logged, not fatal —
+    // the user can still self-commit via the frontend.
+    if (depositor && this.chain.isRouterAddress(depositor)) {
+      await this.chain.commitForRouterIntent(intentId as `0x${string}`);
+    }
   }
 
   // ============ Fulfillment with zkTLS ============

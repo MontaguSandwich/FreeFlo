@@ -252,3 +252,31 @@ export interface PaymentAttestationStruct {
   dataHash: `0x${string}`;
 }
 
+// ============================================================================
+// FiatToFiatRouter — only the slice the gasless relayer-commit path needs.
+// commitFor(user) auto-selects the best on-chain SEPA quote >= the user's floor;
+// TransferInitiated maps an OffRampV3 intentId back to the router's user.
+// ============================================================================
+export const FIAT_TO_FIAT_ROUTER_ABI = [
+  {
+    type: "function",
+    name: "commitFor",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "TransferInitiated",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "intentId", type: "bytes32", indexed: true },
+      { name: "zkp2pIntentHash", type: "bytes32", indexed: true },
+      { name: "usdcAmount", type: "uint256", indexed: false },
+      { name: "iban", type: "string", indexed: false },
+      { name: "recipientName", type: "string", indexed: false },
+      { name: "minEurAmount", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+

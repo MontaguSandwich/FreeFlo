@@ -108,6 +108,11 @@ export const config = {
   offRampV3Address: optionalEnv("OFFRAMP_V3_ADDRESS", "") as Address,
   paymentVerifierAddress: optionalEnv("PAYMENT_VERIFIER_ADDRESS", "") as Address,
 
+  // FiatToFiatRouter — when set, the solver acts as a gasless relayer: after quoting
+  // a router-originated intent it calls commitFor(user), collapsing fiat->fiat 3->2.
+  // Unset = no relayer behavior (the user commits via the frontend, as before).
+  fiatToFiatRouterAddress: optionalEnv("FIAT_TO_FIAT_ROUTER_ADDRESS", "") as Address,
+
   // ==========================================================================
   // ATTESTATION SERVICE (for zkTLS proof verification)
   // ==========================================================================

@@ -9,6 +9,7 @@ import { baseSepolia, base } from "viem/chains";
 import {
   OFFRAMP_V3_ABI,
   PAYMENT_VERIFIER_ABI,
+  FIAT_TO_FIAT_ROUTER_ABI,
   type PaymentAttestationStruct,
 } from "./abi-v3.js";
 import {
@@ -28,6 +29,8 @@ export interface ChainClientV3Config {
   offRampAddress: Address;
   verifierAddress: Address;
   solverPrivateKey: `0x${string}`;
+  /** Optional FiatToFiatRouter — enables the gasless relayer-commit path. */
+  routerAddress?: Address;
 }
 
 /**
@@ -40,6 +43,7 @@ export class ChainClientV3 {
   private walletClient: any;
   private offRampAddress: Address;
   private verifierAddress: Address;
+  private routerAddress?: Address;
   public solverAddress: Address;
 
   constructor(config: ChainClientV3Config) {
@@ -60,6 +64,7 @@ export class ChainClientV3 {
 
     this.offRampAddress = config.offRampAddress;
     this.verifierAddress = config.verifierAddress;
+    this.routerAddress = config.routerAddress;
     this.solverAddress = account.address;
 
     log.info(
@@ -68,6 +73,7 @@ export class ChainClientV3 {
         chain: chain.name,
         offRamp: this.offRampAddress,
         verifier: this.verifierAddress,
+        router: this.routerAddress ?? "(relayer-commit disabled)",
       },
       "V3 Chain client initialized"
     );
@@ -233,6 +239,76 @@ export class ChainClientV3 {
 
     log.info({ hash, blockNumber: receipt.blockNumber }, "Fulfillment confirmed with zkTLS proof");
     return hash;
+  }
+
+  // ============ FiatToFiatRouter relayer-commit (gasless 3->2) ============
+
+  /** True if `addr` is the configured FiatToFiatRouter (i.e. a router-created intent). */
+  isRouterAddress(addr: string): boolean {
+    return !!this.routerAddress && addr.toLowerCase() === this.routerAddress.toLowerCase();
+  }
+
+  /**
+   * Relayer-commit a router-originated intent on the user's behalf (gasless 3->2).
+   * Resolves the router's `user` for this intentId from TransferInitiated, then calls
+   * FiatToFiatRouter.commitFor(user) — which auto-selects the best on-chain SEPA quote
+   * >= the user's signed floor (best execution; the caller cannot route to a worse
+   * solver). Best-effort and NON-FATAL: returns null if no router is configured, the
+   * TransferInitiated isn't found, or the commit reverts (window closed / below floor /
+   * already committed). The user can still self-commit via the frontend fallback.
+   */
+  async commitForRouterIntent(intentId: `0x${string}`): Promise<`0x${string}` | null> {
+    if (!this.routerAddress) return null;
+    try {
+      // Resolve the router user for this intent (TransferInitiated.user, indexed). The
+      // intent commits within OffRampV3's 15m window, so a recent lookback covers it.
+      const current = await this.publicClient.getBlockNumber();
+      const fromBlock = current > 2000n ? current - 2000n : 0n;
+      const logs = await this.publicClient.getContractEvents({
+        address: this.routerAddress,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        eventName: "TransferInitiated",
+        args: { intentId },
+        fromBlock,
+        toBlock: current,
+      });
+      if (!logs || logs.length === 0) {
+        log.warn(
+          { intentId },
+          "Router intent but no TransferInitiated in lookback window; skipping relayer commit"
+        );
+        return null;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const user = (logs[0] as any).args.user as Address;
+
+      log.info({ intentId, user }, "Relayer-committing router intent for user (commitFor)");
+      const hash = await this.walletClient.writeContract({
+        address: this.routerAddress,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "commitFor",
+        args: [user],
+      });
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === "reverted") {
+        log.warn(
+          { intentId, user, hash },
+          "commitFor reverted (window closed / below floor / already committed)"
+        );
+        return null;
+      }
+      log.info(
+        { intentId, user, hash, blockNumber: receipt.blockNumber },
+        "✅ Relayer commit confirmed (user paid no gas)"
+      );
+      return hash;
+    } catch (error) {
+      log.warn(
+        { intentId, error: error instanceof Error ? error.message : error },
+        "Relayer commitFor failed (non-fatal)"
+      );
+      return null;
+    }
   }
 
   // ============ Event Watching (eth_getLogs polling) ============

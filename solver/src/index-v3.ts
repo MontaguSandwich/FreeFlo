@@ -102,6 +102,8 @@ async function main() {
     offRampAddress: config.offRampV3Address,
     verifierAddress: config.paymentVerifierAddress,
     solverPrivateKey: config.solverPrivateKey,
+    // Optional: enables the gasless relayer-commit path for router-created intents.
+    routerAddress: config.fiatToFiatRouterAddress || undefined,
   });
 
   solverAddress = chain.solverAddress;
