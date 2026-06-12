@@ -318,6 +318,11 @@ export function useFiatToFiatFlow() {
   // FreeFlo quotes
   const [freefloQuotes, setFreefloQuotes] = useState<any[]>([]);
 
+  // Live solver-derived EUR estimate for the input preview (null until fetched).
+  const [estimatedEur, setEstimatedEur] = useState<number | null>(null);
+  // True while computing the binding slippage floor from a live solver quote.
+  const [isPricingFloor, setIsPricingFloor] = useState(false);
+
   // Peer extension state
   const [extensionState, setExtensionState] = useState<string>("unknown");
 
@@ -524,11 +529,68 @@ export function useFiatToFiatFlow() {
 
   // ============ Quote Fetching ============
 
-  const calculateEstimatedEur = useCallback((usdAmount: number): number => {
-    const usdcEstimate = usdAmount * 0.999; // ~0.1% ZKP2P fee
-    const eurEstimate = usdcEstimate * 0.92; // Approximate USD/EUR rate
-    return Math.floor(eurEstimate * 100) / 100;
+  // Live EUR estimate from the FreeFlo solver's own quote API for a given USDC
+  // amount. This is the SAME pricing the on-chain commit checks, so a floor
+  // derived from it stays self-consistent with selectQuoteAndCommit. Pure (no
+  // state) so it serves both the input preview and the binding floor.
+  const fetchSolverEurEstimate = useCallback(async (usdcAmount: bigint): Promise<number | null> => {
+    const amountNum = Number(usdcAmount) / 1_000_000;
+    if (!(amountNum > 0)) return null;
+    try {
+      const res = await fetch(`/api/quote?amount=${amountNum}&currency=EUR`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      // The proxy sorts quotes best-first; fiatAmount is in euros.
+      const eur = Number((data.quotes ?? [])[0]?.fiatAmount);
+      return Number.isFinite(eur) && eur > 0 ? eur : null;
+    } catch {
+      return null;
+    }
   }, []);
+
+  // Input-screen preview (debounced): a live, solver-derived "≈ €X" as the user
+  // types. Estimates the onramp output (~0.1% ZKP2P fee, USDC≈USD) then asks the
+  // solver what that USDC fetches in EUR. Display only — the binding floor is set
+  // from the REAL onramped amount at maker selection (priceFloor).
+  useEffect(() => {
+    const amount = parseFloat(usdInput);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setEstimatedEur(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const estUsdc = BigInt(Math.floor(amount * 0.999 * 1_000_000));
+      const eur = await fetchSolverEurEstimate(estUsdc);
+      if (!cancelled) setEstimatedEur(eur);
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [usdInput, selectedCurrency, fetchSolverEurEstimate]);
+
+  // Set the load-bearing slippage floor from a LIVE solver quote on the real
+  // onramped USDC amount. Once commit is automatic (commitFor), this floor is the
+  // user's only protection, so it MUST track live pricing — never a constant.
+  const priceFloor = useCallback(async (usdcAmount: bigint) => {
+    setIsPricingFloor(true);
+    setError(null);
+    const liveEur = await fetchSolverEurEstimate(usdcAmount);
+    if (liveEur === null) {
+      setIsPricingFloor(false);
+      setError("Couldn't fetch a live price to set your protection floor. Tap Retry price before locking.");
+      return;
+    }
+    const minEur = Math.floor(liveEur * (1 - slippagePercent / 100) * 100) / 100;
+    setFlowData((prev) => ({ ...prev, minEurAmount: minEur }));
+    setIsPricingFloor(false);
+  }, [fetchSolverEurEstimate, slippagePercent]);
+
+  // Re-run floor pricing for the in-flight transfer (SignalScreen retry).
+  const repriceFloor = useCallback(() => {
+    if (flowData.usdcAmount > BigInt(0)) void priceFloor(flowData.usdcAmount);
+  }, [flowData.usdcAmount, priceFloor]);
 
   // Fetch ZKP2P quotes via server-side proxy (avoids CORS)
   const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
@@ -665,15 +727,14 @@ export function useFiatToFiatFlow() {
       return;
     }
 
-    const estimatedEur = calculateEstimatedEur(amount);
-    const minEur = estimatedEur * (1 - slippagePercent / 100);
-
     setFlowData((prev) => ({
       ...prev,
       usdAmount: amount,
       eurIban: ibanInput,
       recipientName: nameInput,
-      minEurAmount: minEur,
+      // The binding floor is set from a live solver quote on the REAL onramped
+      // amount once a maker is selected (priceFloor in handleSelectMaker).
+      minEurAmount: 0,
     }));
 
     setStep("finding_quotes");
@@ -696,8 +757,13 @@ export function useFiatToFiatFlow() {
       zkp2pQuote: quote,
       usdcAmount,
       venmoPayee: quote.payeeDetails,
+      minEurAmount: 0, // recomputed live from the real USDC just below
     }));
     setStep("zkp2p_signal");
+
+    // Set the load-bearing slippage floor from a live solver quote on the REAL
+    // onramped USDC. The SignalScreen shows it and handleSignalIntent signs it.
+    void priceFloor(usdcAmount);
 
     // The handle usually arrives on the quote (payeeData.offchainId). If this maker
     // has no curated payee data, resolve it from the hashed on-chain id so the send
@@ -1144,6 +1210,7 @@ export function useFiatToFiatFlow() {
     isSignaling,
     isCancelling,
     isConnecting,
+    isPricingFloor,
     zkp2pQuotes,
     verifyData,
     // form inputs (controlled)
@@ -1162,13 +1229,13 @@ export function useFiatToFiatFlow() {
     // derived
     progress,
     deadlineRemaining,
+    estimatedEur,
     // formatters / pure helpers
     formatUsd,
     formatEur,
     formatUsdc,
     formatPayee,
     formatCountdown,
-    calculateEstimatedEur,
     // handlers
     handleStart,
     handleInputSubmit,
@@ -1179,6 +1246,7 @@ export function useFiatToFiatFlow() {
     handleSelectAndFulfill,
     handleCancelIntent,
     handleRouterCommit,
+    repriceFloor,
     connectExtension,
     resetFlow,
   };

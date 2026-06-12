@@ -16,7 +16,9 @@ import { PrimaryButton, NoticeBanner, SummaryGroup, SummaryRow, phaseOfFour, mas
  *    is entirely inside handleSignalIntent — the view only calls it.
  */
 export function SignalScreen({ flow }: { flow: FiatToFiatFlowApi }) {
-  const { step, flowData, selectedPlatform, selectedCurrency, isSignaling, formatUsdc, formatEur, handleSignalIntent } = flow;
+  const { step, flowData, selectedPlatform, selectedCurrency, isSignaling, isPricingFloor, formatUsdc, formatEur, handleSignalIntent, repriceFloor } = flow;
+  const floorReady = !isPricingFloor && flowData.minEurAmount > 0;
+  const floorFailed = !isPricingFloor && flowData.minEurAmount <= 0;
   const symbol = CURRENCIES[selectedCurrency]?.symbol || "$";
   const platformName = PLATFORMS[selectedPlatform]?.name || "payment";
 
@@ -39,7 +41,17 @@ export function SignalScreen({ flow }: { flow: FiatToFiatFlowApi }) {
       <SummaryGroup title="Order">
         <SummaryRow label="You pay" value={`${symbol}${flowData.usdAmount.toFixed(2)} via ${platformName}`} />
         <SummaryRow label="Partner fronts" value={formatUsdc(flowData.usdcAmount)} />
-        <SummaryRow label="You receive" value={`≈ ${formatEur(flowData.minEurAmount)} by SEPA`} accent />
+        <SummaryRow
+          label="You receive (min)"
+          value={
+            isPricingFloor
+              ? "Pricing…"
+              : floorReady
+                ? `≥ ${formatEur(flowData.minEurAmount)} by SEPA`
+                : "Live price unavailable"
+          }
+          accent
+        />
         <SummaryRow
           label="To"
           value={
@@ -57,9 +69,18 @@ export function SignalScreen({ flow }: { flow: FiatToFiatFlowApi }) {
         Your bank details are sealed on-chain. After you pay and prove it, the USDC converts to euros automatically.
       </NoticeBanner>
 
-      <PrimaryButton onClick={handleSignalIntent} loading={isSignaling} loadingLabel="Signing…">
-        Lock order
-      </PrimaryButton>
+      {floorFailed ? (
+        <PrimaryButton onClick={repriceFloor}>Retry price</PrimaryButton>
+      ) : (
+        <PrimaryButton
+          onClick={handleSignalIntent}
+          loading={isSignaling}
+          disabled={!floorReady}
+          loadingLabel="Signing…"
+        >
+          {isPricingFloor ? "Pricing…" : "Lock order"}
+        </PrimaryButton>
+      )}
     </Box>
   );
 }
