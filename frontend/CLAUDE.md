@@ -57,6 +57,11 @@ FiatToFiatFlow uses ZKP2P SDK with production environment.
 - Production API: api.zkp2p.xyz (x-api-key header)
 - SDK does NOT auto-fetch gating signatures; they must come from quote response
 - API response wraps quotes in `responseObject` - must unwrap before extracting
+- Onramp proof = buyer-TEE (SDK 0.5.0): peer.authenticate(buyerTee) → onMetadataMessage →
+  in-UI payment selection → client.fulfillIntent({proof}). attestationServiceUrl =
+  https://attestation-service.zkp2p.xyz (Peer enclave). The proof runs in our own UI now
+  (no peer.xyz). signalIntent MUST submit the exact intentData.referralFees the /v3/intent
+  gating signs (mandatory protocol fee) or it reverts InvalidSignature().
 
 ### Gating API Endpoints (Critical)
 

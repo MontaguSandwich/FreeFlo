@@ -85,6 +85,11 @@ InvalidSignature() on signalIntent:
   - V1 Orchestrator → use /v2/verify/intent (referrer, referrerFee fields)
   - V2 Orchestrator → use /v3/intent (callerAddress, referralFees array)
   - Signature is generated with specific parameter format; mismatch = invalid
+  - referralFees MUST MATCH what the API signed (2026-06): /v3/intent injects a mandatory
+    ~0.95% protocol referralFee (recipient 0x0bc26ff5…) and SIGNS it even when you send
+    referralFees: []. Submit the EXACT responseObject.intentData.referralFees to signalIntent
+    or the on-chain hash differs → InvalidSignature. (Fixed: gating proxy returns them,
+    frontend passes them through.)
   - Check escrow's gating service: cast call <escrow> "getDepositGatingService(uint256,bytes32)(address)" <depositId> <paymentMethod> --rpc-url https://mainnet.base.org
 
 ZKP2P API 401 "Invalid or expired token":
@@ -102,6 +107,26 @@ InvalidPostIntentHook:
   - This error is from OrchestratorV2 (0x888888359E981B5225CA48fbCdCeff702FC3b888)
   - OrchestratorV2 is PERMISSIONLESS for PostIntentHooks (no whitelist registry)
   - Error means hook contract is invalid (zero address, not a contract, etc.)
+
+0x4c0b07ac (UserAlreadyHasPendingTransfer) on fulfillIntent:
+  - NOT a ZKP2P/verifier error — it's FiatToFiatRouter.execute() reverting inside the
+    post-intent hook because the wallet already has a router transfer slot (PENDING, or on
+    the pre-0x199F routers a COMMITTED slot that was never markComplete'd).
+  - Fix: markComplete(user) to free a done slot, or use a fresh wallet. Active router
+    0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78 blocks only while the prior transfer is
+    genuinely in-flight on OffRampV3.
+
+Buyer-TEE onramp proof (SDK 0.5.0 — current PeerAuth extension):
+  - The TEE extension speaks: peer.authenticate({platform, captureMode:'buyerTee',
+    attestationServiceUrl, actionType:'transfer_<platform>'}) + onMetadataMessage(cb) → pick a
+    payment row → client.fulfillIntent({intentHash, proof:{proofType:'buyerTee',
+    encryptedSessionMaterial, params:{...row.params, index:row.originalIndex}, actionPlatform,
+    actionType}, attestationServiceUrl}).
+  - attestationServiceUrl = https://attestation-service.zkp2p.xyz (Peer's prod enclave for the
+    ONRAMP proof — DISTINCT from FreeFlo's offramp witness). Requires @zkp2p/sdk 0.5.0 + node≥22.
+  - The old 0.1.1 onramp()/onIntentFulfilled DON'T exist on the new extension (window.peer
+    detection is unchanged, but the methods differ). After a localStorage resume,
+    flowData.usdcAmount is 0 → quote step must read the on-chain router amount.
 
 ZKP2P Quote API "No quotes returned":
   - API response wraps data in `responseObject` - unwrap before extracting quotes
