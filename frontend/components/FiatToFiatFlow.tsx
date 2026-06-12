@@ -359,6 +359,44 @@ export function FiatToFiatFlow() {
     query: { enabled: !!address },
   });
 
+  // ---- Persist the in-flight flow across refreshes (keyed by wallet). Without this,
+  // a reload mid-onramp (e.g. to re-detect the extension) wipes the ZKP2P intent while
+  // it's still active on-chain, leaving a stranded "active order" (409 on retry). ----
+  const flowStorageKey = address ? `ff-flow-${address.toLowerCase()}` : null;
+  const rehydratedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!flowStorageKey || rehydratedKeyRef.current === flowStorageKey) return;
+    rehydratedKeyRef.current = flowStorageKey;
+    try {
+      const raw = localStorage.getItem(flowStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw, (_k, v) =>
+        typeof v === "string" && v.startsWith("__bigint__") ? BigInt(v.slice(10)) : v,
+      ) as { step: FlowStep; flowData: FlowData };
+      if (!saved?.flowData?.zkp2pIntentHash && !saved?.flowData?.routerIntentId) return;
+      setFlowData((prev) => ({ ...prev, ...saved.flowData }));
+      // The extension's TEE capture can't survive a reload, so re-enter the proof at
+      // the verify screen — the on-chain intent is still active and re-provable.
+      const proofStage: FlowStep[] = ["zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling"];
+      setStep(proofStage.includes(saved.step) ? "zkp2p_verify" : saved.step);
+    } catch (e) {
+      console.warn("flow rehydrate failed", e);
+    }
+  }, [flowStorageKey]);
+
+  useEffect(() => {
+    if (!flowStorageKey) return;
+    if (step === "select_flow" || step === "input_all" || step === "error") return;
+    if (step === "success") { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } return; }
+    try {
+      localStorage.setItem(
+        flowStorageKey,
+        JSON.stringify({ step, flowData }, (_k, v) => (typeof v === "bigint" ? `__bigint__${v.toString()}` : v)),
+      );
+    } catch { /* ignore quota/serialization */ }
+  }, [flowStorageKey, step, flowData]);
+
   // Resume a pending transfer after a reload / lost flow state: if the connected
   // wallet already has a PENDING transfer on the router (the onramp hook fired but
   // the UI state was lost), jump straight to the commit flow so the offramp leg can
@@ -398,6 +436,7 @@ export function FiatToFiatFlow() {
         setFlowData((prev) => ({
           ...prev,
           routerIntentId: args.intentId as `0x${string}`,
+          usdcAmount: BigInt(args.usdcAmount),
           routerIntentCreatedAt: Math.floor(Date.now() / 1000),
         }));
         setStep("router_waiting");
@@ -988,7 +1027,12 @@ export function FiatToFiatFlow() {
     if (step !== "router_waiting" || !flowData.routerIntentId) return;
 
     const pollQuotes = async () => {
-      const quotes = await fetchFreefloQuotes(flowData.usdcAmount);
+      // Use the router's on-chain amount as source of truth — flowData.usdcAmount can
+      // be 0 after a localStorage resume (it isn't restored there).
+      const ptAmt = pendingTransfer
+        ? BigInt((pendingTransfer as { usdcAmount: bigint }).usdcAmount)
+        : BigInt(0);
+      const quotes = await fetchFreefloQuotes(ptAmt > BigInt(0) ? ptAmt : flowData.usdcAmount);
       const best = quotes[0];
       // /api/quote returns fiatAmount in euros (not outputAmount). Guard against a
       // missing/NaN amount so we never advance to commit with a bad figure.
@@ -1006,7 +1050,7 @@ export function FiatToFiatFlow() {
     const interval = setInterval(pollQuotes, 2000);
     pollQuotes();
     return () => clearInterval(interval);
-  }, [step, flowData.routerIntentId, flowData.usdcAmount, fetchFreefloQuotes]);
+  }, [step, flowData.routerIntentId, flowData.usdcAmount, pendingTransfer, fetchFreefloQuotes]);
 
   // Handle Router commit
   const handleRouterCommit = () => {
@@ -1067,6 +1111,7 @@ export function FiatToFiatFlow() {
     metadataUnsubRef.current = null;
     setSelectedCurrency("USD");
     setError(null);
+    if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
   };
 
   // ============ Render ============
