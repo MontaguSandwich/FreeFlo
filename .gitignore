@@ -85,3 +85,14 @@ coverage/
 next-env.d.ts
 *.env.backup
 *.env.backup
+
+# =========================
+# Internal docs — KEPT LOCAL, never committed to GitHub
+# (agent instructions, design/strategy, ops, planning)
+# =========================
+/CLAUDE.md
+**/CLAUDE.md
+.claude/
+docs/
+MIGRATION_PLAN.md
+x-post.md
