@@ -41,7 +41,7 @@ export function StepItem({ step }: StepItemProps) {
       case "idle":
         return (
           <RadioButtonUncheckedIcon
-            sx={{ color: "grey.400", fontSize: 24 }}
+            sx={{ color: (t) => t.ff.textTertiary, fontSize: 24 }}
           />
         );
       case "pending":
@@ -49,18 +49,18 @@ export function StepItem({ step }: StepItemProps) {
           <CircularProgress
             size={22}
             thickness={4}
-            sx={{ color: "#10b981" }}
+            sx={{ color: (t) => t.ff.brand }}
           />
         );
       case "done":
         return (
-          <CheckCircleIcon sx={{ color: "#10b981", fontSize: 24 }} />
+          <CheckCircleIcon sx={{ color: (t) => t.ff.brand, fontSize: 24 }} />
         );
       case "failed":
         return <ErrorIcon sx={{ color: "error.main", fontSize: 24 }} />;
       case "skipped":
         return (
-          <SkipNextIcon sx={{ color: "grey.400", fontSize: 20 }} />
+          <SkipNextIcon sx={{ color: (t) => t.ff.textTertiary, fontSize: 20 }} />
         );
     }
   };
@@ -77,8 +77,7 @@ export function StepItem({ step }: StepItemProps) {
         gap: 2,
         px: 2.5,
         py: 1.75,
-        borderBottom: "1px solid",
-        borderColor: "divider",
+        borderBottom: (t) => `1px solid ${t.ff.border}`,
         backgroundColor: isPending
           ? "rgba(16, 185, 129, 0.04)"
           : "transparent",
@@ -167,9 +166,9 @@ export function StepItem({ step }: StepItemProps) {
               gap: 0.5,
               mt: 0.5,
               fontSize: "0.8rem",
-              color: "#10b981",
+              color: (t) => t.ff.brand,
               "&:hover": {
-                color: "#059669",
+                color: (t) => t.ff.brandStrong,
               },
             }}
           >

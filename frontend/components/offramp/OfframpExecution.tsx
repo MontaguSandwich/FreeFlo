@@ -2,14 +2,18 @@
 
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import Card from "@mui/material/Card";
-import Button from "@mui/material/Button";
-import Alert from "@mui/material/Alert";
 import Divider from "@mui/material/Divider";
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
 import { CURRENCIES } from "@/lib/quotes";
+import {
+  FlowCard,
+  PrimaryButton,
+  NoticeBanner,
+  SummaryRow,
+  SummaryGroup,
+  SuccessCheck,
+} from "@/components/fiat-to-fiat/ui";
 import { StepItem } from "./StepItem";
 
 interface OfframpExecutionProps {
@@ -41,16 +45,11 @@ export function OfframpExecution({ onReset }: OfframpExecutionProps) {
   };
 
   return (
-    <Card
-      elevation={0}
+    <FlowCard
       sx={{
         maxWidth: 480,
         mx: "auto",
         width: "100%",
-        borderRadius: 3,
-        border: "1px solid",
-        borderColor: "divider",
-        overflow: "hidden",
       }}
     >
       {/* Summary header */}
@@ -60,22 +59,20 @@ export function OfframpExecution({ onReset }: OfframpExecutionProps) {
           py: 2.5,
           background:
             "linear-gradient(135deg, rgba(16,185,129,0.06) 0%, rgba(16,185,129,0.02) 100%)",
-          borderBottom: "1px solid",
-          borderColor: "divider",
+          borderBottom: (t) => `1px solid ${t.ff.border}`,
         }}
       >
         <Typography
           variant="body2"
-          sx={{ color: "text.secondary", mb: 0.5, fontSize: "0.8rem" }}
+          sx={{ color: (t) => t.ff.textSecondary, mb: 0.5, fontSize: "0.8rem" }}
         >
           Offramp in progress
         </Typography>
         <Typography
-          variant="h6"
+          variant="h4"
           sx={{
-            fontWeight: 600,
             fontSize: "1.1rem",
-            color: "text.primary",
+            color: (t) => t.ff.text,
           }}
         >
           {amount} USDC &rarr; {outputAmount} {currencySymbol}
@@ -84,7 +81,7 @@ export function OfframpExecution({ onReset }: OfframpExecutionProps) {
             sx={{
               fontWeight: 400,
               fontSize: "0.85rem",
-              color: "text.secondary",
+              color: (t) => t.ff.textSecondary,
               ml: 1,
             }}
           >
@@ -103,15 +100,7 @@ export function OfframpExecution({ onReset }: OfframpExecutionProps) {
       {/* Error display */}
       {error && (
         <Box sx={{ px: 2.5, pb: 2 }}>
-          <Alert
-            severity="error"
-            sx={{
-              borderRadius: 2,
-              "& .MuiAlert-message": { fontSize: "0.875rem" },
-            }}
-          >
-            {error}
-          </Alert>
+          <NoticeBanner kind="error">{error}</NoticeBanner>
         </Box>
       )}
 
@@ -129,118 +118,31 @@ export function OfframpExecution({ onReset }: OfframpExecutionProps) {
               gap: 2,
             }}
           >
-            <CheckCircleOutlineIcon
-              sx={{ fontSize: 48, color: "#10b981" }}
-            />
-            <Typography
-              variant="h6"
-              sx={{ fontWeight: 600, color: "text.primary" }}
-            >
+            <SuccessCheck size={64} />
+            <Typography variant="h3" sx={{ color: (t) => t.ff.text }}>
               Transfer Complete!
             </Typography>
 
             {/* Summary box */}
-            <Box
-              sx={{
-                width: "100%",
-                borderRadius: 2,
-                border: "1px solid",
-                borderColor: "divider",
-                backgroundColor: "rgba(16, 185, 129, 0.03)",
-                p: 2,
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  mb: 1,
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ color: "text.secondary" }}
-                >
-                  You sent
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {amount} USDC
-                </Typography>
-              </Box>
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  mb: 1,
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ color: "text.secondary" }}
-                >
-                  You received
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {outputAmount} {currencySymbol}
-                </Typography>
-              </Box>
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  mb: 1,
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ color: "text.secondary" }}
-                >
-                  Network
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                  {rtpnName}
-                </Typography>
-              </Box>
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ color: "text.secondary" }}
-                >
-                  Solver
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                  {solverName}
-                </Typography>
-              </Box>
+            <Box sx={{ width: "100%" }}>
+              <SummaryGroup>
+                <SummaryRow label="You sent" value={`${amount} USDC`} accent />
+                <SummaryRow
+                  label="You received"
+                  value={`${outputAmount} ${currencySymbol}`}
+                  accent
+                />
+                <SummaryRow label="Network" value={rtpnName} />
+                <SummaryRow label="Solver" value={solverName} />
+              </SummaryGroup>
             </Box>
 
-            <Button
-              variant="contained"
-              fullWidth
-              onClick={handleReset}
-              sx={{
-                mt: 1,
-                py: 1.25,
-                borderRadius: 2,
-                textTransform: "none",
-                fontWeight: 600,
-                fontSize: "0.95rem",
-                backgroundColor: "#10b981",
-                "&:hover": {
-                  backgroundColor: "#059669",
-                },
-              }}
-            >
+            <PrimaryButton onClick={handleReset} sx={{ mt: 1 }}>
               New Transfer
-            </Button>
+            </PrimaryButton>
           </Box>
         </>
       )}
-    </Card>
+    </FlowCard>
   );
 }
