@@ -2,6 +2,15 @@
 
 Deployed at free-flo.vercel.app. Uses wagmi for wallet connection.
 
+## Running locally — node 22 REQUIRED
+
+The frontend depends on `@zkp2p/sdk` 0.5.0 (TEE onramp), which requires **node ≥22**:
+`cd frontend && nvm use 22 && NEXT_PUBLIC_NETWORK=mainnet npm run dev`. The solver +
+attestation stay on node 18 (separate processes). After switching node/SDK versions,
+`rm -rf .next` before `npm run dev` — stale webpack chunks break wallet connect. The
+root layout sets `suppressHydrationWarning` because the PeerAuth extension injects
+`data-peer-injected` on `<html>` (else App Router hydration breaks).
+
 ## Key Files
 
 - app/api/quote/ - Proxy to solver Quote API (avoids CORS)
@@ -70,7 +79,7 @@ V1 Stack (requires whitelisting - avoid):
 - PostIntentHookRegistry: 0x9B128EBAD4d874199A2Dc57E93186796c5EcAdE9
 - FiatToFiatRouter NOT whitelisted here
 
-FiatToFiatRouter (active): 0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967 — deployed 2026-06-11, wired to audited OffRampV3 0x57c621994616110a50bD820388e4E8a41F00b4D7.
+FiatToFiatRouter (active): 0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78 — deployed 2026-06-12, wired to audited OffRampV3 0x57c621994616110a50bD820388e4E8a41F00b4D7 (execute() blocks only in-flight transfers; supersedes 0xaA11…).
 - Pre-audit 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23 is DEPRECATED: its immutable offRamp = old OffRampV3
   0x5072… whose verifier doesn't authorize our witness → NotAuthorizedWitness (0x41110897). Don't route there.
 - Configured for OrchestratorV2 (permissionless)

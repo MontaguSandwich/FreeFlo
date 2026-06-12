@@ -142,6 +142,9 @@ leg is already proven (audited stack); the on-ramp→hook→off-ramp full flow h
   authorize `0xf68E…` (true). ⇒ **redeploy mandatory. ✅ DONE 2026-06-11:** redeployed `FiatToFiatRouter`
   to **`0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967`** (tx `0xb4732534…`); cast-verified offRamp=`0x57c6`,
   verifier→witness=true, `COMMIT_TIMEOUT`=900; `FIAT_TO_FIAT_ROUTER_ADDRESS` set in the frontend.
+  **✅ 2026-06-12:** native in-UI TEE proof validated (frontend on `@zkp2p/sdk` 0.5.0 / node 22) + router
+  **redeployed to `0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78`** (in-flight-only `execute()` guard;
+  supersedes `0xaA11…`), frontend re-pointed. Full native-flow details + gotchas in memory `project_venmo_sepa`.
 
 **✅ FIRST FULL E2E SUCCEEDED 2026-06-11 (real EUR):** Revolut €0.10 → USDC (Peer TEE onramp) → router
 hook `execute()` (TransferInitiated tx `0x2eb3f294…`) → FreeFlo offramp intent `0x192ba075…` → solver

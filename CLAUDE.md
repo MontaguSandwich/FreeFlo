@@ -31,7 +31,7 @@ Attestation:  cd attestation && cargo build --release
 
 OffRampV3 (audited prod): 0x57c621994616110a50bD820388e4E8a41F00b4D7
 PaymentVerifier (audited prod): 0x5602D796052ABDaD862FEf8011CA2cedB5132A9b
-FiatToFiatRouter (audited, prod): 0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967 — deployed 2026-06-11 (pre-audit 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23 DEPRECATED)
+FiatToFiatRouter (audited, prod): 0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78 — deployed 2026-06-12 (in-flight-only guard; supersedes 0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967; pre-audit 0x8558D9701C80A5805E6ea940AfD05e36cfE27B23 DEPRECATED)
 USDC (Base): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 Pre-audit (superseded, witness not held): OffRampV3 0x5072175059DF310F9D5A3F97d2Fb36B87CD2083D, PaymentVerifier 0x5eFcB7d3D0f2bE198F36FF87d4feF85b12338905
 

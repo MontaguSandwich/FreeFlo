@@ -518,12 +518,10 @@ export function FiatToFiatFlow() {
   // Fetch ZKP2P quotes via server-side proxy (avoids CORS)
   const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
     if (!address) {
-      console.log("fetchZkp2pQuotes: missing address");
       return [];
     }
 
     try {
-      console.log(`Fetching quotes via proxy: ${platform} ${currency} ${fiatAmount}`);
 
       // Use server-side proxy to avoid CORS issues with ZKP2P API
       const params = new URLSearchParams({
@@ -541,7 +539,6 @@ export function FiatToFiatFlow() {
       const response = await fetch(`/api/zkp2p-quote?${params}`);
       const data = await response.json();
 
-      console.log("Proxy quote response:", data);
 
       if (!response.ok) {
         console.error("Proxy quote error:", data);
@@ -553,7 +550,6 @@ export function FiatToFiatFlow() {
       const quotes = responseData.quotes || responseData.nearbySuggestions || [];
 
       if (!quotes || quotes.length === 0) {
-        console.log("No quotes returned from API");
         return [];
       }
 
@@ -587,7 +583,6 @@ export function FiatToFiatFlow() {
         };
       });
 
-      console.log("Mapped quotes:", mapped);
       setZkp2pQuotes(mapped);
       return mapped;
     } catch (err) {
@@ -721,7 +716,6 @@ export function FiatToFiatFlow() {
       data: params.data,
     };
 
-    console.log("Gating API request body:", JSON.stringify(requestBody, null, 2));
 
     try {
       // Use server-side proxy to keep API key secret
@@ -738,7 +732,6 @@ export function FiatToFiatFlow() {
         return null;
       }
 
-      console.log("Gating API response:", result);
 
       return {
         signature: result.signature as `0x${string}`,
@@ -768,7 +761,6 @@ export function FiatToFiatFlow() {
 
     try {
       // Fetch gating signature via our server-side proxy
-      console.log("Fetching gating signature for postIntentHook...");
       const gatingResult = await fetchGatingSignature({
         depositId: quote.depositId,
         amount: quote.amount,
@@ -789,26 +781,6 @@ export function FiatToFiatFlow() {
 
       const gatingSignature = gatingResult.signature;
       const signatureExpiration = gatingResult.expiration;
-      console.log("Gating signature fetched:", {
-        signature: gatingSignature?.slice(0, 20) + "...",
-        expiration: signatureExpiration
-      });
-
-      console.log("Calling SDK signalIntent with gating signature");
-      console.log("SDK config: runtimeEnv=production, apiKey=" + (process.env.NEXT_PUBLIC_ZKP2P_API_KEY ? "set" : "NOT SET"));
-      console.log("signalIntent params:", {
-        depositId: quote.depositId,
-        amount: quote.amount,
-        toAddress: address,
-        processorName: quote.processorName,
-        payeeDetails: quote.payeeDetails,
-        fiatCurrencyCode: quote.fiatCurrencyCode,
-        conversionRate: quote.conversionRate,
-        escrowAddress: quote.escrowAddress,
-        postIntentHook: FIAT_TO_FIAT_ROUTER_ADDRESS,
-        dataLength: hookPayload.length,
-        hasGatingSignature: !!gatingSignature,
-      });
 
       const hash = await zkp2pClient.signalIntent({
         depositId: BigInt(quote.depositId),
@@ -831,12 +803,10 @@ export function FiatToFiatFlow() {
         signatureExpiration: BigInt(signatureExpiration),
       });
 
-      console.log("SignalIntent tx hash:", hash);
 
       if (hash && publicClient) {
         // Wait for receipt and extract the actual intent hash from logs
         const receipt = await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` });
-        console.log("Transaction receipt:", receipt.status);
 
         // Find IntentSignaled event - intent hash is in topics[1]
         const intentSignaledLog = receipt.logs.find(
@@ -846,7 +816,6 @@ export function FiatToFiatFlow() {
 
         if (intentSignaledLog && intentSignaledLog.topics[1]) {
           const intentHash = intentSignaledLog.topics[1] as `0x${string}`;
-          console.log("Extracted intent hash:", intentHash);
           setFlowData((prev) => ({ ...prev, zkp2pIntentHash: intentHash }));
         } else {
           // Fallback to tx hash if we can't find the event
@@ -881,7 +850,6 @@ export function FiatToFiatFlow() {
     setError(null);
 
     try {
-      console.log("Cancelling intent:", flowData.zkp2pIntentHash);
 
       const { request } = await publicClient.simulateContract({
         address: ZKP2P_V3_ORCHESTRATOR,
@@ -892,10 +860,8 @@ export function FiatToFiatFlow() {
       });
 
       const txHash = await walletClient.writeContract(request);
-      console.log("Cancel tx hash:", txHash);
 
       await publicClient.waitForTransactionReceipt({ hash: txHash });
-      console.log("Intent cancelled successfully");
 
       // Reset flow state
       setFlowData((prev) => ({ ...prev, zkp2pIntentHash: null, zkp2pQuote: null }));
@@ -946,7 +912,6 @@ export function FiatToFiatFlow() {
       // intent lifecycle in the TEE/redirect model).
       metadataUnsubRef.current?.();
       metadataUnsubRef.current = peer.onMetadataMessage((message) => {
-        console.log("Peer onMetadataMessage ←", message);
         if (message.errorMessage) {
           setError(`Peer capture failed: ${message.errorMessage}`);
           setStep("zkp2p_verify");
@@ -971,7 +936,6 @@ export function FiatToFiatFlow() {
         setStep("zkp2p_select_payment");
       });
 
-      console.log("Peer authenticate →", { actionType, platform, attestationServiceUrl: PEER_ATTESTATION_URL });
       peer.authenticate({
         actionType,
         platform,
@@ -1008,11 +972,6 @@ export function FiatToFiatFlow() {
         intentHash,
         proof,
         attestationServiceUrl: PEER_ATTESTATION_URL,
-        callbacks: {
-          onAttestationStart: () => console.log("TEE attestation requested…"),
-          onTxSent: (h) => console.log("fulfill tx sent", h),
-          onTxMined: (h) => console.log("fulfill mined", h),
-        },
       });
       // Fulfilled → hook fired. The TransferInitiated poller advances to router_waiting.
     } catch (err: any) {
