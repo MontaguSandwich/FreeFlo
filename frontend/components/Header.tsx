@@ -12,7 +12,10 @@ export function Header() {
   const pathname = usePathname();
   const isBridgePage = pathname === "/fiat-to-fiat";
 
-  const gradientFrom = isBridgePage ? "#3b82f6" : "#10b981";
+  // Both corridors share the emerald→teal brand spine so the two surfaces read
+  // as one product. The cross-border page is retuned off the old Peer-blue
+  // (#3b82f6, which made it look like a different app) to teal→emerald (§4.3).
+  const gradientFrom = isBridgePage ? "#14b8a6" : "#10b981";
   const gradientTo = isBridgePage ? "#10b981" : "#14b8a6";
 
   return (
@@ -52,8 +55,16 @@ export function Header() {
             >
               <BoltIcon sx={{ color: "white", fontSize: 20 }} />
             </Box>
-            <Typography variant="h6" sx={{ color: "white", fontWeight: 700, letterSpacing: "-0.02em" }}>
-              Ramp
+            <Typography
+              variant="h6"
+              sx={{
+                color: "white",
+                fontFamily: "var(--font-display), 'DM Sans', system-ui, sans-serif",
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              FreeFlo
             </Typography>
           </Link>
 
