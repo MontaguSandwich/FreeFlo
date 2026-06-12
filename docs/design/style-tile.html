@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FreeFlo — Style Tile · "The calm clearinghouse"</title>
+<!--
+  Self-contained style tile for the FreeFlo UI overhaul.
+  No build, no app imports, inline CSS only. Open directly in a browser.
+  Hex / radii / type sizes / the brand gradient here are the SAME tokens
+  specified in docs/design/UI-OVERHAUL-PLAN.md §2 — a faithful preview of
+  what Gate-3's theme.ts will encode. Both LIGHT and DARK are shown side by side.
+-->
+<style>
+  /* ---- Layer 2 semantic tokens, both modes (from §2.2) ---- */
+  .ff-light{
+    --bg:#fbfaf8; --bgEl:#f5f3ee; --s1:#ffffff; --s2:#f5f3ee; --s3:#ece9e1;
+    --border:rgba(42,39,34,.12); --borderStrong:rgba(42,39,34,.20); --borderActive:rgba(16,185,129,.55);
+    --brand:#059669; --brandStrong:#047857; --onBrand:#ffffff;
+    --text:#1a1813; --text2:#5c5648; --text3:#7d7665; --textDis:#a39a82;
+    --destructive:#d83a1c; --destrBg:rgba(244,80,47,.08); --destrBorder:rgba(244,80,47,.22);
+    --warning:#b45309; --warnBg:rgba(245,158,11,.10); --warnBorder:rgba(245,158,11,.22);
+    --success:#059669; --info:#2563eb; --infoBg:rgba(59,130,246,.08); --infoBorder:rgba(59,130,246,.20);
+    --elev:0 1px 2px rgba(42,39,34,.06),0 10px 28px rgba(42,39,34,.07);
+    --lit:inset 0 1px 0 rgba(255,255,255,.6);
+    --glow1:rgba(16,185,129,.12); --glow2:rgba(20,184,166,.10); --glow3:rgba(6,182,212,.06);
+    --ringTrack:rgba(42,39,34,.10);
+  }
+  .ff-dark{
+    --bg:#09090b; --bgEl:#0d0d0f; --s1:#18181b; --s2:#1c1c1f; --s3:#121214;
+    --border:#27272a; --borderStrong:#3f3f46; --borderActive:rgba(16,185,129,.55);
+    --brand:#10b981; --brandStrong:#34d399; --onBrand:#06251c;
+    --text:#fafafa; --text2:#a1a1aa; --text3:#71717a; --textDis:#52525b;
+    --destructive:#ff6a52; --destrBg:rgba(255,106,82,.10); --destrBorder:rgba(255,106,82,.22);
+    --warning:#fbbf24; --warnBg:rgba(245,158,11,.10); --warnBorder:rgba(245,158,11,.22);
+    --success:#34d399; --info:#60a5fa; --infoBg:rgba(59,130,246,.10); --infoBorder:rgba(59,130,246,.22);
+    --elev:0 1px 2px rgba(0,0,0,.4),0 14px 36px rgba(0,0,0,.5);
+    --lit:inset .6px .6px .1px rgba(255,255,255,.06);
+    --glow1:rgba(16,185,129,.10); --glow2:rgba(20,184,166,.08); --glow3:rgba(6,182,212,.05);
+    --ringTrack:rgba(255,255,255,.08);
+  }
+  /* ---- shared tokens (radii / gradient / type) from §2.3–2.5 ---- */
+  :root{
+    --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:24px; --r-pill:9999px;
+    --grad:linear-gradient(135deg,#10b981 0%,#14b8a6 100%);
+    --gradHover:linear-gradient(135deg,#059669 0%,#0d9488 100%);
+    --gradText:linear-gradient(90deg,#34d399 0%,#2dd4bf 100%);
+    --display:"Space Grotesk","DM Sans",system-ui,sans-serif;
+    --body:"DM Sans",system-ui,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:var(--body);
+    background:#1a1813;
+    color:#fff;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.4;
+  }
+  .page-head{
+    text-align:center;padding:40px 24px 8px;background:#0d0d0f;border-bottom:1px solid #27272a;
+  }
+  .page-head .mark{
+    display:inline-flex;align-items:center;gap:10px;justify-content:center;margin-bottom:10px;
+  }
+  .chevglyph{
+    width:40px;height:40px;border-radius:var(--r-lg);background:var(--grad);
+    display:inline-flex;align-items:center;justify-content:center;color:#06251c;font-weight:700;
+    box-shadow:var(--lit);
+  }
+  .wordmark{font-family:var(--display);font-weight:600;font-size:26px;letter-spacing:-.01em;color:#fff}
+  .page-head h1{font-family:var(--display);font-weight:700;font-size:30px;margin:6px 0 4px;letter-spacing:-.02em}
+  .page-head p{color:#a1a1aa;margin:0;font-size:15px}
+  .thesis{display:inline-block;margin-top:14px;font-size:13px;color:#34d399;border:1px solid rgba(16,185,129,.35);border-radius:var(--r-pill);padding:5px 14px}
+
+  /* two-up panels */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  @media(max-width:900px){.split{grid-template-columns:1fr}}
+  .panel{
+    position:relative;overflow:hidden;background:var(--bg);color:var(--text);
+    padding:28px 28px 48px;min-height:100%;
+  }
+  .panel::before{
+    content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(600px 400px at -10% -20%,var(--glow1),transparent 60%),
+      radial-gradient(500px 400px at 110% 120%,var(--glow2),transparent 60%),
+      radial-gradient(300px 300px at 80% 20%,var(--glow3),transparent 60%);
+  }
+  .panel>*{position:relative;z-index:1}
+  .mode-tag{
+    display:inline-block;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text3);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px 10px;margin-bottom:20px;
+  }
+  .sec{font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);margin:26px 0 12px}
+  .sec:first-of-type{margin-top:0}
+
+  /* swatches */
+  .swatches{display:flex;flex-wrap:wrap;gap:8px}
+  .sw{width:64px}
+  .sw .chip{height:44px;border-radius:var(--r-md);border:1px solid var(--border);box-shadow:var(--lit)}
+  .sw .lab{font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)}
+  .sw .nm{font-size:10px;color:var(--text2);font-weight:600}
+  .ramp{display:flex;gap:0;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--border)}
+  .ramp .stop{flex:1;height:34px}
+  .ramp-row{margin-bottom:10px}
+  .ramp-name{font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px}
+  .note{font-size:12px;color:var(--text2);margin-top:8px;line-height:1.5}
+  .note b{color:var(--text)}
+
+  /* type scale */
+  .t-disp1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1.1;letter-spacing:-.02em;color:var(--text)}
+  .t-disp2{font-family:var(--display);font-weight:700;font-size:30px;line-height:1.2;letter-spacing:-.02em;color:var(--text)}
+  .t-disp3{font-family:var(--display);font-weight:600;font-size:24px;letter-spacing:-.015em;color:var(--text)}
+  .t-amt{font-family:var(--body);font-weight:700;font-size:34px;letter-spacing:-.01em;color:var(--text);font-variant-numeric:tabular-nums}
+  .t-body{font-size:16px;color:var(--text)}
+  .t-body2{font-size:14px;color:var(--text2)}
+  .t-label{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)}
+  .t-grad{background:var(--gradText);-webkit-background-clip:text;background-clip:text;color:transparent;font-family:var(--display);font-weight:700;font-size:30px;letter-spacing:-.02em}
+  .t-meta{font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:8px}
+
+  /* buttons */
+  .btns{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .btn{font-family:var(--body);font-weight:600;font-size:15px;border-radius:var(--r-md);padding:11px 20px;border:1px solid transparent;cursor:pointer}
+  .btn-primary{background:var(--grad);color:var(--onBrand);box-shadow:var(--lit)}
+  .btn-primary:hover{background:var(--gradHover)}
+  .btn-secondary{background:var(--s2);color:var(--text);border-color:var(--borderStrong)}
+  .btn-ghost{background:transparent;color:var(--text2)}
+  .btn-destructive{background:transparent;color:var(--destructive);border-color:var(--destrBorder)}
+  .btn-destructive:hover{background:var(--destrBg)}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+
+  /* card / surface */
+  .card{
+    background:var(--s1);border:1px solid var(--border);border-radius:var(--r-xl);
+    box-shadow:var(--elev);overflow:hidden;
+  }
+  .card-pad{padding:20px}
+
+  /* money input */
+  .well{background:var(--s3);border:1px solid var(--border);border-radius:var(--r-md);padding:14px 16px}
+  .well .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .money{font-family:var(--body);font-weight:700;font-size:34px;color:var(--text);font-variant-numeric:tabular-nums}
+  .ccy{font-size:13px;font-weight:600;color:var(--text2);background:var(--s2);border:1px solid var(--border);border-radius:var(--r-sm);padding:4px 10px}
+  .quick{display:flex;gap:6px;margin-top:12px}
+  .quick .q{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--text2);background:var(--s2);border:1px solid var(--border);border-radius:var(--r-sm);padding:7px 0;cursor:pointer}
+  .quick .q.active{color:var(--brand);border-color:var(--borderActive);background:rgba(16,185,129,.08)}
+
+  /* summary rail */
+  .rail{background:var(--s2);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px 14px;margin-bottom:14px}
+  .rail .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .rail .amt{font-weight:700;font-size:17px;color:var(--text);font-variant-numeric:tabular-nums}
+  .rail .arrow{color:var(--text3);margin:0 8px}
+  .rail .out{color:var(--brand)}
+  .rail .sub{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+  .rail .to{font-size:12px;color:var(--text2)}
+  .rail .clk{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--warning)}
+  .chev{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);background:var(--grad);color:var(--onBrand);font-weight:700;font-size:12px;margin-right:8px}
+
+  /* step row */
+  .steps{border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
+  .step{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--border)}
+  .step:last-child{border-bottom:none}
+  .step.cur{background:rgba(16,185,129,.05)}
+  .dot{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:700}
+  .dot.done{background:var(--success);color:var(--onBrand)}
+  .dot.pend{border:2px solid var(--borderStrong)}
+  .dot.cur{border:2px solid var(--brand);color:var(--brand)}
+  .step .lab{font-size:14px;color:var(--text);font-weight:500}
+  .step.is-pending .lab{font-weight:600}
+  .step .meta{margin-left:auto;font-size:12px;color:var(--text3);font-family:var(--mono)}
+
+  /* quote / maker card */
+  .qcard{position:relative;background:var(--s1);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:10px}
+  .qcard.sel{border-color:var(--borderActive);background:rgba(16,185,129,.04)}
+  .qcard .speed{height:2px;background:var(--grad)}
+  .qcard .body{padding:13px 14px}
+  .qcard .r1{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .qcard .left{display:flex;align-items:center;gap:8px}
+  .repchip{font-size:11px;font-weight:600;color:var(--brand);background:rgba(16,185,129,.12);border:1px solid var(--borderActive);border-radius:var(--r-sm);padding:2px 8px}
+  .repchip.verif{color:var(--info);background:var(--infoBg);border-color:var(--infoBorder)}
+  .star{font-size:12px;color:var(--warning)}
+  .qcard .amt{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+  .qcard .r2{display:flex;align-items:center;justify-content:space-between;margin-top:7px}
+  .qcard .speedlab{font-size:12px;color:var(--text2)}
+  .qcard .forf{font-size:12px;color:var(--text3)}
+  .bestbadge{position:absolute;top:10px;right:12px;font-size:10px;font-weight:700;color:var(--onBrand);background:var(--grad);border-radius:var(--r-sm);padding:2px 7px}
+  .speedchip{font-size:10px;font-weight:600;color:var(--brand);background:rgba(16,185,129,.12);border-radius:var(--r-sm);padding:2px 7px}
+
+  /* notices */
+  .notice{display:flex;gap:10px;align-items:flex-start;border-radius:var(--r-md);padding:11px 14px;font-size:13px;margin-bottom:10px;border:1px solid}
+  .notice .ico{font-weight:700;line-height:1.2}
+  .n-error{background:var(--destrBg);border-color:var(--destrBorder);color:var(--destructive)}
+  .n-warn{background:var(--warnBg);border-color:var(--warnBorder);color:var(--warning)}
+  .n-info{background:var(--infoBg);border-color:var(--infoBorder);color:var(--info)}
+  .notice .act{margin-left:auto;font-weight:600;text-decoration:underline;cursor:pointer;white-space:nowrap}
+
+  /* countdown rings */
+  .rings{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .ring{position:relative;width:96px;height:96px;border-radius:50%}
+  .ring .inner{position:absolute;inset:9px;border-radius:50%;background:var(--s1);display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .num{font-family:var(--mono);font-weight:700;font-size:24px;color:var(--text);font-variant-numeric:tabular-nums;line-height:1}
+  .ring .cap{font-size:10px;color:var(--text3);margin-top:2px}
+  .ring.verify{background:conic-gradient(var(--brand) 0 73%,var(--ringTrack) 73% 100%)}
+  .ring.deadline{background:conic-gradient(var(--destructive) 0 34%,var(--ringTrack) 34% 100%)}
+  .ring .lock{font-size:13px}
+  .ring-wrap{text-align:center}
+  .ring-wrap .rl{font-size:12px;color:var(--text2);margin-top:8px}
+
+  /* risk gate + do/dont */
+  .rg{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text);background:var(--s2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 14px;margin-bottom:10px}
+  .rg .box{width:18px;height:18px;border-radius:5px;border:2px solid var(--borderStrong);flex-shrink:0}
+  .irrev{font-size:12px;color:var(--destructive);margin-bottom:8px}
+  .dd{font-size:13px;line-height:1.9}
+  .dd .y{color:var(--success)}
+  .dd .n{color:var(--destructive)}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:560px){.grid2{grid-template-columns:1fr}}
+  .footer{padding:22px;text-align:center;color:#71717a;font-size:12px;background:#0d0d0f;border-top:1px solid #27272a}
+  .footer code{font-family:var(--mono);color:#a1a1aa}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div class="mark">
+    <span class="chevglyph">&raquo;</span>
+    <span class="wordmark">freeflo</span>
+  </div>
+  <h1>Style Tile</h1>
+  <p>Trustless USDC &harr; SEPA-EUR &middot; the proposed visual direction</p>
+  <span class="thesis">North-star &mdash; &ldquo;The calm clearinghouse&rdquo;</span>
+</div>
+
+<div class="split">
+
+  <!-- =====================  LIGHT  ===================== -->
+  <div class="panel ff-light">
+    <span class="mode-tag">Light &mdash; default (EUR / SEPA audience)</span>
+
+    <div class="sec">Brand &amp; status ramps</div>
+    <div class="ramp-row"><div class="ramp-name">emerald &mdash; brand</div>
+      <div class="ramp">
+        <div class="stop" style="background:#d1fae5"></div><div class="stop" style="background:#6ee7b7"></div>
+        <div class="stop" style="background:#34d399"></div><div class="stop" style="background:#10b981"></div>
+        <div class="stop" style="background:#059669"></div><div class="stop" style="background:#047857"></div>
+        <div class="stop" style="background:#065f46"></div></div></div>
+    <div class="ramp-row"><div class="ramp-name">teal &mdash; brand-2</div>
+      <div class="ramp">
+        <div class="stop" style="background:#ccfbf1"></div><div class="stop" style="background:#5eead4"></div>
+        <div class="stop" style="background:#2dd4bf"></div><div class="stop" style="background:#14b8a6"></div>
+        <div class="stop" style="background:#0d9488"></div><div class="stop" style="background:#0f766e"></div>
+        <div class="stop" style="background:#115e59"></div></div></div>
+    <div class="ramp-row"><div class="ramp-name">sand &mdash; warm neutrals (canvas/surfaces)</div>
+      <div class="ramp">
+        <div class="stop" style="background:#fbfaf8"></div><div class="stop" style="background:#f5f3ee"></div>
+        <div class="stop" style="background:#ece9e1"></div><div class="stop" style="background:#dedacd"></div>
+        <div class="stop" style="background:#a39a82"></div><div class="stop" style="background:#5c5648"></div>
+        <div class="stop" style="background:#1a1813"></div></div></div>
+
+    <div class="sec">Semantic &mdash; danger kept distinct from brand</div>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#059669"></div><div class="nm">brand</div><div class="lab">#059669</div></div>
+      <div class="sw"><div class="chip" style="background:#2563eb"></div><div class="nm">info</div><div class="lab">#2563eb</div></div>
+      <div class="sw"><div class="chip" style="background:#b45309"></div><div class="nm">warning</div><div class="lab">#b45309</div></div>
+      <div class="sw"><div class="chip" style="background:#d83a1c"></div><div class="nm">destructive</div><div class="lab">#d83a1c</div></div>
+    </div>
+    <div class="note"><b>The Peer-collision fix:</b> brand (emerald) and destructive (amber-red <code style="font-family:var(--mono)">#d83a1c</code>) are different hues entirely &mdash; danger never blurs with the brand, and is also distinct from warning (orange) and info (blue).</div>
+
+    <div class="sec">Type scale</div>
+    <div class="t-disp2">Send money across the border</div>
+    <div class="t-disp3" style="margin-top:6px">Confirm your order <span class="t-meta">display 24/600</span></div>
+    <div class="t-amt" style="margin-top:8px">&euro;228.50 <span class="t-meta">amount 34/700 tabular</span></div>
+    <div class="t-body" style="margin-top:8px">We&rsquo;ll send the euros and prove it for you. <span class="t-meta">body 16/400</span></div>
+    <div class="t-body2" style="margin-top:4px">Pay with Venmo (US) &middot; receive EUR by SEPA. <span class="t-meta">body2 14</span></div>
+    <div class="t-label" style="margin-top:8px">You send <span class="t-meta" style="text-transform:none">label 13/600 caps</span></div>
+
+    <div class="sec">Buttons</div>
+    <div class="btns">
+      <button class="btn btn-primary">Confirm &amp; send euros</button>
+      <button class="btn btn-secondary">Back</button>
+      <button class="btn btn-destructive">Cancel &amp; reclaim</button>
+      <button class="btn btn-primary" disabled>I&rsquo;ve sent the payment</button>
+    </div>
+
+    <div class="sec">Money input</div>
+    <div class="well">
+      <div class="t-label" style="margin-bottom:8px">You send</div>
+      <div class="row"><span class="money">250.00</span><span class="ccy">USD &#9662;</span></div>
+      <div class="quick"><span class="q">$50</span><span class="q active">$250</span><span class="q">$500</span><span class="q">$1k</span></div>
+    </div>
+
+    <div class="sec">Notices (first-class recovery)</div>
+    <div class="notice n-error"><span class="ico">!</span><span>We couldn&rsquo;t verify that payment. Your money is safe.</span><span class="act">Cancel &amp; reclaim</span></div>
+    <div class="notice n-warn"><span class="ico">&#9201;</span><span>Quote window closes in 04:12. Confirm to send.</span></div>
+
+    <div class="sec">Countdown ring &mdash; verify (lock) &amp; deadline</div>
+    <div class="rings">
+      <div class="ring-wrap">
+        <div class="ring verify"><div class="inner"><span class="lock">&#128274;</span><span class="num">22</span><span class="cap">~30s</span></div></div>
+        <div class="rl">Verifying your payment</div>
+      </div>
+      <div class="ring-wrap">
+        <div class="ring deadline"><div class="inner"><span class="num">04:12</span><span class="cap">window</span></div></div>
+        <div class="rl">turns red &lt; 2:00</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =====================  DARK  ===================== -->
+  <div class="panel ff-dark">
+    <span class="mode-tag">Dark &mdash; the &ldquo;night desk&rdquo;</span>
+
+    <div class="sec">Transfer summary rail (persistent)</div>
+    <div class="rail">
+      <div class="top">
+        <div><span class="chev">&raquo;</span><span class="amt">$250.00</span><span class="arrow">&#9656;</span><span class="amt out">&euro;228.50</span></div>
+        <span class="speedchip">Phase 2 &middot; Pay &amp; prove</span>
+      </div>
+      <div class="sub"><span class="to">to Anna M&uuml;ller &middot; DE89&hellip;0130 00</span><span class="clk">&#9201; 12:48</span></div>
+    </div>
+
+    <div class="sec">App card + two-tier verify stepper</div>
+    <div class="card">
+      <div class="card-pad">
+        <div class="t-disp3">Prove your payment</div>
+        <div class="t-body2" style="margin:4px 0 14px">We check it privately &mdash; up to ~30s.</div>
+        <div class="steps">
+          <div class="step"><span class="dot done">&#10003;</span><span class="lab">Payment sent</span><span class="meta">$250.00</span></div>
+          <div class="step cur is-pending"><span class="dot cur">&#128274;</span><span class="lab">Verify your payment</span><span class="meta">~30s</span></div>
+          <div class="step"><span class="dot pend"></span><span class="lab">Receive euros</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">Maker / quote card (reputation chip &mdash; never a raw &#64;handle)</div>
+    <div class="qcard sel"><div class="speed"></div>
+      <span class="bestbadge">Best rate</span>
+      <div class="body">
+        <div class="r1"><div class="left"><span class="repchip">&#10022; Trusted partner</span><span class="star">&#9733; 4.9</span></div><span class="amt">249.75 USDC</span></div>
+        <div class="r2"><span class="speedlab"><span class="speedchip">Instant</span> &middot; pays from balance</span><span class="forf">for $250.00</span></div>
+      </div>
+    </div>
+    <div class="qcard"><div class="speed"></div>
+      <div class="body">
+        <div class="r1"><div class="left"><span class="repchip verif">&#9670; Verified partner</span><span class="star">&#9733; 4.7</span></div><span class="amt">249.50 USDC</span></div>
+        <div class="r2"><span class="speedlab"><span class="speedchip">Instant</span></span><span class="forf">for $250.00</span></div>
+      </div>
+    </div>
+
+    <div class="sec">Send-fiat &mdash; gravity at the moment of risk</div>
+    <div class="well" style="margin-bottom:12px">
+      <div class="t-label" style="margin-bottom:6px">Send to</div>
+      <div class="row"><span class="t-amt" style="font-size:22px">&#64;partner-handle</span><span class="ccy">copy</span></div>
+      <div class="t-label" style="margin:10px 0 6px">Amount</div>
+      <div class="row"><span class="t-amt" style="font-size:22px">$250.00</span><span class="ccy">copy</span></div>
+    </div>
+    <div class="dd">
+      <div><span class="y">&#10003;</span> Send exactly $250.00 in one payment</div>
+      <div><span class="y">&#10003;</span> Pay from your Venmo balance</div>
+      <div><span class="n">&#10007;</span> Don&rsquo;t mention crypto/FreeFlo in the note</div>
+      <div><span class="n">&#10007;</span> Don&rsquo;t pay from a bank / eCheck</div>
+    </div>
+    <div class="irrev">&#9888; This sends real money and cannot be reversed.</div>
+    <div class="rg"><span class="box"></span><span>I&rsquo;ve sent exactly $250.00 to the partner</span></div>
+
+    <div class="sec">Success &mdash; restrained, no confetti</div>
+    <div class="card"><div class="card-pad" style="text-align:center">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(16,185,129,.14);display:inline-flex;align-items:center;justify-content:center;color:var(--success);font-size:26px;font-weight:700">&#10003;</div>
+      <div class="t-disp3" style="margin-top:10px">Euros are on the way</div>
+      <div style="margin-top:14px" class="rail">
+        <div class="sub" style="margin-top:0"><span class="to">You sent</span><span class="t-body2" style="font-weight:600;color:var(--text)">$250.00 via Venmo</span></div>
+        <div class="sub"><span class="to">Anna receives</span><span class="t-body2" style="font-weight:600;color:var(--brand)">&euro;228.50 by SEPA</span></div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:14px">Start another transfer</button>
+    </div></div>
+
+    <div class="sec">Info notice (no crypto jargon)</div>
+    <div class="notice n-info"><span class="ico">&#9432;</span><span>Your bank details are sealed on-chain. After you pay and prove it, the USDC converts to euros automatically.</span></div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Static preview &mdash; inline CSS only, no build. Tokens mirror <code>docs/design/UI-OVERHAUL-PLAN.md &sect;2</code>.<br/>
+  Brand emerald <code>#10b981</code> / teal <code>#14b8a6</code> are unchanged from the shipping theme &mdash; the migration is a token <em>rename</em>, not a recolor, on the brand axis.
+</div>
+
+</body>
+</html>
