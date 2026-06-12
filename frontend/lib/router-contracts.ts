@@ -159,6 +159,16 @@ export const FIAT_TO_FIAT_ROUTER_ABI = [
     outputs: [],
     stateMutability: "nonpayable",
   },
+  // Permissionless, gasless-for-the-user commit: any relayer/keeper/solver can
+  // call this to auto-select the best on-chain SEPA quote >= the user's floor and
+  // commit on their behalf (collapses the user's commit signature).
+  {
+    type: "function",
+    name: "commitFor",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
   {
     type: "function",
     name: "cancel",
