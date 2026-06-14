@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   useAccount,
   useChainId,
-  useWriteContract,
-  useWaitForTransactionReceipt,
   useReadContract,
   usePublicClient,
   useWalletClient,
@@ -90,7 +88,34 @@ export const ORCHESTRATOR_ABI = [
       { name: "timestamp", type: "uint256", indexed: false },
     ],
   },
+  // cancelIntent reverts this (selector 0x9481f8b9) when the intent no longer exists —
+  // e.g. it was already cancelled/pruned outside our app (the Peer UI). Declaring it
+  // lets viem decode the revert instead of showing a raw selector.
+  { type: "error", name: "IntentNotFound", inputs: [{ name: "intentHash", type: "bytes32" }] },
 ] as const;
+
+// The ZKP2P Orchestrator reverts IntentNotFound(bytes32) when an intent is gone —
+// already cancelled/pruned outside our app. We treat that as "already cancelled" so the
+// user is never wedged on a dead verify screen (the on-chain intent can't be re-cancelled).
+function isIntentGoneError(err: unknown): boolean {
+  const msg = String((err as { message?: string } | undefined)?.message ?? err ?? "");
+  return msg.includes("IntentNotFound") || msg.toLowerCase().includes("0x9481f8b9");
+}
+
+// The router's commit reverts SlippageExceeded (0x71c4efed) — or OffRampV3 QuoteNotFound
+// (0xcf533f49) — when there's no on-chain quote >= the user's floor. The usual cause is
+// that the onramped amount is below the solver's minimum, so the solver never quoted it
+// on-chain even though the quote API (which doesn't enforce the minimum) showed a price.
+function isNoQuoteError(err: unknown): boolean {
+  const e = err as { shortMessage?: string; message?: string } | undefined;
+  const msg = String(e?.shortMessage ?? e?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("slippageexceeded") ||
+    msg.includes("0x71c4efed") ||
+    msg.includes("quotenotfound") ||
+    msg.includes("0xcf533f49")
+  );
+}
 
 // ============ Types ============
 
@@ -327,8 +352,10 @@ export function useFiatToFiatFlow() {
   const [extensionState, setExtensionState] = useState<string>("unknown");
 
   // Contract interactions
-  const { writeContract: routerCommit, data: routerCommitHash } = useWriteContract();
-  const { isSuccess: isRouterCommitConfirmed } = useWaitForTransactionReceipt({ hash: routerCommitHash });
+  // Commit + reclaim are simulate-first (see handleRouterCommit / handleReclaimTransfer)
+  // so a doomed tx surfaces a clear error instead of a reverting signature.
+  const [isCommitting, setIsCommitting] = useState(false);
+  const [isReclaiming, setIsReclaiming] = useState(false);
 
   // Local state for signaling and cancelling
   const [isSignaling, setIsSignaling] = useState(false);
@@ -409,6 +436,52 @@ export function useFiatToFiatFlow() {
       setStep("router_waiting");
     }
   }, [pendingTransfer, step]);
+
+  // Liveness probe — don't strand the user on a restored verify/proof screen for a
+  // ZKP2P intent that no longer exists on-chain (e.g. it was cancelled via the Peer
+  // UI). Simulate cancelIntent as a READ-ONLY probe; ONLY IntentNotFound clears the
+  // flow — a live-but-not-yet-cancellable intent reverts differently and is left
+  // untouched, so there are no false resets. Runs at most once per intent hash.
+  const probedIntentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const hash = flowData.zkp2pIntentHash;
+    const proofStages: FlowStep[] = [
+      "zkp2p_verify", "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
+    ];
+    if (!hash || !publicClient || !address || !proofStages.includes(step)) return;
+    if (probedIntentRef.current === hash) return;
+    probedIntentRef.current = hash;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await publicClient.simulateContract({
+          address: ZKP2P_V3_ORCHESTRATOR,
+          abi: ORCHESTRATOR_ABI,
+          functionName: "cancelIntent",
+          args: [hash],
+          account: address,
+        });
+        // Simulation succeeded → the intent exists and is cancellable → live. No-op.
+      } catch (err) {
+        if (cancelled || !isIntentGoneError(err)) return; // any other revert → keep the flow
+        if (flowStorageKey) {
+          try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ }
+        }
+        setFlowData((prev) => ({
+          ...prev,
+          zkp2pIntentHash: null,
+          zkp2pQuote: null,
+          routerIntentId: null,
+        }));
+        setStep("select_flow");
+        setError("Your previous order was already cancelled — starting fresh.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, flowData.zkp2pIntentHash, publicClient, address, flowStorageKey]);
 
   // ============ Event Polling (replaces useWatchContractEvent) ============
 
@@ -1006,6 +1079,15 @@ export function useFiatToFiatFlow() {
       setStep("select_maker");
       setError(null);
     } catch (err: any) {
+      // Already cancelled/pruned elsewhere (e.g. via the Peer UI): there's nothing
+      // on-chain left to cancel, so don't show an error — clear the stale flow and
+      // start fresh so the user is no longer wedged on the dead verify screen.
+      if (isIntentGoneError(err)) {
+        console.warn("ZKP2P intent already gone (IntentNotFound) — clearing stale flow");
+        resetFlow();
+        setError("That order was already cancelled — you're back to the start.");
+        return;
+      }
       console.error("Cancel intent failed:", err);
       setError(`Failed to cancel intent: ${err.message || "Unknown error"}`);
     } finally {
@@ -1156,26 +1238,65 @@ export function useFiatToFiatFlow() {
     };
   }, [step, flowData.routerIntentId, flowData.usdcAmount, pendingTransfer, fetchFreefloQuotes]);
 
-  // Handle Router commit
-  const handleRouterCommit = () => {
-    if (!flowData.selectedSolver) return;
-
-    routerCommit({
-      address: FIAT_TO_FIAT_ROUTER_ADDRESS,
-      abi: FIAT_TO_FIAT_ROUTER_ABI,
-      functionName: "commit",
-      // commit(address solver) — slippage is now enforced on-chain against the
-      // real quote, so no caller-supplied EUR amount is passed.
-      args: [flowData.selectedSolver],
-    });
+  // Handle Router commit — simulate FIRST so a doomed commit surfaces a clear message
+  // instead of prompting the user to sign a reverting tx. The common failure is
+  // SlippageExceeded: no on-chain quote >= the floor, usually because the onramped
+  // amount is below the solver's minimum (the quote API showed a price the solver
+  // won't honour on-chain). On success, send + advance to the pending screen.
+  const handleRouterCommit = async () => {
+    if (!flowData.selectedSolver || !publicClient || !walletClient) return;
+    setIsCommitting(true);
+    setError(null);
+    try {
+      const { request } = await publicClient.simulateContract({
+        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "commit",
+        // commit(address solver) — slippage is enforced on-chain against the real quote.
+        args: [flowData.selectedSolver],
+        account: walletClient.account,
+      });
+      const txHash = await walletClient.writeContract(request);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      setStep("freeflo_pending");
+    } catch (err: any) {
+      if (isNoQuoteError(err)) {
+        setError(
+          "No solver quote is available on-chain for this amount yet — it's most likely below the solver's minimum (~0.1 USDC / ~€0.09). Reclaim your USDC below and try a larger amount.",
+        );
+      } else {
+        setError(`Couldn't commit: ${err?.shortMessage || err?.message || "unknown error"}`);
+      }
+    } finally {
+      setIsCommitting(false);
+    }
   };
 
-  // Watch for commit confirmation
-  useEffect(() => {
-    if (isRouterCommitConfirmed && step === "router_commit") {
-      setStep("freeflo_pending");
+  // Reclaim a PENDING router transfer (router.cancel() → USDC back to the user). The
+  // escape when no quote ever lands (e.g. a sub-minimum amount) so the user is never
+  // wedged on the commit screen.
+  const handleReclaimTransfer = async () => {
+    if (!publicClient || !walletClient) return;
+    setIsReclaiming(true);
+    setError(null);
+    try {
+      const { request } = await publicClient.simulateContract({
+        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "cancel",
+        args: [],
+        account: walletClient.account,
+      });
+      const txHash = await walletClient.writeContract(request);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      resetFlow();
+      setError("Reclaimed your USDC — you're back to the start.");
+    } catch (err: any) {
+      setError(`Couldn't reclaim: ${err?.shortMessage || err?.message || "unknown error"}`);
+    } finally {
+      setIsReclaiming(false);
     }
-  }, [isRouterCommitConfirmed, step]);
+  };
 
   // ============ Format Helpers ============
 
@@ -1240,6 +1361,8 @@ export function useFiatToFiatFlow() {
     extensionState,
     isSignaling,
     isCancelling,
+    isCommitting,
+    isReclaiming,
     isConnecting,
     isPricingFloor,
     zkp2pQuotes,
@@ -1277,6 +1400,7 @@ export function useFiatToFiatFlow() {
     handleSelectAndFulfill,
     handleCancelIntent,
     handleRouterCommit,
+    handleReclaimTransfer,
     repriceFloor,
     connectExtension,
     resetFlow,
