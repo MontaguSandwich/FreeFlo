@@ -19,10 +19,16 @@ export const FIAT_TO_FIAT_ROUTER_V1 = "0xA9F5E04Ee35cd017710c28c049748B7Af85BC0B
 // guard kept a COMMITTED slot blocking returning wallets until markComplete (0x4c0b07ac).
 export const FIAT_TO_FIAT_ROUTER_PRIOR = "0xaA11AFe4bDF080a9604a8B47b17D5AD66d13e967" as const;
 
-// Active router — wired to the AUDITED prod OffRampV3 0x57c621994616110a50bD820388e4E8a41F00b4D7
-// (verifier 0x5602…, witness 0xf68E…). execute() now blocks only while the prior transfer is
-// genuinely in-flight on OffRampV3, so a returning wallet isn't stuck. Deployed 2026-06-12 (Base 8453).
-export const FIAT_TO_FIAT_ROUTER_ADDRESS = "0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78" as const;
+// Pre-commitFor router (deployed 2026-06-12) — audited wiring + in-flight-only execute() guard,
+// but NO permissionless commitFor (no gasless 3→2). This is the known-good baseline that `main`
+// points at; kept for history/reclaim of any transfers stuck on it.
+export const FIAT_TO_FIAT_ROUTER_PRE_COMMITFOR = "0x199FFFe6B7F9a7B9c15E26D51FA4175baA343B78" as const;
+
+// Active router — adds permissionless commitFor(user) (gasless 3→2: a relayer/solver commits the
+// best on-chain SEPA quote ≥ the user's floor on their behalf). Wired to audited OffRampV3
+// 0x57c621994616110a50bD820388e4E8a41F00b4D7 (verifier 0x5602…, witness 0xf68E…).
+// Deployed 2026-06-13 (Base 8453, tx 0xd35ed255…).
+export const FIAT_TO_FIAT_ROUTER_ADDRESS = "0xF8010c7B323ABa20d37cAaD32D97C1967e4C1380" as const;
 
 // Transfer status enum matching contract
 export enum RouterTransferStatus {
