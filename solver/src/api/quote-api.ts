@@ -35,6 +35,10 @@ export interface QuoteApiResponse {
     expiresAt: number;       // Unix timestamp
   }>;
   timestamp: number;
+  /** Solver offramp minimum (USDC base units, 6 decimals) — for the UI to gate input. */
+  minUsdcAmount?: number;
+  /** True when the requested amount is below the minimum (quotes will be empty). */
+  belowMinimum?: boolean;
 }
 
 // Map string currency codes to Currency enum
@@ -52,7 +56,8 @@ const CURRENCY_STRING_TO_ENUM: Record<string, Currency> = {
 export function createQuoteApiServer(
   registry: ProviderRegistry,
   solverAddress: string,
-  solverName: string = "ZKP2P Solver"
+  solverName: string = "ZKP2P Solver",
+  minUsdcAmount?: bigint
 ): http.Server {
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -96,7 +101,7 @@ export function createQuoteApiServer(
       const currency = CURRENCY_STRING_TO_ENUM[currencyUpper];
 
       try {
-        const quotes = await getQuotes(registry, solverAddress, solverName, usdcAmount, currency);
+        const quotes = await getQuotes(registry, solverAddress, solverName, usdcAmount, currency, minUsdcAmount);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(quotes, null, 2));
       } catch (error) {
@@ -130,10 +135,20 @@ async function getQuotes(
   solverAddress: string,
   solverName: string,
   usdcAmount: number,
-  currency: Currency
+  currency: Currency,
+  minUsdcAmount?: bigint
 ): Promise<QuoteApiResponse> {
   const quotes: QuoteApiResponse["quotes"] = [];
   const usdcAmountBigInt = BigInt(Math.round(usdcAmount * 1_000_000)); // Convert to 6 decimals
+  const minBase = minUsdcAmount !== undefined ? Number(minUsdcAmount) : undefined;
+
+  // Enforce the solver's offramp minimum. The on-chain solver SKIPS quoting below
+  // MIN_USDC_AMOUNT, so returning a quote here would let the UI start a transfer that
+  // then strands at commit (no on-chain quote -> SlippageExceeded). Return no quotes
+  // and a clear belowMinimum signal so the UI can gate the amount up front.
+  if (minUsdcAmount !== undefined && usdcAmountBigInt < minUsdcAmount) {
+    return { quotes: [], timestamp: Date.now(), minUsdcAmount: minBase, belowMinimum: true };
+  }
 
   // Get RTPNs for this currency
   const rtpnsForCurrency = getRtpnsForCurrency(currency);
@@ -185,6 +200,7 @@ async function getQuotes(
   return {
     quotes,
     timestamp: Date.now(),
+    minUsdcAmount: minBase,
   };
 }
 

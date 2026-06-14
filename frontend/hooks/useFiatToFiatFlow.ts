@@ -680,6 +680,28 @@ export function useFiatToFiatFlow() {
     }
   }, []);
 
+  // Check the offramp minimum for a USDC amount via the solver quote API. Returns
+  // ok=false (with the minimum in USDC) when the amount is below the solver's minimum
+  // — used to gate sub-minimum transfers before they strand at commit. Fails OPEN on
+  // a transient API error (the simulate-first commit + reclaim still protect the user).
+  const checkOfframpMinimum = useCallback(
+    async (usdcAmount: bigint): Promise<{ ok: boolean; minUsdc: number | null }> => {
+      const amountNum = Number(usdcAmount) / 1_000_000;
+      if (!(amountNum > 0)) return { ok: false, minUsdc: null };
+      try {
+        const res = await fetch(`/api/quote?amount=${amountNum}&currency=EUR`);
+        if (!res.ok) return { ok: true, minUsdc: null };
+        const data = await res.json();
+        const minUsdc = typeof data.minUsdcAmount === "number" ? data.minUsdcAmount / 1_000_000 : null;
+        const ok = !data.belowMinimum && (data.quotes?.length ?? 0) > 0;
+        return { ok, minUsdc };
+      } catch {
+        return { ok: true, minUsdc: null };
+      }
+    },
+    [],
+  );
+
   // Input-screen preview (debounced): a live, solver-derived "≈ €X" as the user
   // types. Estimates the onramp output (~0.1% ZKP2P fee, USDC≈USD) then asks the
   // solver what that USDC fetches in EUR. Display only — the binding floor is set
@@ -875,13 +897,32 @@ export function useFiatToFiatFlow() {
     setError(null);
 
     const quotes = await fetchZkp2pQuotes(amount, selectedPlatform, selectedCurrency);
-    if (quotes.length > 0) {
-      setStep("select_maker");
-    } else {
+    if (quotes.length === 0) {
       const platformName = PLATFORMS[selectedPlatform]?.name || selectedPlatform;
       setError(`No ${platformName} makers available for this amount. Try a different amount or platform.`);
       setStep("input_all");
+      return;
     }
+
+    // Gate the offramp minimum up front: the onramp output (USDC) must clear the
+    // solver's minimum or the transfer strands at commit (the solver skips quoting
+    // sub-minimum amounts on-chain). Check the best maker's USDC output.
+    const bestUsdc = quotes.reduce((max, q) => {
+      let t = BigInt(0);
+      try { t = BigInt(q.tokenAmount || "0"); } catch { /* ignore */ }
+      return t > max ? t : max;
+    }, BigInt(0));
+    const { ok, minUsdc } = await checkOfframpMinimum(bestUsdc);
+    if (!ok) {
+      const minLabel = minUsdc ? minUsdc.toFixed(2) : "0.10";
+      setError(
+        `Amount too small — after fees the euro conversion needs at least ~${minLabel} USDC. Increase your amount and try again.`,
+      );
+      setStep("input_all");
+      return;
+    }
+
+    setStep("select_maker");
   };
 
   const handleSelectMaker = (quote: ZkpQuote) => {

@@ -123,7 +123,12 @@ async function main() {
   registerProviders();
 
   // Start quote API server now that providers are registered
-  quoteApiServer = createQuoteApiServer(registry, solverAddress, "ZKP2P Solver");
+  quoteApiServer = createQuoteApiServer(
+    registry,
+    solverAddress,
+    "ZKP2P Solver",
+    config.orchestrator.minUsdcAmount,
+  );
   quoteApiServer.listen(quoteApiPort, () => {
     log.info({ port: quoteApiPort }, "Quote API server started");
   });
