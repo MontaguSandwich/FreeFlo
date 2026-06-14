@@ -259,9 +259,10 @@ export class ChainClientV3 {
    */
   async commitForRouterIntent(intentId: `0x${string}`): Promise<`0x${string}` | null> {
     if (!this.routerAddress) return null;
+    // Resolve the router user for this intent (TransferInitiated.user, indexed). The
+    // intent commits within OffRampV3's 15m window, so a recent lookback covers it.
+    let user: Address;
     try {
-      // Resolve the router user for this intent (TransferInitiated.user, indexed). The
-      // intent commits within OffRampV3's 15m window, so a recent lookback covers it.
       const current = await this.publicClient.getBlockNumber();
       const fromBlock = current > 2000n ? current - 2000n : 0n;
       const logs = await this.publicClient.getContractEvents({
@@ -280,35 +281,65 @@ export class ChainClientV3 {
         return null;
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const user = (logs[0] as any).args.user as Address;
-
-      log.info({ intentId, user }, "Relayer-committing router intent for user (commitFor)");
-      const hash = await this.walletClient.writeContract({
-        address: this.routerAddress,
-        abi: FIAT_TO_FIAT_ROUTER_ABI,
-        functionName: "commitFor",
-        args: [user],
-      });
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status === "reverted") {
-        log.warn(
-          { intentId, user, hash },
-          "commitFor reverted (window closed / below floor / already committed)"
-        );
-        return null;
-      }
-      log.info(
-        { intentId, user, hash, blockNumber: receipt.blockNumber },
-        "✅ Relayer commit confirmed (user paid no gas)"
-      );
-      return hash;
+      user = (logs[0] as any).args.user as Address;
     } catch (error) {
       log.warn(
         { intentId, error: error instanceof Error ? error.message : error },
-        "Relayer commitFor failed (non-fatal)"
+        "Relayer commit: failed to resolve router user (non-fatal)"
       );
       return null;
     }
+
+    // The quote tx is already mined (submitQuote awaited its receipt), but
+    // load-balanced public RPC nodes lag the chain tip — calling commitFor
+    // immediately races that lag: the node serving the read hasn't seen the quote
+    // block yet, so _bestSepaQuote reads 0 quotes and reverts SlippageExceeded.
+    // Retry through the lag. A revert fails at gas-estimation (NO tx is sent, no gas
+    // spent), so retrying is cheap and self-heals once the read node catches up. A
+    // genuinely below-floor quote just exhausts the retries and the user's manual
+    // commit (frontend fallback) takes over.
+    const ATTEMPTS = 6;
+    const RETRY_MS = 2000;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      try {
+        log.info(
+          { intentId, user, attempt },
+          "Relayer-committing router intent for user (commitFor)"
+        );
+        const hash = await this.walletClient.writeContract({
+          address: this.routerAddress,
+          abi: FIAT_TO_FIAT_ROUTER_ABI,
+          functionName: "commitFor",
+          args: [user],
+        });
+        const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status === "reverted") {
+          log.warn({ intentId, user, hash }, "commitFor tx reverted on-chain (non-fatal)");
+          return null;
+        }
+        log.info(
+          { intentId, user, hash, blockNumber: receipt.blockNumber, attempt },
+          "✅ Relayer commit confirmed (user paid no gas)"
+        );
+        return hash;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (attempt < ATTEMPTS) {
+          log.info(
+            { intentId, attempt, nextInMs: RETRY_MS },
+            "commitFor not landable yet (quote likely not visible on the read node); retrying"
+          );
+          await new Promise((r) => setTimeout(r, RETRY_MS));
+        } else {
+          log.warn(
+            { intentId, user, attempts: ATTEMPTS, error: msg },
+            "Relayer commitFor failed after retries (non-fatal); user can self-commit"
+          );
+          return null;
+        }
+      }
+    }
+    return null;
   }
 
   // ============ Event Watching (eth_getLogs polling) ============
