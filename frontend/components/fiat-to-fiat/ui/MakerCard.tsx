@@ -57,7 +57,9 @@ export function MakerCard({
 }) {
   const rep = reputationOf(quote);
   const tierStyle = TIER_STYLE[rep.tier];
-  const usdcLabel = quote.tokenAmountFormatted ? `${quote.tokenAmountFormatted} USDC` : "USDC";
+  // tokenAmountFormatted may already include the "USDC" unit — don't double it.
+  const usdcRaw = (quote.tokenAmountFormatted || "").trim();
+  const usdcLabel = usdcRaw ? (/usdc/i.test(usdcRaw) ? usdcRaw : `${usdcRaw} USDC`) : "USDC";
 
   // Payee handle (public maker data). May be absent on a list item (only the selected
   // maker is lazily resolved) — fall back to the reputation label so the right slot is

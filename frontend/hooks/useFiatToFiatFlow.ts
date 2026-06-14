@@ -764,14 +764,16 @@ export function useFiatToFiatFlow() {
 
       // Map API response to our ZkpQuote interface
       const mapped: ZkpQuote[] = quotes.map((q: any) => {
-        // The readable handle the buyer must pay (e.g. a Revolut/Venmo username) lives
-        // in the quote's curator-registered `payeeData.offchainId`. The previous
-        // `maker.depositData.*Username` path does NOT exist on the /v2/quote response,
-        // so it always fell back to "" → the send screen rendered "@unknown".
-        // `intent.payeeDetails` is the HASHED on-chain id (kept for the gating call and
-        // for the apiGetPayeeDetails fallback when a maker has no curated payeeData).
+        // The readable handle the buyer must pay (e.g. a Revolut username) lives on the
+        // quote's `maker.offchainId` (confirmed on the /v2/quote response — `payeeData`
+        // is null there, and `maker.depositData` doesn't exist). Reading the wrong path
+        // is why the maker list showed no handle. Keep payeeData + the lazy
+        // /api/zkp2p-payee resolver as fallbacks. `intent.payeeDetails` is the HASHED
+        // on-chain id (kept for the gating call and the resolver lookup).
         const payeeUsername: string =
-          q.payeeData?.offchainId
+          q.maker?.offchainId
+          || q.maker?.telegramUsername
+          || q.payeeData?.offchainId
           || q.payeeData?.telegramUsername
           || "";
 
