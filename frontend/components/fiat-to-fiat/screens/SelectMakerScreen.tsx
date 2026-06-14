@@ -10,9 +10,10 @@ import { MakerCard, NoticeBanner, phaseOfFour } from "../ui";
  * select_maker (§5.4) — pick a partner. Behaviour preserved:
  *  - maps flow.zkp2pQuotes, each card's onSelect calls handleSelectMaker(quote)
  *    (unchanged — sets zkp2pQuote / usdcAmount / venmoPayee, lazy-resolves handle).
- *  - renders each maker as a reputation chip (MakerCard), NEVER a raw @handle /
- *    deposit id (the "don't leak maker handles" rule). The raw handle is only
- *    revealed later, on the send screen.
+ *  - renders each maker as a MakerCard showing the payee handle (@…) with a
+ *    tier-coloured verification check, the platform, and the fiat to pay (Peer-style).
+ *    (The earlier "don't leak handles" rule is intentionally reversed — the handle is
+ *    public maker data and surfacing it helps the user choose.)
  *  - the best quote (most USDC fronted for the same fiat) gets the "Best rate" badge.
  *  - empty/loading state is first-class (no maker list ⇒ a calm Notice rather
  *    than a blank screen — the hook normally routes empties back to input_all,
