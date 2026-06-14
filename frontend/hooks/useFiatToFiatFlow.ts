@@ -566,9 +566,10 @@ export function useFiatToFiatFlow() {
         setFlowData((prev) => ({
           ...prev,
           selectedSolver: (args.solver as `0x${string}`) ?? prev.selectedSolver,
-          // eurAmount is on-chain cents; keep any euro figure we already resolved.
-          quotedEurAmount:
-            prev.quotedEurAmount > 0 ? prev.quotedEurAmount : Number(args.eurAmount) / 100,
+          // eurAmount is the FIRM on-chain committed quote (cents) — the authoritative
+          // "you receive". Always use it, overriding any earlier /api/quote estimate
+          // (which could be stale, e.g. quoted against a prior intent's amount).
+          quotedEurAmount: Number(args.eurAmount) / 100,
         }));
         setStep("freeflo_pending");
       }
@@ -1241,12 +1242,16 @@ export function useFiatToFiatFlow() {
 
     let cancelled = false;
     const pollQuotes = async () => {
-      // Use the router's on-chain amount as source of truth — flowData.usdcAmount can
-      // be 0 after a localStorage resume (it isn't restored there).
-      const ptAmt = pendingTransfer
-        ? BigInt((pendingTransfer as { usdcAmount: bigint }).usdcAmount)
-        : BigInt(0);
-      const quotes = await fetchFreefloQuotes(ptAmt > BigInt(0) ? ptAmt : flowData.usdcAmount);
+      // Quote the CURRENT intent's real onramped amount. Prefer flowData.usdcAmount
+      // (set from TransferInitiated); fall back to the on-chain pendingTransfer ONLY
+      // when it's for THIS intent. A stale cached transfer from a prior/reclaimed
+      // intent would otherwise quote the wrong amount — the source of the stale figure.
+      const pt = pendingTransfer as { intentId?: `0x${string}`; usdcAmount?: bigint } | undefined;
+      const ptAmt =
+        pt && pt.intentId === flowData.routerIntentId ? BigInt(pt.usdcAmount ?? BigInt(0)) : BigInt(0);
+      const amt = flowData.usdcAmount > BigInt(0) ? flowData.usdcAmount : ptAmt;
+      if (amt <= BigInt(0)) return;
+      const quotes = await fetchFreefloQuotes(amt);
       // A relayer may have committed (advancing us to freeflo_pending) while this fetch
       // was in flight — don't yank the step back to router_commit.
       if (cancelled) return;
