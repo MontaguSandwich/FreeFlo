@@ -378,6 +378,9 @@ export function useFiatToFiatFlow() {
   // it's still active on-chain, leaving a stranded "active order" (409 on retry). ----
   const flowStorageKey = address ? `ff-flow-${address.toLowerCase()}` : null;
   const rehydratedKeyRef = useRef<string | null>(null);
+  // A router transfer the user just reclaimed/cancelled this session — never re-resume
+  // it from a stale PENDING read.
+  const reclaimedIntentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!flowStorageKey || rehydratedKeyRef.current === flowStorageKey) return;
@@ -411,22 +414,53 @@ export function useFiatToFiatFlow() {
     } catch { /* ignore quota/serialization */ }
   }, [flowStorageKey, step, flowData]);
 
-  // Resume a pending transfer after a reload / lost flow state: if the connected
-  // wallet already has a PENDING transfer on the router (the onramp hook fired but
-  // the UI state was lost), jump straight to the commit flow so the offramp leg can
-  // still be finished within the selection window.
+  // Reconcile the UI with the on-chain router transfer (recovery after a reload / lost
+  // state). Two cases:
+  //  - PENDING with no live flow → resume into the commit flow so the offramp leg can
+  //    finish within the selection window.
+  //  - the transfer we're showing went TERMINAL (CANCELLED/EXPIRED — e.g. the user just
+  //    reclaimed, or it timed out) → clear the flow so they're not stranded on a dead
+  //    commit screen (which localStorage would otherwise keep restoring).
   useEffect(() => {
     if (!pendingTransfer) return;
     const pt = pendingTransfer as unknown as {
       intentId: `0x${string}`; usdcAmount: bigint; createdAt: bigint; status: number;
     };
+    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    if (!pt.intentId || pt.intentId === ZERO) return;
+    // Never re-resume a transfer the user just reclaimed this session, even if the read
+    // cache still shows it PENDING for a moment.
+    if (reclaimedIntentRef.current === pt.intentId) return;
+
+    const PENDING = 1, CANCELLED = 4, EXPIRED = 5;
+    const routerStages: FlowStep[] = ["router_waiting", "router_commit"];
+
+    // Dead transfer while the UI shows a committable screen → drop it.
+    if (
+      (Number(pt.status) === CANCELLED || Number(pt.status) === EXPIRED) &&
+      routerStages.includes(step) &&
+      flowData.routerIntentId === pt.intentId
+    ) {
+      if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
+      setFlowData((prev) => ({
+        ...prev,
+        routerIntentId: null,
+        selectedSolver: null,
+        quotedEurAmount: 0,
+        routerIntentCreatedAt: null,
+      }));
+      setStep("select_flow");
+      setError("That transfer was reclaimed or expired — you're back to the start.");
+      return;
+    }
+
+    // PENDING with no live flow → resume into the commit flow.
     const earlySteps: FlowStep[] = [
       "select_flow", "input_all", "finding_quotes", "select_maker",
       "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify",
       "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
     ];
-    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    if (Number(pt.status) === 1 && earlySteps.includes(step) && pt.intentId && pt.intentId !== ZERO) {
+    if (Number(pt.status) === PENDING && earlySteps.includes(step)) {
       setFlowData((prev) => ({
         ...prev,
         routerIntentId: pt.intentId,
@@ -435,7 +469,7 @@ export function useFiatToFiatFlow() {
       }));
       setStep("router_waiting");
     }
-  }, [pendingTransfer, step]);
+  }, [pendingTransfer, step, flowData.routerIntentId, flowStorageKey]);
 
   // Liveness probe — don't strand the user on a restored verify/proof screen for a
   // ZKP2P intent that no longer exists on-chain (e.g. it was cancelled via the Peer
@@ -1289,6 +1323,12 @@ export function useFiatToFiatFlow() {
       });
       const txHash = await walletClient.writeContract(request);
       await publicClient.waitForTransactionReceipt({ hash: txHash });
+      // Mark reclaimed so the resume effect won't re-restore it from a stale PENDING
+      // read, and refresh the on-chain read before resetting.
+      reclaimedIntentRef.current =
+        flowData.routerIntentId ??
+        ((pendingTransfer as { intentId?: `0x${string}` } | undefined)?.intentId ?? null);
+      try { await refetchPendingTransfer(); } catch { /* noop */ }
       resetFlow();
       setError("Reclaimed your USDC — you're back to the start.");
     } catch (err: any) {
