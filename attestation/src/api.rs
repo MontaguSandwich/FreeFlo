@@ -10,7 +10,9 @@ use axum::{
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::attestation::{sign_verified_payment, verify_payment_presentation, AttestationRequest, AttestationResponse};
+use crate::attestation::{
+    sign_verified_payment, verify_payment_presentation, AttestationRequest, AttestationResponse,
+};
 use crate::audit::{current_timestamp, AuditLogEntry, AuditLogger, AuditResult};
 use crate::auth::SolverAuth;
 use crate::chain::ChainClient;
@@ -32,15 +34,24 @@ impl AppState {
         let audit = AuditLogger::new();
 
         if auth.is_enabled() {
-            info!("Solver authentication enabled ({} solvers)", auth.solver_count());
+            info!(
+                "Solver authentication enabled ({} solvers)",
+                auth.solver_count()
+            );
         } else {
             warn!("Solver authentication DISABLED - set SOLVER_API_KEYS to enable");
         }
 
         if chain.is_some() {
             info!("On-chain intent validation enabled");
-            info!("  RPC URL: {}", std::env::var("RPC_URL").unwrap_or_default());
-            info!("  Contract: {}", std::env::var("OFFRAMP_CONTRACT").unwrap_or_default());
+            info!(
+                "  RPC URL: {}",
+                std::env::var("RPC_URL").unwrap_or_default()
+            );
+            info!(
+                "  Contract: {}",
+                std::env::var("OFFRAMP_CONTRACT").unwrap_or_default()
+            );
         } else if config.allow_no_chain_validation {
             warn!("On-chain validation DISABLED (ALLOW_NO_CHAIN_VALIDATION=true) - DEV ONLY");
         } else {
@@ -184,7 +195,9 @@ pub async fn attest(
                 intent_hash: intent_hash.clone(),
                 payment_id: None,
                 amount_cents: request.expected_amount_cents,
-                result: AuditResult::Rejected { reason: e.to_string() },
+                result: AuditResult::Rejected {
+                    reason: e.to_string(),
+                },
                 request_ip: None,
                 duration_ms,
             });
@@ -193,10 +206,13 @@ pub async fn attest(
         }
     };
 
-    // Validate intent on-chain (if enabled)
-    if let Some(ref chain) = state.chain {
-        let intent_bytes = match decode_bytes32(&request.intent_hash) {
-            Ok(b) => b,
+    // Resolve the attestation intentHash and bind the payee to the user's chosen recipient.
+    //  - Compact (TIER-1 sign-once) flow: bind the proven IBAN to the user's signed Mandate and
+    //    set intentHash = keccak(claimHash, filler). No OffRampV3 intent exists for this flow.
+    //  - Legacy OffRampV3 flow: bind the IBAN to the on-chain intent recipient; intentHash = id.
+    let effective_intent_hash: String = if let Some(ref compact) = request.compact {
+        match crate::attestation::resolve_compact_intent_hash(&verified, compact, &state.config) {
+            Ok(h) => h,
             Err(e) => {
                 let duration_ms = start_time.elapsed().as_millis() as u64;
                 state.audit.log(&AuditLogEntry {
@@ -206,65 +222,89 @@ pub async fn attest(
                     payment_id: None,
                     amount_cents: request.expected_amount_cents,
                     result: AuditResult::Rejected {
-                        reason: format!("Invalid intent hash: {}", e),
+                        reason: e.to_string(),
                     },
                     request_ip: None,
                     duration_ms,
                 });
+                warn!(intent_hash = %request.intent_hash, error = %e, "Compact binding failed");
+                return Err(e.into_response());
+            }
+        }
+    } else {
+        // Validate intent on-chain (if enabled)
+        if let Some(ref chain) = state.chain {
+            let intent_bytes = match decode_bytes32(&request.intent_hash) {
+                Ok(b) => b,
+                Err(e) => {
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
+                    state.audit.log(&AuditLogEntry {
+                        timestamp: current_timestamp(),
+                        solver_address: solver_address.clone(),
+                        intent_hash: intent_hash.clone(),
+                        payment_id: None,
+                        amount_cents: request.expected_amount_cents,
+                        result: AuditResult::Rejected {
+                            reason: format!("Invalid intent hash: {}", e),
+                        },
+                        request_ip: None,
+                        duration_ms,
+                    });
 
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(AuthErrorResponse {
+                            success: false,
+                            error: format!("Invalid intent hash: {}", e),
+                        }),
+                    )
+                        .into_response());
+                }
+            };
+
+            if let Err(e) = crate::chain::validate_intent(
+                chain,
+                intent_bytes,
+                &solver_address,
+                verified.amount_cents.unwrap_or(0),
+                verified.beneficiary_iban.as_deref().unwrap_or(""),
+            )
+            .await
+            {
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+                state.audit.log(&AuditLogEntry {
+                    timestamp: current_timestamp(),
+                    solver_address: solver_address.clone(),
+                    intent_hash: intent_hash.clone(),
+                    payment_id: None,
+                    amount_cents: request.expected_amount_cents,
+                    result: AuditResult::Rejected { reason: e.clone() },
+                    request_ip: None,
+                    duration_ms,
+                });
+
+                warn!(
+                    intent_hash = %request.intent_hash,
+                    solver = %solver_address,
+                    error = %e,
+                    "Intent validation failed"
+                );
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(AuthErrorResponse {
                         success: false,
-                        error: format!("Invalid intent hash: {}", e),
+                        error: e,
                     }),
                 )
                     .into_response());
             }
-        };
-
-        if let Err(e) = crate::chain::validate_intent(
-            chain,
-            intent_bytes,
-            &solver_address,
-            verified.amount_cents.unwrap_or(0),
-            verified.beneficiary_iban.as_deref().unwrap_or(""),
-        )
-        .await
-        {
-            let duration_ms = start_time.elapsed().as_millis() as u64;
-            state.audit.log(&AuditLogEntry {
-                timestamp: current_timestamp(),
-                solver_address: solver_address.clone(),
-                intent_hash: intent_hash.clone(),
-                payment_id: None,
-                amount_cents: request.expected_amount_cents,
-                result: AuditResult::Rejected {
-                    reason: e.clone(),
-                },
-                request_ip: None,
-                duration_ms,
-            });
-
-            warn!(
-                intent_hash = %request.intent_hash,
-                solver = %solver_address,
-                error = %e,
-                "Intent validation failed"
-            );
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(AuthErrorResponse {
-                    success: false,
-                    error: e,
-                }),
-            )
-                .into_response());
         }
-    }
 
-    // Sign the attestation for the verified, on-chain-bound payment.
-    match sign_verified_payment(&verified, &request.intent_hash, &state.config) {
+        request.intent_hash.clone()
+    };
+
+    // Sign the attestation for the verified, bound payment.
+    match sign_verified_payment(&verified, &effective_intent_hash, &state.config) {
         Ok(response) => {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             state.audit.log(&AuditLogEntry {
@@ -313,8 +353,7 @@ pub async fn attest(
 
 fn decode_bytes32(hex_str: &str) -> Result<[u8; 32], String> {
     let hex_str = hex_str.trim_start_matches("0x");
-    let bytes =
-        hex::decode(hex_str).map_err(|e| format!("Invalid hex: {}", e))?;
+    let bytes = hex::decode(hex_str).map_err(|e| format!("Invalid hex: {}", e))?;
 
     if bytes.len() != 32 {
         return Err(format!("Expected 32 bytes, got {}", bytes.len()));

@@ -1,8 +1,13 @@
+use alloy_primitives::{Address, U256};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
+use crate::chain::normalize_iban;
 use crate::config::Config;
-use crate::eip712::{sign_attestation, AttestationData, AttestationDomain};
+use crate::eip712::{
+    compact_claim_hash, compact_intent_hash, mandate_hash, sign_attestation, AttestationData,
+    AttestationDomain,
+};
 use crate::error::AttestationError;
 use crate::verification::{verify_presentation, VerifiedPayment};
 
@@ -31,6 +36,38 @@ pub struct AttestationRequest {
     /// Advisory only (ignored for authorization). See above.
     #[serde(default)]
     pub expected_beneficiary_iban: String,
+
+    /// TIER-1 sign-once offramp binding. When present, the service binds the proven IBAN to the
+    /// user's signed Mandate (not an OffRampV3 intent) and signs `intentHash = keccak(claimHash,
+    /// filler)`. `intent_hash` above is ignored for this flow.
+    #[serde(default)]
+    pub compact: Option<CompactBinding>,
+}
+
+/// The FreeFlo Mandate the user committed to inside their Compact (mirrors
+/// FreeFloCompactArbiter.Mandate). All fields feed the on-chain claim hash, so they must match the
+/// compact the user signed exactly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MandateInput {
+    pub receiving_info: String, // destination IBAN
+    pub recipient_name: String, // SEPA recipient name
+    pub min_eur_amount: u64,    // floor in cents
+    pub currency: u8,           // 0 = EUR
+    pub expiry: u64,            // mandate validity deadline (unix seconds)
+}
+
+/// Binding data for the sign-once Compact flow. The arbiter address is taken from CONFIG
+/// (COMPACT_ARBITER), never from the solver, so a solver cannot point the binding at a rogue
+/// arbiter. `nonce`/`id`/`allocated_amount` are uint256 as decimal or 0x-hex strings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompactBinding {
+    pub sponsor: String,          // the user who locked the USDC
+    pub nonce: String,            // compact nonce (uint256)
+    pub expires: u64,             // compact expiry
+    pub id: String,               // ERC-6909 resource-lock id (uint256)
+    pub allocated_amount: String, // locked USDC amount (uint256, 6dp)
+    pub filler: String,           // the solver that will call fill() (front-run binding)
+    pub mandate: MandateInput,
 }
 
 /// Response containing the signed attestation.
@@ -125,7 +162,9 @@ pub fn verify_payment_presentation(
     // Carry the proven IBAN onto the transfer's verified payment for on-chain binding.
     verified.beneficiary_iban = beneficiary.beneficiary_iban;
     if verified.beneficiary_iban.is_none() {
-        return Err(AttestationError::MissingField("beneficiary_iban".to_string()));
+        return Err(AttestationError::MissingField(
+            "beneficiary_iban".to_string(),
+        ));
     }
 
     Ok(verified)
@@ -133,7 +172,10 @@ pub fn verify_payment_presentation(
 
 /// Qonto terminal-success transfer statuses.
 fn is_settled_status(status: &str) -> bool {
-    matches!(status.to_ascii_lowercase().as_str(), "settled" | "completed")
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "settled" | "completed"
+    )
 }
 
 /// Sign an EIP-712 attestation for an already-verified, on-chain-bound payment.
@@ -192,6 +234,89 @@ fn decode_bytes32(hex_str: &str) -> Result<[u8; 32], AttestationError> {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Ok(arr)
+}
+
+/// Bind a verified payment to a sign-once Compact and return the attestation `intentHash`
+/// (`keccak(claimHash, filler)`) as a 0x-hex string. Enforces, OFF-CHAIN: IBAN ==
+/// mandate.receivingInfo and the EUR floor. The on-chain arbiter additionally enforces
+/// `compact.witness == hashMandate(mandate)` + the floor, so this attestation can ONLY ever release
+/// a lock whose user signed THIS exact mandate — the arbiter (from config), not the solver, anchors
+/// the claim hash. Order matches the legacy flow: verify (already done) -> bind -> sign.
+pub fn resolve_compact_intent_hash(
+    verified: &VerifiedPayment,
+    compact: &CompactBinding,
+    config: &Config,
+) -> Result<String, AttestationError> {
+    let arbiter = config.compact_arbiter.ok_or_else(|| {
+        AttestationError::InvalidPaymentData(
+            "Compact flow not enabled (COMPACT_ARBITER unset)".to_string(),
+        )
+    })?;
+
+    // 1. Bind the PROVEN beneficiary IBAN to the user's mandate (same normalization as the
+    //    OffRampV3 path). The solver does not get to assert the payee; the user's mandate does.
+    let proven_iban = verified
+        .beneficiary_iban
+        .as_deref()
+        .ok_or_else(|| AttestationError::MissingField("beneficiary_iban".to_string()))?;
+    if normalize_iban(proven_iban) != normalize_iban(&compact.mandate.receiving_info) {
+        return Err(AttestationError::InvalidPaymentData(format!(
+            "Beneficiary mismatch: proof paid IBAN '{}', mandate recipient is '{}'",
+            proven_iban, compact.mandate.receiving_info
+        )));
+    }
+
+    // 2. Enforce the user's signed EUR floor (the arbiter re-checks this on-chain).
+    let amount = verified
+        .amount_cents
+        .filter(|&c| c > 0)
+        .ok_or_else(|| AttestationError::MissingField("amount_cents".to_string()))?;
+    if (amount as u64) < compact.mandate.min_eur_amount {
+        return Err(AttestationError::InvalidPaymentData(format!(
+            "Amount below floor: proven {} cents < mandate minimum {} cents",
+            amount, compact.mandate.min_eur_amount
+        )));
+    }
+
+    // 3. Recompute the Compact claim hash and the filler-bound intentHash.
+    let sponsor: Address = compact.sponsor.parse().map_err(|e| {
+        AttestationError::DeserializationError(format!("Invalid sponsor address: {}", e))
+    })?;
+    let filler: Address = compact.filler.parse().map_err(|e| {
+        AttestationError::DeserializationError(format!("Invalid filler address: {}", e))
+    })?;
+    let nonce = parse_u256(&compact.nonce, "nonce")?;
+    let id = parse_u256(&compact.id, "id")?;
+    let allocated = parse_u256(&compact.allocated_amount, "allocated_amount")?;
+
+    let witness = mandate_hash(
+        &compact.mandate.receiving_info,
+        &compact.mandate.recipient_name,
+        compact.mandate.min_eur_amount,
+        compact.mandate.currency,
+        compact.mandate.expiry,
+    );
+    let claim_hash = compact_claim_hash(
+        Address::from(arbiter),
+        sponsor,
+        nonce,
+        U256::from(compact.expires),
+        id,
+        allocated,
+        witness,
+    );
+    let intent = compact_intent_hash(claim_hash, filler);
+    Ok(format!("0x{}", hex::encode(intent)))
+}
+
+fn parse_u256(s: &str, field: &str) -> Result<U256, AttestationError> {
+    let t = s.trim();
+    let parsed = if let Some(hex_part) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        U256::from_str_radix(hex_part, 16)
+    } else {
+        U256::from_str_radix(t, 10)
+    };
+    parsed.map_err(|e| AttestationError::DeserializationError(format!("Invalid {}: {}", field, e)))
 }
 
 #[cfg(test)]
