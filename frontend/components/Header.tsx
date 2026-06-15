@@ -7,6 +7,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import BoltIcon from "@mui/icons-material/Bolt";
+import { fiatToFiatEnabled } from "@/lib/feature-flags";
 
 export function Header() {
   const pathname = usePathname();
@@ -101,26 +102,28 @@ export function Header() {
             >
               USDC Offramp
             </Button>
-            <Button
-              component={Link}
-              href="/fiat-to-fiat"
-              size="small"
-              sx={{
-                color: isBridgePage ? "white" : "text.secondary",
-                bgcolor: isBridgePage ? "rgba(39, 39, 42, 0.5)" : "transparent",
-                "&:hover": {
-                  bgcolor: "rgba(39, 39, 42, 0.5)",
-                  color: "white",
-                },
-                borderRadius: 2,
-                px: 1.5,
-                py: 0.75,
-                fontSize: "0.875rem",
-                minWidth: "auto",
-              }}
-            >
-              Fiat to Fiat
-            </Button>
+            {fiatToFiatEnabled() && (
+              <Button
+                component={Link}
+                href="/fiat-to-fiat"
+                size="small"
+                sx={{
+                  color: isBridgePage ? "white" : "text.secondary",
+                  bgcolor: isBridgePage ? "rgba(39, 39, 42, 0.5)" : "transparent",
+                  "&:hover": {
+                    bgcolor: "rgba(39, 39, 42, 0.5)",
+                    color: "white",
+                  },
+                  borderRadius: 2,
+                  px: 1.5,
+                  py: 0.75,
+                  fontSize: "0.875rem",
+                  minWidth: "auto",
+                }}
+              >
+                Fiat to Fiat
+              </Button>
+            )}
           </Box>
         </Box>
 
