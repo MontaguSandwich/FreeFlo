@@ -1,0 +1,4 @@
+# Real secret-bearing env files live here but must NEVER be committed.
+# Templates (*.env.example) ARE tracked.
+*.env
+!*.env.example
