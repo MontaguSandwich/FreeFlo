@@ -35,6 +35,41 @@ interface OrderRecord {
 /** Evict Compact order-status records this long after their last update so the Map can't grow forever. */
 const ORDER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+/** Inbound hardening knobs for the Compact fill endpoint (auth + rate limit + concurrency cap). */
+export interface QuoteApiOptions {
+  /** When set, POST /api/compact/fill + GET /api/compact/status require this exact X-Solver-API-Key. */
+  compactFillApiKey?: string;
+  /** Per-client-IP fixed-window rate limit for the fill endpoint. */
+  compactFillRate?: { windowMs: number; max: number };
+  /** Hard cap on concurrent (non-terminal) Compact orders — memory + abuse guard. */
+  compactFillMaxInflight?: number;
+}
+
+/** Best-effort client IP: the first hop in X-Forwarded-For (set by our Next proxy / Vercel), else the socket. */
+function clientIp(req: http.IncomingMessage): string {
+  const xff = req.headers["x-forwarded-for"];
+  const fwd = Array.isArray(xff) ? xff[0] : xff;
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.socket.remoteAddress || "unknown";
+}
+
+/** Dependency-free fixed-window rate limiter. Returns a predicate: (key) => allowed? */
+function makeFixedWindowLimiter(opts: { windowMs: number; max: number }): (key: string) => boolean {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  return (key: string): boolean => {
+    const now = Date.now();
+    const rec = hits.get(key);
+    if (!rec || now >= rec.resetAt) {
+      hits.set(key, { count: 1, resetAt: now + opts.windowMs });
+      if (hits.size > 10_000) for (const [k, v] of hits) if (now >= v.resetAt) hits.delete(k);
+      return true;
+    }
+    if (rec.count >= opts.max) return false;
+    rec.count += 1;
+    return true;
+  };
+}
+
 export interface QuoteApiRequest {
   usdcAmount: number;  // Amount in USDC (e.g., 100.50)
   currency: Currency;  // Target currency (e.g., EUR)
@@ -91,7 +126,8 @@ export function createQuoteApiServer(
   solverName: string = "ZKP2P Solver",
   minUsdcAmount?: bigint,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  compactFill?: (order: any, onProgress: (u: any) => void) => Promise<{ txHash: string }>
+  compactFill?: (order: any, onProgress: (u: any) => void) => Promise<{ txHash: string }>,
+  options: QuoteApiOptions = {},
 ): http.Server {
   // In-memory store of async Compact fill statuses, keyed by orderId. Single-process service, so a
   // plain Map is fine; entries are evicted after ORDER_TTL_MS (swept lazily on each status GET).
@@ -105,6 +141,19 @@ export function createQuoteApiServer(
       if (rec.updatedAt < cutoff) orders.delete(id);
     }
   };
+
+  // Inbound hardening for the Compact fill endpoint (see QuoteApiOptions). Auth + per-IP rate limit
+  // + a concurrent-order cap. The pre-fiat gate is the fund-safety guard; these stop resource abuse.
+  const fillApiKey = (options.compactFillApiKey ?? "").trim();
+  const fillRate = options.compactFillRate ?? { windowMs: 60_000, max: 5 };
+  const fillMaxInflight = options.compactFillMaxInflight ?? 50;
+  const fillRateLimiter = makeFixedWindowLimiter(fillRate);
+  if (compactFill && !fillApiKey) {
+    log.warn(
+      "POST /api/compact/fill is UNAUTHENTICATED (COMPACT_FILL_API_KEY unset). The pre-fiat gate " +
+        "prevents fund loss, but set a key before broad exposure to stop gas/Qonto-slot spam."
+    );
+  }
 
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -179,6 +228,29 @@ export function createQuoteApiServer(
         return;
       }
 
+      // Auth: when a key is configured, require it (the Next /api/compact-fill proxy injects it server-side).
+      if (fillApiKey && req.headers["x-solver-api-key"] !== fillApiKey) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      // Per-IP rate limit (client IP forwarded by our proxy).
+      if (!fillRateLimiter(clientIp(req))) {
+        res.writeHead(429, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "rate limited, slow down" }));
+        return;
+      }
+      // Concurrent-order cap (count only non-terminal records so completed/failed don't wedge it).
+      let inflight = 0;
+      for (const rec of orders.values()) {
+        if (rec.status !== "complete" && rec.status !== "failed") inflight += 1;
+      }
+      if (inflight >= fillMaxInflight) {
+        res.writeHead(429, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "server busy, try again shortly" }));
+        return;
+      }
+
       let body = "";
       req.on("data", (chunk) => {
         body += chunk;
@@ -236,6 +308,14 @@ export function createQuoteApiServer(
       if (!compactFill) {
         res.writeHead(503, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Compact flow not enabled" }));
+        return;
+      }
+
+      // Auth (same key as the fill endpoint; the proxy injects it). The orderId is already an
+      // unguessable capability, but gating status too keeps the surface uniform.
+      if (fillApiKey && req.headers["x-solver-api-key"] !== fillApiKey) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
         return;
       }
 

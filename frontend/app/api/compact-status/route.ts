@@ -20,6 +20,10 @@ const SOLVER_API_URL = (
   .map((u) => u.trim())
   .filter((u) => u.length > 0)[0];
 
+// Server-side auth for the solver's Compact status endpoint. Must match the solver's
+// COMPACT_FILL_API_KEY (the fill + status share one key); unset on both sides = no auth (dev only).
+const SOLVER_FILL_API_KEY = process.env.COMPACT_FILL_API_KEY || "";
+
 export async function GET(request: NextRequest) {
   const orderId = request.nextUrl.searchParams.get("orderId");
   if (!orderId) {
@@ -36,9 +40,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const url = `${SOLVER_API_URL}/api/compact/status?orderId=${encodeURIComponent(orderId)}`;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (SOLVER_FILL_API_KEY) headers["X-Solver-API-Key"] = SOLVER_FILL_API_KEY;
     const response = await fetch(url, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers,
       signal: AbortSignal.timeout(30000),
     });
 

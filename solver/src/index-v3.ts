@@ -193,6 +193,11 @@ async function main() {
     "ZKP2P Solver",
     config.orchestrator.minUsdcAmount,
     (order, onProgress) => orchestrator.fulfillCompactOrder(order, onProgress),
+    {
+      compactFillApiKey: config.compactFill.apiKey || undefined,
+      compactFillRate: { windowMs: config.compactFill.rateWindowMs, max: config.compactFill.rateMax },
+      compactFillMaxInflight: config.compactFill.maxInflight,
+    },
   );
   quoteApiServer.listen(quoteApiPort, () => {
     log.info({ port: quoteApiPort }, "Quote API server started");

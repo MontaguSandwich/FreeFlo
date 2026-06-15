@@ -20,6 +20,10 @@ const SOLVER_API_URL = (
   .map((u) => u.trim())
   .filter((u) => u.length > 0)[0];
 
+// Server-side auth for the solver's Compact fill endpoint. Injected here so the key never reaches the
+// browser bundle. Must match the solver's COMPACT_FILL_API_KEY (unset on both sides = no auth, dev only).
+const SOLVER_FILL_API_KEY = process.env.COMPACT_FILL_API_KEY || "";
+
 export async function POST(request: NextRequest) {
   let body: unknown;
   try {
@@ -37,9 +41,18 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (SOLVER_FILL_API_KEY) headers["X-Solver-API-Key"] = SOLVER_FILL_API_KEY;
+    // Forward the real client IP so the solver's per-IP rate limit sees the user, not just this proxy.
+    const xff = request.headers.get("x-forwarded-for");
+    if (xff) headers["x-forwarded-for"] = xff;
+
     const response = await fetch(`${SOLVER_API_URL}/api/compact/fill`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30000),
     });

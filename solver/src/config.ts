@@ -120,6 +120,20 @@ export const config = {
   compactArbiterAddress: (process.env.COMPACT_ARBITER_ADDRESS || undefined) as Address | undefined,
   compactAllocatorAddress: (process.env.FREEFLO_ALLOCATOR_ADDRESS || undefined) as Address | undefined,
 
+  // Inbound hardening for the open Compact fill endpoint. The pre-fiat gate already prevents fund
+  // loss (a fake/unfunded order reverts before any SEPA), so this is a RESOURCE-abuse guard: stop
+  // anonymous spam from burning fill gas / Qonto idempotency slots / memory.
+  //  - apiKey: when set, POST /api/compact/fill + GET /api/compact/status require a matching
+  //    `X-Solver-API-Key` header. The Next /api/compact-fill proxy injects it server-side so the
+  //    browser never holds it. Unset = no auth (local dev) + a boot warning when the Compact path is on.
+  //  - rate*/maxInflight: per-IP fixed-window limit on fills + a hard cap on concurrent orders.
+  compactFill: {
+    apiKey: optionalEnv("COMPACT_FILL_API_KEY", ""),
+    rateWindowMs: parseInt(optionalEnv("COMPACT_FILL_RATE_WINDOW_MS", "60000")),
+    rateMax: parseInt(optionalEnv("COMPACT_FILL_RATE_MAX", "5")),
+    maxInflight: parseInt(optionalEnv("COMPACT_FILL_MAX_INFLIGHT", "50")),
+  },
+
   // ==========================================================================
   // ATTESTATION SERVICE (for zkTLS proof verification)
   // ==========================================================================
