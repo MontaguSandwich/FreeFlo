@@ -10,17 +10,40 @@ import { attestationDurationSeconds } from "../metrics.js";
 
 const log = createLogger("attestation-client");
 
+/** The user's signed Mandate (snake_case = the attestation service's wire schema). */
+export interface CompactMandatePayload {
+  receiving_info: string;
+  recipient_name: string;
+  min_eur_amount: number;
+  currency: number;
+  expiry: number;
+}
+
+/** TIER-1 sign-once binding. When present, the service binds the proven IBAN to the mandate and
+ * signs `intentHash = keccak(claimHash, filler)` instead of an OffRampV3 intent id. */
+export interface CompactBindingPayload {
+  sponsor: string;
+  nonce: string; // uint256 (decimal or 0x-hex)
+  expires: number;
+  id: string; // uint256 resource-lock id
+  allocated_amount: string; // uint256 USDC (6dp)
+  filler: string;
+  mandate: CompactMandatePayload;
+}
+
 export interface AttestationRequest {
   /** Base64-encoded TLSNotary presentation of the transfer (status + amount) */
   presentation: string;
   /** Base64-encoded TLSNotary presentation of the beneficiary (recipient IBAN) */
   beneficiaryPresentation: string;
-  /** Intent hash this payment is for */
+  /** Intent hash this payment is for (ignored for the Compact flow — see `compact`) */
   intentHash: string;
   /** Expected amount in cents (for validation) */
   expectedAmountCents: number;
   /** Expected beneficiary IBAN (for validation) */
   expectedBeneficiaryIban: string;
+  /** TIER-1 sign-once binding (optional). */
+  compact?: CompactBindingPayload;
 }
 
 export interface PaymentDetails {
@@ -128,8 +151,8 @@ export class AttestationClient {
         intent_hash: request.intentHash,
         expected_amount_cents: request.expectedAmountCents,
         expected_beneficiary_iban: request.expectedBeneficiaryIban,
+        ...(request.compact ? { compact: request.compact } : {}),
       }),
-
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

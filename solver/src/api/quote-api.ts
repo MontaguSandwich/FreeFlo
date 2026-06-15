@@ -7,11 +7,33 @@
 
 import http from "http";
 import { URL } from "url";
+import { randomUUID } from "node:crypto";
 import { createLogger } from "../utils/logger.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { RTPN, Currency, getRtpnsForCurrency, RTPN_NAMES } from "../types/index.js";
 
 const log = createLogger("quote-api");
+
+/**
+ * In-memory status of a single async Compact fill, keyed by the orderId we hand back from
+ * POST /api/compact/fill and that the frontend polls via GET /api/compact/status. The `status`
+ * tracks the pipeline (received → depositing → paying → proving → releasing → complete | failed);
+ * the optional fields are filled in as each step reports progress. Best-effort and ephemeral —
+ * records are evicted ~10 min after their last update (see ORDER_TTL_MS).
+ */
+interface OrderRecord {
+  status: string; // "received" | "depositing" | "paying" | "proving" | "releasing" | "complete" | "failed"
+  depositTxHash?: string;
+  transferId?: string;
+  fillTxHash?: string;
+  eurCents?: number;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Evict Compact order-status records this long after their last update so the Map can't grow forever. */
+const ORDER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface QuoteApiRequest {
   usdcAmount: number;  // Amount in USDC (e.g., 100.50)
@@ -51,14 +73,39 @@ const CURRENCY_STRING_TO_ENUM: Record<string, Currency> = {
 };
 
 /**
- * Create a quote API server that provides real quotes from registered providers
+ * Create a quote API server that provides real quotes from registered providers.
+ *
+ * `compactFill` (optional) wires the TIER-1 sign-once Compact path. When provided, the server
+ * exposes the ASYNC Compact fill protocol:
+ *   - POST /api/compact/fill light-checks the posted order, kicks off `compactFill(order, onProgress)`
+ *     in the background (NOT awaited), and returns 202 {orderId} immediately.
+ *   - GET /api/compact/status?orderId=... returns the order's live status record (200) or 404.
+ * The `onProgress` callback handed to `compactFill` updates the in-memory status as the fill
+ * advances through deposit → SEPA → proof → fill. When `compactFill` is undefined, both routes
+ * return 503 (Compact path disabled). Quoting and /api/supported behave identically regardless —
+ * this is purely additive.
  */
 export function createQuoteApiServer(
   registry: ProviderRegistry,
   solverAddress: string,
   solverName: string = "ZKP2P Solver",
-  minUsdcAmount?: bigint
+  minUsdcAmount?: bigint,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  compactFill?: (order: any, onProgress: (u: any) => void) => Promise<{ txHash: string }>
 ): http.Server {
+  // In-memory store of async Compact fill statuses, keyed by orderId. Single-process service, so a
+  // plain Map is fine; entries are evicted after ORDER_TTL_MS (swept lazily on each status GET).
+  const orders = new Map<string, OrderRecord>();
+
+  // Lazily drop any order records older than the TTL so the Map doesn't grow unbounded. Called on
+  // each status GET — cheap, and avoids a dangling setInterval keeping the process alive.
+  const sweepExpiredOrders = (): void => {
+    const cutoff = Date.now() - ORDER_TTL_MS;
+    for (const [id, rec] of orders) {
+      if (rec.updatedAt < cutoff) orders.delete(id);
+    }
+  };
+
   const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -117,6 +164,102 @@ export function createQuoteApiServer(
       const supported = getSupportedRtpns(registry);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(supported, null, 2));
+      return;
+    }
+
+    // POST /api/compact/fill - TIER-1 sign-once Compact fill (ASYNC). The frontend POSTs a
+    // user-signed order ({ claim, mandate, permit2 }); we light-check it, return 202 {orderId}
+    // immediately, and run the deposit → SEPA → proof → fill pipeline in the background, updating an
+    // in-memory status the frontend polls via GET /api/compact/status. The fill itself (and the
+    // deposit-before-SEPA safety ordering) is unchanged — only the HTTP response is now non-blocking.
+    if (url.pathname === "/api/compact/fill" && req.method === "POST") {
+      if (!compactFill) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Compact flow not enabled" }));
+        return;
+      }
+
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        let order: { claim?: unknown; mandate?: unknown; permit2?: unknown };
+        try {
+          order = JSON.parse(body);
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid JSON body" }));
+          return;
+        }
+
+        // Light shape-check only: the orchestrator does the real validation (and the on-chain
+        // deposit is the actual safety gate). Reject obviously malformed orders so a bad request
+        // fails fast with 400 instead of spinning up a background job that errors immediately.
+        if (!order || !order.claim || !order.mandate || !order.permit2) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing claim, mandate, or permit2" }));
+          return;
+        }
+
+        const orderId = randomUUID();
+        const now = Date.now();
+        orders.set(orderId, { status: "received", createdAt: now, updatedAt: now });
+
+        // Kick off the fill WITHOUT awaiting; progress + terminal state land in the status record.
+        // The onProgress callback merges partial updates onto the existing record.
+        compactFill(order, (u) => {
+          const prev = orders.get(orderId);
+          if (!prev) return; // evicted (shouldn't happen mid-flight, but be defensive)
+          orders.set(orderId, { ...prev, ...u, updatedAt: Date.now() });
+        }).catch((e) => {
+          const message = e instanceof Error ? e.message : String(e);
+          log.error({ orderId, error: message }, "Compact fill failed");
+          const prev = orders.get(orderId);
+          orders.set(orderId, {
+            ...(prev ?? { status: "failed", createdAt: now }),
+            status: "failed",
+            error: message,
+            updatedAt: Date.now(),
+          });
+        });
+
+        log.info({ orderId }, "Compact fill accepted (processing in background)");
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ orderId }));
+      });
+      return;
+    }
+
+    // GET /api/compact/status?orderId=... - poll the live status of an async Compact fill.
+    if (url.pathname === "/api/compact/status" && req.method === "GET") {
+      if (!compactFill) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Compact flow not enabled" }));
+        return;
+      }
+
+      sweepExpiredOrders();
+
+      const orderId = url.searchParams.get("orderId");
+      const record = orderId ? orders.get(orderId) : undefined;
+      if (!record) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unknown order" }));
+        return;
+      }
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          status: record.status,
+          depositTxHash: record.depositTxHash,
+          transferId: record.transferId,
+          fillTxHash: record.fillTxHash,
+          eurCents: record.eurCents,
+          error: record.error,
+        })
+      );
       return;
     }
 

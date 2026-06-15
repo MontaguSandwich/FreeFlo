@@ -113,6 +113,13 @@ export const config = {
   // Unset = no relayer behavior (the user commits via the frontend, as before).
   fiatToFiatRouterAddress: optionalEnv("FIAT_TO_FIAT_ROUTER_ADDRESS", "") as Address,
 
+  // Compact (TIER-1 sign-once offramp) — when BOTH are set, the solver exposes the
+  // POST /api/compact/fill endpoint and can fill user-signed Compact orders (send SEPA,
+  // attest, arbiter.fill). Unset = the Compact path is disabled (additive; existing
+  // intent watching/fulfillment is unaffected). Cast undefined when unset.
+  compactArbiterAddress: (process.env.COMPACT_ARBITER_ADDRESS || undefined) as Address | undefined,
+  compactAllocatorAddress: (process.env.FREEFLO_ALLOCATOR_ADDRESS || undefined) as Address | undefined,
+
   // ==========================================================================
   // ATTESTATION SERVICE (for zkTLS proof verification)
   // ==========================================================================

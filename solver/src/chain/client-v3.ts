@@ -1,7 +1,11 @@
 import {
   createPublicClient,
   createWalletClient,
+  encodeAbiParameters,
   http,
+  keccak256,
+  slice,
+  toHex,
   type Address,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -12,6 +16,19 @@ import {
   FIAT_TO_FIAT_ROUTER_ABI,
   type PaymentAttestationStruct,
 } from "./abi-v3.js";
+import {
+  COMPACT_ARBITER_ABI,
+  COMPACT_EIP712_TYPES,
+  DEPOSIT_VIA_PERMIT2_ABI,
+  ERC6909_BALANCE_ABI,
+  freefloAllocatorDomain,
+  FREEFLO_ALLOCATOR_AUTH_TYPES,
+  MANDATE_WITNESS_TYPESTRING,
+  theCompactDomain,
+  THE_COMPACT_ADDRESS,
+  type CompactClaimInput,
+  type CompactMandateInput,
+} from "./compact-abi.js";
 import {
   type IntentCreatedEvent,
   type QuoteSelectedEvent,
@@ -31,6 +48,10 @@ export interface ChainClientV3Config {
   solverPrivateKey: `0x${string}`;
   /** Optional FiatToFiatRouter — enables the gasless relayer-commit path. */
   routerAddress?: Address;
+  /** Optional FreeFloCompactArbiter — enables the TIER-1 sign-once fill path. */
+  compactArbiterAddress?: Address;
+  /** Optional FreeFloAllocator — the solver signs allocatorData over each claim hash. */
+  compactAllocatorAddress?: Address;
 }
 
 /**
@@ -44,6 +65,9 @@ export class ChainClientV3 {
   private offRampAddress: Address;
   private verifierAddress: Address;
   private routerAddress?: Address;
+  private chainId: number;
+  private compactArbiterAddress?: Address;
+  private compactAllocatorAddress?: Address;
   public solverAddress: Address;
 
   constructor(config: ChainClientV3Config) {
@@ -65,6 +89,9 @@ export class ChainClientV3 {
     this.offRampAddress = config.offRampAddress;
     this.verifierAddress = config.verifierAddress;
     this.routerAddress = config.routerAddress;
+    this.chainId = config.chainId;
+    this.compactArbiterAddress = config.compactArbiterAddress;
+    this.compactAllocatorAddress = config.compactAllocatorAddress;
     this.solverAddress = account.address;
 
     log.info(
@@ -238,6 +265,228 @@ export class ChainClientV3 {
     }
 
     log.info({ hash, blockNumber: receipt.blockNumber }, "Fulfillment confirmed with zkTLS proof");
+    return hash;
+  }
+
+  // ============ Compact arbiter (TIER-1 sign-once offramp) ============
+
+  /** True if the sign-once fill path is configured (arbiter + allocator both set). */
+  get compactEnabled(): boolean {
+    return !!this.compactArbiterAddress && !!this.compactAllocatorAddress;
+  }
+
+  /**
+   * The Compact claim hash for (claim, mandate), read from the deployed arbiter so the solver
+   * stays byte-identical to the chain AND the attestation service (which binds intentHash to it).
+   */
+  async computeCompactClaimHash(
+    claim: CompactClaimInput,
+    mandate: CompactMandateInput
+  ): Promise<`0x${string}`> {
+    if (!this.compactArbiterAddress) throw new Error("COMPACT_ARBITER_ADDRESS not configured");
+    const result = await this.publicClient.readContract({
+      address: this.compactArbiterAddress,
+      abi: COMPACT_ARBITER_ABI,
+      functionName: "computeClaimHash",
+      args: [claim, mandate],
+    });
+    return result as `0x${string}`;
+  }
+
+  /**
+   * The attestation intentHash the witness signs for THIS filler: keccak(claimHash, solver).
+   * Mirrors FreeFloCompactArbiter.fill()'s `keccak256(abi.encode(claimHash, msg.sender))`, so the
+   * struct we submit on-chain matches what the attestation service signed.
+   */
+  compactIntentHash(claimHash: `0x${string}`): `0x${string}` {
+    return keccak256(
+      encodeAbiParameters(
+        [{ type: "bytes32" }, { type: "address" }],
+        [claimHash, this.solverAddress]
+      )
+    );
+  }
+
+  /** allocatorData = the FreeFlo allocator key's EIP-712 signature over the claim hash. */
+  async signAllocatorData(claimHash: `0x${string}`): Promise<`0x${string}`> {
+    if (!this.compactAllocatorAddress) {
+      throw new Error("FREEFLO_ALLOCATOR_ADDRESS not configured");
+    }
+    return (await this.walletClient.signTypedData({
+      domain: freefloAllocatorDomain(this.compactAllocatorAddress, this.chainId),
+      types: FREEFLO_ALLOCATOR_AUTH_TYPES,
+      primaryType: "ClaimAuthorization",
+      message: { claimHash },
+    })) as `0x${string}`;
+  }
+
+  /**
+   * Pre-fiat safety gate. Verify the sponsor SIGNED this exact compact AND funded the lock BEFORE
+   * the solver sends any SEPA. Without this, a caller could POST an order with their own IBAN and a
+   * fake/unfunded lock; the solver would pay fiat and only then fail to claim on-chain (fiat lost).
+   * Throws if the order is not safely fillable.
+   */
+  async assertCompactOrderClaimable(
+    claim: CompactClaimInput,
+    mandate: CompactMandateInput
+  ): Promise<void> {
+    if (!this.compactArbiterAddress) throw new Error("COMPACT_ARBITER_ADDRESS not configured");
+
+    // 1. The lock must actually hold the claimed USDC (ERC-6909 balance of sponsor for this id).
+    const balance = (await this.publicClient.readContract({
+      address: THE_COMPACT_ADDRESS,
+      abi: ERC6909_BALANCE_ABI,
+      functionName: "balanceOf",
+      args: [claim.sponsor, claim.id],
+    })) as bigint;
+    if (balance < claim.allocatedAmount) {
+      throw new Error(
+        `Compact lock underfunded: balance ${balance} < allocatedAmount ${claim.allocatedAmount}`
+      );
+    }
+
+    // 2. The sponsor must have signed THIS compact. Reconstruct the witnessed Compact message from
+    //    the order and verify against The Compact's domain (EOA ECDSA or EIP-1271). An empty
+    //    sponsorSignature is the registered-compact path, which this filler does not yet support.
+    if (!claim.sponsorSignature || claim.sponsorSignature === "0x") {
+      throw new Error("Compact order missing sponsorSignature (registered path unsupported)");
+    }
+    const idHex = toHex(claim.id, { size: 32 });
+    const valid = await this.publicClient.verifyTypedData({
+      address: claim.sponsor,
+      domain: theCompactDomain(this.chainId),
+      types: COMPACT_EIP712_TYPES,
+      primaryType: "Compact",
+      message: {
+        arbiter: this.compactArbiterAddress,
+        sponsor: claim.sponsor,
+        nonce: claim.nonce,
+        expires: claim.expires,
+        lockTag: slice(idHex, 0, 12), // upper 96 bits of the id
+        token: slice(idHex, 12, 32), // lower 160 bits of the id (USDC)
+        amount: claim.allocatedAmount,
+        mandate: {
+          receivingInfo: mandate.receivingInfo,
+          recipientName: mandate.recipientName,
+          minEurAmount: mandate.minEurAmount,
+          currency: mandate.currency,
+          expiry: mandate.expiry,
+        },
+      },
+      signature: claim.sponsorSignature,
+    });
+    if (!valid) {
+      throw new Error("Compact order sponsorSignature does not match the sponsor/claim");
+    }
+  }
+
+  /**
+   * GASLESS deposit + register (relayer step). The user signs ONE Permit2 PermitTransferFrom
+   * witnessed by the claim hash; the solver (relayer) submits it here to fund AND register the
+   * Compact lock in a single tx. The solver wallet (SOLVER_PRIVATE_KEY) IS the relayer = the
+   * `activator` baked into the user's signature, so msg.sender is correct.
+   *
+   * The id's low 160 bits ARE the token (USDC) and its high 96 bits ARE the lockTag; both are
+   * derived from `opts.id` when not supplied, so they always agree with the lock the user signed.
+   *
+   * This deposit is the pre-fiat validation: an invalid signature or an under-funded user reverts
+   * HERE, before any SEPA leaves the solver's account — same safety property as the old on-chain
+   * balance/signature gate, now enforced by the deposit itself. Waits for the receipt, throws on
+   * revert, returns the tx hash.
+   */
+  async depositAndRegisterViaPermit2(opts: {
+    sponsor: Address;
+    amount: bigint;
+    lockTag?: `0x${string}`;
+    id: bigint;
+    claimHash: `0x${string}`;
+    permit2Nonce: bigint;
+    deadline: bigint;
+    signature: `0x${string}`;
+  }): Promise<`0x${string}`> {
+    const idHex = toHex(opts.id, { size: 32 });
+    // The id's low 20 bytes ARE the USDC address; its high 12 bytes ARE the lockTag.
+    const usdc = (("0x" + idHex.slice(-40)) as Address);
+    const lockTag = opts.lockTag ?? (slice(idHex, 0, 12) as `0x${string}`);
+
+    log.info(
+      {
+        sponsor: opts.sponsor,
+        amount: opts.amount.toString(),
+        id: opts.id.toString(),
+        token: usdc,
+        lockTag,
+        claimHash: opts.claimHash,
+        relayer: this.solverAddress,
+      },
+      "Relayer deposit+register via Permit2 (gasless)"
+    );
+
+    const hash = await this.walletClient.writeContract({
+      address: THE_COMPACT_ADDRESS,
+      abi: DEPOSIT_VIA_PERMIT2_ABI,
+      functionName: "depositERC20AndRegisterViaPermit2",
+      args: [
+        {
+          permitted: { token: usdc, amount: opts.amount },
+          nonce: opts.permit2Nonce,
+          deadline: opts.deadline,
+        },
+        opts.sponsor,
+        lockTag,
+        opts.claimHash,
+        0, // compactCategory
+        MANDATE_WITNESS_TYPESTRING,
+        opts.signature,
+      ],
+    });
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status === "reverted") {
+      throw new Error(`Compact deposit+register reverted: ${hash}`);
+    }
+    log.info(
+      { hash, blockNumber: receipt.blockNumber, id: opts.id.toString() },
+      "✅ Compact lock funded + registered (gasless, relayer-paid)"
+    );
+    return hash;
+  }
+
+  /**
+   * Withdraw the user's locked USDC to the solver (msg.sender) by proving the SEPA payment.
+   * Computes the claim hash, signs the allocator authorization, then calls arbiter.fill — which
+   * verifies the attestation via the reused PaymentVerifier and releases the lock.
+   */
+  async fillCompactOrder(
+    claim: CompactClaimInput,
+    mandate: CompactMandateInput,
+    attestation: PaymentAttestationStruct,
+    signature: `0x${string}`
+  ): Promise<`0x${string}`> {
+    if (!this.compactArbiterAddress) throw new Error("COMPACT_ARBITER_ADDRESS not configured");
+    const claimHash = await this.computeCompactClaimHash(claim, mandate);
+    const allocatorData = await this.signAllocatorData(claimHash);
+    const claimWithAllocator = {
+      ...claim,
+      allocatorData,
+      claimants: [] as { claimant: bigint; amount: bigint }[], // arbiter overrides
+    };
+
+    log.info(
+      { claimHash, sponsor: claim.sponsor, id: claim.id.toString() },
+      "Filling Compact order (arbiter.fill)"
+    );
+    const hash = await this.walletClient.writeContract({
+      address: this.compactArbiterAddress,
+      abi: COMPACT_ARBITER_ABI,
+      functionName: "fill",
+      args: [claimWithAllocator, mandate, attestation, signature],
+    });
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status === "reverted") throw new Error(`Compact fill reverted: ${hash}`);
+    log.info(
+      { hash, blockNumber: receipt.blockNumber },
+      "✅ Compact order filled (USDC released to solver)"
+    );
     return hash;
   }
 

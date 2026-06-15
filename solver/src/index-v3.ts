@@ -104,6 +104,9 @@ async function main() {
     solverPrivateKey: config.solverPrivateKey,
     // Optional: enables the gasless relayer-commit path for router-created intents.
     routerAddress: config.fiatToFiatRouterAddress || undefined,
+    // Optional: enables the TIER-1 sign-once Compact fill path (both must be set).
+    compactArbiterAddress: config.compactArbiterAddress,
+    compactAllocatorAddress: config.compactAllocatorAddress,
   });
 
   solverAddress = chain.solverAddress;
@@ -121,17 +124,6 @@ async function main() {
 
   // Register providers
   registerProviders();
-
-  // Start quote API server now that providers are registered
-  quoteApiServer = createQuoteApiServer(
-    registry,
-    solverAddress,
-    "ZKP2P Solver",
-    config.orchestrator.minUsdcAmount,
-  );
-  quoteApiServer.listen(quoteApiPort, () => {
-    log.info({ port: quoteApiPort }, "Quote API server started");
-  });
 
   // Create prover config if enabled. Validate the path up front and fail loudly: a bad
   // TLSN_EXAMPLES_PATH otherwise only surfaces mid-fulfillment as "spawn cargo ENOENT" —
@@ -190,6 +182,21 @@ async function main() {
       prover: proverConfig,
     }
   );
+
+  // Start quote API server now that providers + orchestrator are ready. The Compact fill handler
+  // is wired here so POST /api/compact/fill can drive the sign-once offramp; it is gated inside the
+  // orchestrator on chain.compactEnabled (and the route 503s if no handler), so this stays a no-op
+  // for deployments without the Compact addresses.
+  quoteApiServer = createQuoteApiServer(
+    registry,
+    solverAddress,
+    "ZKP2P Solver",
+    config.orchestrator.minUsdcAmount,
+    (order, onProgress) => orchestrator.fulfillCompactOrder(order, onProgress),
+  );
+  quoteApiServer.listen(quoteApiPort, () => {
+    log.info({ port: quoteApiPort }, "Quote API server started");
+  });
 
   // Handle shutdown
   process.on("SIGINT", () => {

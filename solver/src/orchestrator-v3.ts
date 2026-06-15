@@ -14,6 +14,11 @@ import { AttestationClient } from "./attestation/client.js";
 import { generateQontoProof, type ProverConfig } from "./attestation/prover.js";
 import type { PaymentAttestationStruct } from "./chain/abi-v3.js";
 import {
+  MANDATE_WITNESS_TYPESTRING,
+  type CompactClaimInput,
+  type CompactMandateInput,
+} from "./chain/compact-abi.js";
+import {
   Currency,
   RTPN,
   getRtpnsForCurrency,
@@ -35,6 +40,55 @@ export interface OrchestratorV3Config {
   /** Optional: Prover config for automatic proof generation */
   prover?: ProverConfig;
 }
+
+/**
+ * A user-signed Compact fill order (TIER-1 sign-once offramp), as the frontend POSTs it to
+ * /api/compact/fill. All uint256 fields are decimal strings on the wire; the orchestrator parses
+ * them into BigInt for the chain client. This path is additive and never touches the intent watcher.
+ */
+export interface CompactFillOrder {
+  claim: {
+    sponsor: string;
+    nonce: string; // uint256
+    expires: string; // uint256
+    witness: string; // bytes32
+    witnessTypestring: string;
+    id: string; // uint256 resource-lock id
+    allocatedAmount: string; // uint256 USDC (6dp)
+  };
+  mandate: {
+    receivingInfo: string;
+    recipientName: string;
+    minEurAmount: string; // uint256
+    currency: number; // Currency enum
+    expiry: string; // uint256
+  };
+  /**
+   * The user's single Permit2 PermitTransferFrom signature (witnessed by the claim hash). The solver
+   * relayer submits it via The Compact's depositERC20AndRegisterViaPermit2 to fund+register the lock
+   * gasless — replacing the sponsorSignature (the compact is registered on-chain instead of signed
+   * into the claim). nonce/deadline are the Permit2 nonce/deadline the user signed over.
+   */
+  permit2: {
+    nonce: string; // uint256 Permit2 nonce
+    deadline: string; // uint256 Permit2 deadline
+    signature: string; // bytes
+  };
+}
+
+/**
+ * Incremental progress for an in-flight Compact fill, pushed to the optional onProgress callback at
+ * each pipeline step (deposit → SEPA → proof → fill). The async HTTP layer maps these onto the
+ * GET /api/compact/status record so the frontend can poll the fill it kicked off. Purely advisory:
+ * the fill logic/ordering is unchanged whether or not a callback is supplied.
+ */
+export type CompactProgress = {
+  status: "depositing" | "paying" | "proving" | "releasing" | "complete";
+  depositTxHash?: string;
+  transferId?: string;
+  fillTxHash?: string;
+  eurCents?: number;
+};
 
 /**
  * V3 Solver Orchestrator with zkTLS proof generation
@@ -395,6 +449,209 @@ export class SolverOrchestratorV3 {
 
     for (const intent of committedIntents) {
       await this.fulfillIntentWithZkTLS(intent);
+    }
+  }
+
+  // ============ Compact fill (TIER-1 sign-once offramp) ============
+
+  /**
+   * Fill a user-signed Compact order: send SEPA, prove it, get the witness attestation bound to
+   * the Compact claim hash, then call arbiter.fill to release the user's locked USDC to the solver.
+   *
+   * Mirrors fulfillIntentWithZkTLS but for a Compact order — there is NO DB row (the order is
+   * driven by the HTTP request, not the on-chain intent watcher), and the synthetic "intentId" used
+   * for Qonto idempotency/reference is the Compact claim hash. Additive: existing flows untouched.
+   */
+  async fulfillCompactOrder(
+    order: CompactFillOrder,
+    onProgress?: (u: CompactProgress) => void
+  ): Promise<{ txHash: string }> {
+    // 1. Guard: the Compact path requires both arbiter + allocator addresses configured.
+    if (!this.chain.compactEnabled) {
+      throw new Error("Compact flow not enabled");
+    }
+
+    // 2. Parse the wire order into the chain client's input shapes. allocatorData/claimants are
+    //    filled by fillCompactOrder/the arbiter respectively, so pass placeholders here.
+    //    sponsorSignature is EMPTY ("0x"): the compact is REGISTERED on-chain by the gasless
+    //    deposit (Step 0) rather than signed into the claim, and The Compact accepts an empty
+    //    sponsor signature once the claim hash is registered. witnessTypestring is the canonical
+    //    Mandate typestring so the claim hash matches what the deposit registered.
+    const claim: CompactClaimInput = {
+      allocatorData: "0x",
+      sponsorSignature: "0x",
+      sponsor: order.claim.sponsor as `0x${string}`,
+      nonce: BigInt(order.claim.nonce),
+      expires: BigInt(order.claim.expires),
+      witness: order.claim.witness as `0x${string}`,
+      witnessTypestring: MANDATE_WITNESS_TYPESTRING,
+      id: BigInt(order.claim.id),
+      allocatedAmount: BigInt(order.claim.allocatedAmount),
+      claimants: [],
+    };
+    const mandate: CompactMandateInput = {
+      receivingInfo: order.mandate.receivingInfo,
+      recipientName: order.mandate.recipientName,
+      minEurAmount: BigInt(order.mandate.minEurAmount),
+      currency: Number(order.mandate.currency),
+      expiry: BigInt(order.mandate.expiry),
+    };
+
+    // 3. Pick the Qonto (SEPA Instant) provider.
+    const providers = this.registry.getProvidersForRtpn(RTPN.SEPA_INSTANT);
+    if (providers.length === 0) {
+      throw new Error("No provider for SEPA_INSTANT (Compact fill requires Qonto)");
+    }
+    const provider = providers[0];
+
+    // The Compact claim hash doubles as the synthetic intentId for Qonto idempotency/reference and
+    // is the value the attestation binds the proven IBAN to (keccak(claimHash, solver)).
+    const claimHash = await this.chain.computeCompactClaimHash(claim, mandate);
+
+    log.info(
+      {
+        claimHash,
+        sponsor: claim.sponsor,
+        id: claim.id.toString(),
+        minEur: (Number(mandate.minEurAmount) / 100).toFixed(2),
+        receivingInfo: mandate.receivingInfo.substring(0, 10) + "...",
+      },
+      "Filling Compact order (sign-once offramp)"
+    );
+
+    try {
+      // Step 0/4: relayer deposit+register (gasless). The solver submits the user's single Permit2
+      // signature to The Compact, funding AND registering the lock for THIS claim hash in one tx.
+      // This IS the pre-fiat safety gate: an invalid signature or a user without USDC reverts HERE,
+      // BEFORE any SEPA is sent — so a fake/unfunded order can never drain the solver's EUR (same
+      // safety property as the old on-chain balance/signature gate, now enforced by the deposit).
+      // The empty sponsorSignature in `claim` then settles on-chain because the compact is registered.
+      log.info({ claimHash }, "Step 0/4: relayer deposit+register (gasless)");
+      onProgress?.({ status: "depositing" });
+      const depositTxHash = await this.chain.depositAndRegisterViaPermit2({
+        sponsor: claim.sponsor,
+        amount: claim.allocatedAmount,
+        id: claim.id, // lockTag is derived from the id inside the chain client
+        claimHash,
+        permit2Nonce: BigInt(order.permit2.nonce),
+        deadline: BigInt(order.permit2.deadline),
+        signature: order.permit2.signature as `0x${string}`,
+      });
+
+      // 4. SEPA send. Use the claim hash as the synthetic intentId so Qonto's deterministic
+      //    idempotency key is stable across retries. The deposit is now mined (the safety gate
+      //    has passed), so it is safe to send fiat — report progress before the SEPA call.
+      onProgress?.({ status: "paying", depositTxHash });
+      log.info({ claimHash }, "Step 1/4: Executing fiat transfer (Compact)");
+      const result = await provider.executeTransfer({
+        intentId: claimHash,
+        usdcAmount: claim.allocatedAmount,
+        fiatAmount: mandate.minEurAmount,
+        currency: Currency.EUR,
+        rtpn: RTPN.SEPA_INSTANT,
+        receivingInfo: mandate.receivingInfo,
+        recipientName: mandate.recipientName,
+      });
+
+      if (!result.success) {
+        log.error(
+          { claimHash, transferId: result.transferId, error: result.error },
+          "Compact fiat transfer failed"
+        );
+        throw new Error(result.error || "Fiat transfer failed");
+      }
+
+      const transferId = result.transferId;
+      const fiatSent = result.fiatSent;
+      log.info(
+        { claimHash, transferId, fiatSent: fiatSent.toString() },
+        "Step 1/4: Fiat transfer completed (Compact)"
+      );
+
+      // 5. Generate the TLSNotary proofs (transfer + beneficiary).
+      onProgress?.({ status: "proving", transferId });
+      log.info({ claimHash }, "Step 2/4: Generating TLSNotary proof (Compact)");
+      const proofs = await this.generateTlsNotaryProof(transferId);
+      if (!proofs) {
+        throw new Error("TLSNotary proof generation failed");
+      }
+      log.info(
+        {
+          claimHash,
+          transferProofSize: proofs.transfer.length,
+          beneficiaryProofSize: proofs.beneficiary.length,
+        },
+        "Step 2/4: TLSNotary proofs generated (Compact)"
+      );
+
+      // The proof is in hand; the remaining steps (attestation + on-chain fill) release the USDC.
+      onProgress?.({ status: "releasing" });
+
+      // 6. Get the witness attestation, bound to the Compact claim (intentHash = keccak(claimHash,
+      //    solver)). The `compact` payload tells the service to bind the proven IBAN to the mandate.
+      log.info({ claimHash }, "Step 3/4: Requesting attestation (Compact)");
+      const att = await this.attestation.attest({
+        presentation: proofs.transfer,
+        beneficiaryPresentation: proofs.beneficiary,
+        intentHash: this.chain.compactIntentHash(claimHash),
+        expectedAmountCents: Number(fiatSent),
+        expectedBeneficiaryIban: mandate.receivingInfo,
+        compact: {
+          sponsor: claim.sponsor,
+          nonce: claim.nonce.toString(),
+          expires: Number(claim.expires),
+          id: claim.id.toString(),
+          allocated_amount: claim.allocatedAmount.toString(),
+          filler: this.chain.solverAddress,
+          mandate: {
+            receiving_info: mandate.receivingInfo,
+            recipient_name: mandate.recipientName,
+            min_eur_amount: Number(mandate.minEurAmount),
+            currency: mandate.currency,
+            expiry: Number(mandate.expiry),
+          },
+        },
+      });
+      log.info(
+        {
+          claimHash,
+          transactionId: att.payment.transactionId,
+          amountVerified: att.payment.amountCents,
+        },
+        "Step 3/4: Attestation received (Compact)"
+      );
+
+      // 7. Build the on-chain attestation struct. intentHash MUST be keccak(claimHash, solver) so it
+      //    matches what arbiter.fill recomputes and what the witness signed.
+      const attestationStruct: PaymentAttestationStruct = {
+        intentHash: this.chain.compactIntentHash(claimHash),
+        amount: BigInt(att.payment.amountCents),
+        timestamp: BigInt(att.payment.timestamp),
+        paymentId: att.payment.transactionId || transferId,
+        dataHash: att.dataHash as `0x${string}`,
+      };
+
+      // 8. Fill: arbiter computes the claim hash, signs allocatorData, verifies the attestation via
+      //    the reused PaymentVerifier, and releases the locked USDC to the solver.
+      log.info({ claimHash }, "Step 4/4: Filling Compact order on-chain");
+      const txHash = await this.chain.fillCompactOrder(
+        claim,
+        mandate,
+        attestationStruct,
+        att.signature as `0x${string}`
+      );
+
+      log.info(
+        { claimHash, txHash, transferId, verifiedByZkTLS: true },
+        "✅ Compact order filled (USDC released to solver)"
+      );
+
+      onProgress?.({ status: "complete", fillTxHash: txHash, eurCents: Number(fiatSent) });
+      return { txHash };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error({ claimHash, error: errorMessage }, "Failed to fill Compact order");
+      throw error;
     }
   }
 
