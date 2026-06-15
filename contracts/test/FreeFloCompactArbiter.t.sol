@@ -7,15 +7,28 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { MockUSDC } from "./FiatToFiatRouter.t.sol"; // reuse — avoids a duplicate mock
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 import { FreeFloCompactArbiter } from "../src/FreeFloCompactArbiter.sol";
-import { ITheCompact, Claim, Component } from "../src/interfaces/ITheCompact.sol";
+import {
+    ITheCompact,
+    Claim,
+    Component,
+    ResetPeriod,
+    Scope
+} from "../src/interfaces/ITheCompact.sol";
 
-/// @dev Stand-in for The Compact: holds the "locked" USDC and, on claim(), pays the
-///      arbiter-specified claimants. It DELIBERATELY skips sponsor/allocator signature
-///      checks — those are The Compact's internals, not the arbiter logic under test.
-///      The arbiter's own guards (witness binding, attestation verification, floor) are
-///      exercised in full against the real PaymentVerifier.
+/// @dev Stand-in for The Compact: holds the "locked" USDC and, on claim(), pays the arbiter-
+///      specified claimants. It DELIBERATELY skips sponsor/allocator signature checks — those are
+///      The Compact's internals, not the arbiter logic under test. BUT it reproduces The Compact's
+///      claim-hash derivation (independently, from a HARDCODED typehash hex) so the arbiter's
+///      fail-closed `realized == claimHash` assert is genuinely exercised — if the arbiter's
+///      keccak-string typehash ever diverged from this hex, every happy-path test would revert.
 contract MockTheCompact is ITheCompact {
     using SafeERC20 for IERC20;
+
+    // keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12
+    // lockTag,address token,uint256 amount,Mandate mandate)Mandate(string receivingInfo,string
+    // recipientName,uint256 minEurAmount,uint8 currency,uint256 expiry)") — see cast keccak.
+    bytes32 constant COMPACT_WITNESS_TYPEHASH =
+        0x1331dc8984a3ba9642121253c4ae47058b74099838b0e4caa45a756074ff4453;
 
     IERC20 public immutable token;
     bytes32 public lastClaimHash;
@@ -25,17 +38,54 @@ contract MockTheCompact is ITheCompact {
     }
 
     function claim(Claim calldata c) external returns (bytes32 claimHash) {
-        claimHash = keccak256(abi.encode(c.sponsor, c.nonce, c.witness, c.id, c.allocatedAmount));
+        bytes12 lockTag = bytes12(bytes32(c.id));
+        address tok = address(uint160(c.id));
+        claimHash = keccak256(
+            abi.encode(
+                COMPACT_WITNESS_TYPEHASH,
+                msg.sender, // arbiter == the FreeFloCompactArbiter calling us
+                c.sponsor,
+                c.nonce,
+                c.expires,
+                lockTag,
+                tok,
+                c.allocatedAmount,
+                c.witness
+            )
+        );
         lastClaimHash = claimHash;
         for (uint256 i; i < c.claimants.length; i++) {
             token.safeTransfer(address(uint160(c.claimants[i].claimant)), c.claimants[i].amount);
         }
     }
 
-    function enableForcedWithdrawal(uint256) external { }
+    function __registerAllocator(address, bytes calldata) external pure returns (uint96) {
+        return 0;
+    }
 
-    function forcedWithdrawal(uint256, address recipient, uint256 amount) external {
+    function depositERC20(address, bytes12, uint256, address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function enableForcedWithdrawal(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function disableForcedWithdrawal(uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function forcedWithdrawal(uint256, address recipient, uint256 amount) external returns (bool) {
         token.safeTransfer(recipient, amount);
+        return true;
+    }
+
+    function getLockDetails(uint256)
+        external
+        pure
+        returns (address, address, ResetPeriod, Scope, bytes12)
+    {
+        return (address(0), address(0), ResetPeriod.OneDay, Scope.ChainSpecific, bytes12(0));
     }
 }
 
@@ -46,13 +96,14 @@ contract FreeFloCompactArbiterTest is Test {
     FreeFloCompactArbiter arbiter;
 
     // Deterministic anvil key #0 — used as the authorized witness.
-    uint256 constant WITNESS_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant WITNESS_PK =
+        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     // A different key (anvil #1) — an UNauthorized signer.
     uint256 constant BAD_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address witness;
-    string private wts; // cached arbiter.MANDATE_WITNESS_TYPESTRING() — see setUp
 
     address constant FILLER = address(0x5050);
+    address constant COPYCAT = address(0x6060);
     address constant SPONSOR = address(0x1111);
 
     uint256 constant LOCKED = 100_000_000; // 100 USDC locked in the compact
@@ -67,9 +118,6 @@ contract FreeFloCompactArbiterTest is Test {
         verifier = new PaymentVerifier(witness);
         compact = new MockTheCompact(address(usdc));
         arbiter = new FreeFloCompactArbiter(address(verifier), address(compact));
-        // Cache the typestring so _claim() makes no external call (which would otherwise
-        // consume vm.prank / vm.expectRevert during fill()'s argument evaluation).
-        wts = arbiter.MANDATE_WITNESS_TYPESTRING();
         // Simulate the user's USDC sitting in a resource lock.
         usdc.mint(address(compact), LOCKED);
     }
@@ -114,7 +162,7 @@ contract FreeFloCompactArbiterTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _claim(bytes32 witnessHash) internal view returns (Claim memory) {
+    function _claim(bytes32 witnessHash, uint256 id) internal view returns (Claim memory) {
         return Claim({
             allocatorData: "",
             sponsorSignature: "",
@@ -122,11 +170,29 @@ contract FreeFloCompactArbiterTest is Test {
             nonce: 1,
             expires: block.timestamp + 1 hours,
             witness: witnessHash,
-            witnessTypestring: wts,
-            id: 1,
+            witnessTypestring: arbiter.MANDATE_WITNESS_TYPESTRING(),
+            id: id,
             allocatedAmount: LOCKED,
             claimants: new Component[](0) // arbiter overrides this
         });
+    }
+
+    // ============ Typehash pin (catches typestring drift vs canonical The Compact) ============
+
+    function test_TypehashPins() public view {
+        // The witnessed typehash the arbiter binds against.
+        assertEq(
+            arbiter.COMPACT_WITNESS_TYPEHASH(),
+            0x1331dc8984a3ba9642121253c4ae47058b74099838b0e4caa45a756074ff4453
+        );
+        // Its non-witness prefix must be the canonical The Compact COMPACT_TYPEHASH — i.e. the
+        // arbiter's Compact field layout (bytes12 lockTag,address token,uint256 amount) is exact.
+        assertEq(
+            keccak256(
+                "Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12 lockTag,address token,uint256 amount)"
+            ),
+            0x73b631296de001508966ddfc334593ad8f850ccd3be4d2c58a9ed469844eebc7
+        );
     }
 
     // ============ Happy path ============
@@ -134,15 +200,20 @@ contract FreeFloCompactArbiterTest is Test {
     function test_Fill_ReleasesLockToFiller() public {
         FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-1");
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-1");
         bytes memory sig = _sign(WITNESS_PK, att);
 
         vm.prank(FILLER);
-        arbiter.fill(_claim(wh), m, att, sig);
+        bytes32 returned = arbiter.fill(c, m, att, sig);
 
-        // The locked USDC was released to the filler.
+        // The locked USDC was withdrawn to the filler.
         assertEq(usdc.balanceOf(FILLER), LOCKED);
         assertEq(usdc.balanceOf(address(compact)), 0);
+        // The arbiter's bound claim hash equals what The Compact realized (fail-closed assert held).
+        assertEq(returned, arbiter.computeClaimHash(c, m));
+        assertEq(returned, compact.lastClaimHash());
         // Nullifier consumed in the reused PaymentVerifier.
         assertTrue(verifier.isNullifierUsed("sepa-tx-1"));
     }
@@ -150,94 +221,164 @@ contract FreeFloCompactArbiterTest is Test {
     function test_Fill_EmitsEvent() public {
         FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-evt");
+        Claim memory c = _claim(wh, 1);
+        bytes32 claimHash = arbiter.computeClaimHash(c, m);
+        bytes32 intent = keccak256(abi.encode(claimHash, FILLER));
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-evt");
         bytes memory sig = _sign(WITNESS_PK, att);
 
-        // Don't assert the claimHash topic (computed inside the mock); check the rest.
-        vm.expectEmit(false, true, false, true);
-        emit CompactFilled(bytes32(0), FILLER, keccak256(bytes("sepa-tx-evt")), 9200);
+        vm.expectEmit(true, true, false, true);
+        emit CompactFilled(claimHash, FILLER, keccak256(bytes("sepa-tx-evt")), 9200);
         vm.prank(FILLER);
-        arbiter.fill(_claim(wh), m, att, sig);
+        arbiter.fill(c, m, att, sig);
     }
 
-    // ============ Reverts ============
+    // ============ Binding #1: claim-hash (lock) binding ============
 
     function test_Fill_RevertsWitnessMismatch() public {
         FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-2");
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-2");
         bytes memory sig = _sign(WITNESS_PK, att);
 
         // Compact was signed against a DIFFERENT witness than this mandate hashes to.
-        Claim memory c = _claim(keccak256("some-other-witness"));
+        c.witness = keccak256("some-other-witness");
 
         vm.prank(FILLER);
         vm.expectRevert(FreeFloCompactArbiter.WitnessMismatch.selector);
         arbiter.fill(c, m, att, sig);
     }
 
+    function test_Fill_RevertsWitnessTypestringMismatch() public {
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
+        bytes32 wh = arbiter.hashMandate(m);
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-ts");
+        bytes memory sig = _sign(WITNESS_PK, att);
+
+        // A compact whose declared Mandate typestring isn't the one the arbiter assumes.
+        c.witnessTypestring = "string receivingInfo,uint256 minEurAmount";
+
+        vm.prank(FILLER);
+        vm.expectRevert(FreeFloCompactArbiter.WitnessTypestringMismatch.selector);
+        arbiter.fill(c, m, att, sig);
+    }
+
+    function test_Fill_RevertsAttestationNotForClaim() public {
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
+        bytes32 wh = arbiter.hashMandate(m);
+        Claim memory c = _claim(wh, 1);
+        // Attestation signed but bound to a DIFFERENT claim hash.
+        PaymentVerifier.PaymentAttestation memory att =
+            _attestation(keccak256("different-claim"), 9200, "sepa-tx-4");
+        bytes memory sig = _sign(WITNESS_PK, att);
+
+        vm.prank(FILLER);
+        vm.expectRevert(FreeFloCompactArbiter.AttestationNotForClaim.selector);
+        arbiter.fill(c, m, att, sig);
+    }
+
+    function test_Fill_RevertsReusedMandateOnDifferentLock() public {
+        // Same mandate, but the attestation was bound to the claim hash of lock id=1...
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
+        bytes32 wh = arbiter.hashMandate(m);
+        Claim memory cOne = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(cOne, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-reuse");
+        bytes memory sig = _sign(WITNESS_PK, att);
+
+        // ...and the filler tries to drain a DIFFERENT lock (id=2) with the same mandate + proof.
+        Claim memory cTwo = _claim(wh, 2);
+
+        vm.prank(FILLER);
+        vm.expectRevert(FreeFloCompactArbiter.AttestationNotForClaim.selector);
+        arbiter.fill(cTwo, m, att, sig);
+    }
+
+    // ============ Binding #2: filler (front-running) binding ============
+
+    function test_Fill_RevertsFrontRunByCopycat() public {
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
+        bytes32 wh = arbiter.hashMandate(m);
+        Claim memory c = _claim(wh, 1);
+        // Attestation is bound to FILLER...
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-fr");
+        bytes memory sig = _sign(WITNESS_PK, att);
+
+        // ...but a copycat front-runs the bearer attestation from a different address.
+        vm.prank(COPYCAT);
+        vm.expectRevert(FreeFloCompactArbiter.AttestationNotForClaim.selector);
+        arbiter.fill(c, m, att, sig);
+
+        // The legitimate filler still succeeds.
+        vm.prank(FILLER);
+        arbiter.fill(c, m, att, sig);
+        assertEq(usdc.balanceOf(FILLER), LOCKED);
+    }
+
+    // ============ Floor + reused remaining guards ============
+
     function test_Fill_RevertsExpiredMandate() public {
         vm.warp(1_000_000);
-        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp - 1); // already expired
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp - 1); // expired
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-3");
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-3");
         bytes memory sig = _sign(WITNESS_PK, att);
 
         vm.prank(FILLER);
         vm.expectRevert(FreeFloCompactArbiter.MandateExpired.selector);
-        arbiter.fill(_claim(wh), m, att, sig);
-    }
-
-    function test_Fill_RevertsAttestationNotForMandate() public {
-        FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
-        bytes32 wh = arbiter.hashMandate(m);
-        // Attestation is signed but bound to a DIFFERENT intent/mandate.
-        PaymentVerifier.PaymentAttestation memory att =
-            _attestation(keccak256("different-mandate"), 9200, "sepa-tx-4");
-        bytes memory sig = _sign(WITNESS_PK, att);
-
-        vm.prank(FILLER);
-        vm.expectRevert(FreeFloCompactArbiter.AttestationNotForMandate.selector);
-        arbiter.fill(_claim(wh), m, att, sig);
+        arbiter.fill(c, m, att, sig);
     }
 
     function test_Fill_RevertsBelowFloor() public {
-        FreeFloCompactArbiter.Mandate memory m = _mandate(9500, block.timestamp + 1 hours); // floor 95.00
+        FreeFloCompactArbiter.Mandate memory m = _mandate(9500, block.timestamp + 1 hours); // floor 95
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-5"); // only 92.00
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-5"); // 92
         bytes memory sig = _sign(WITNESS_PK, att);
 
         vm.prank(FILLER);
         vm.expectRevert(
             abi.encodeWithSelector(FreeFloCompactArbiter.AmountBelowFloor.selector, 9200, 9500)
         );
-        arbiter.fill(_claim(wh), m, att, sig);
+        arbiter.fill(c, m, att, sig);
     }
 
     function test_Fill_RevertsUnauthorizedWitness() public {
         FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-6");
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-6");
         bytes memory sig = _sign(BAD_PK, att); // signed by a non-witness key
 
         vm.prank(FILLER);
         vm.expectRevert(PaymentVerifier.NotAuthorizedWitness.selector);
-        arbiter.fill(_claim(wh), m, att, sig);
+        arbiter.fill(c, m, att, sig);
     }
 
     function test_Fill_RevertsReplayedNullifier() public {
         FreeFloCompactArbiter.Mandate memory m = _mandate(9000, block.timestamp + 1 hours);
         bytes32 wh = arbiter.hashMandate(m);
-        PaymentVerifier.PaymentAttestation memory att = _attestation(wh, 9200, "sepa-tx-dup");
+        Claim memory c = _claim(wh, 1);
+        bytes32 intent = arbiter.expectedIntentHash(c, m, FILLER);
+        PaymentVerifier.PaymentAttestation memory att = _attestation(intent, 9200, "sepa-tx-dup");
         bytes memory sig = _sign(WITNESS_PK, att);
 
         vm.prank(FILLER);
-        arbiter.fill(_claim(wh), m, att, sig); // first claim succeeds
+        arbiter.fill(c, m, att, sig); // first claim succeeds
 
         // Re-presenting the same payment id is rejected by the reused verifier.
         vm.prank(FILLER);
         vm.expectRevert(PaymentVerifier.NullifierAlreadyUsed.selector);
-        arbiter.fill(_claim(wh), m, att, sig);
+        arbiter.fill(c, m, att, sig);
     }
 
     // The sponsor's escape hatch exists independently of the arbiter/allocator.
