@@ -52,6 +52,10 @@ export interface ChainClientV3Config {
   compactArbiterAddress?: Address;
   /** Optional FreeFloAllocator — the solver signs allocatorData over each claim hash. */
   compactAllocatorAddress?: Address;
+  /** Optional dedicated allocator signing key. When set, allocatorData is signed with THIS key
+   *  instead of solverPrivateKey, separating allocator authority from the filler wallet. Unset =
+   *  reuse the solver key (matches the live allocator); splitting on-chain needs a new allocator deploy. */
+  compactAllocatorSignerKey?: `0x${string}`;
 }
 
 /**
@@ -68,6 +72,9 @@ export class ChainClientV3 {
   private chainId: number;
   private compactArbiterAddress?: Address;
   private compactAllocatorAddress?: Address;
+  // The account that signs allocatorData. Defaults to the solver account; a dedicated
+  // compactAllocatorSignerKey overrides it so allocator authority is separable from the filler.
+  private allocatorAccount: ReturnType<typeof privateKeyToAccount>;
   public solverAddress: Address;
 
   constructor(config: ChainClientV3Config) {
@@ -94,6 +101,12 @@ export class ChainClientV3 {
     this.compactAllocatorAddress = config.compactAllocatorAddress;
     this.solverAddress = account.address;
 
+    // Allocator signer: a dedicated key when provided, else the solver account (current default,
+    // matching the live allocator whose on-chain signer is the solver key).
+    this.allocatorAccount = config.compactAllocatorSignerKey
+      ? privateKeyToAccount(config.compactAllocatorSignerKey)
+      : account;
+
     log.info(
       {
         address: this.solverAddress,
@@ -101,6 +114,8 @@ export class ChainClientV3 {
         offRamp: this.offRampAddress,
         verifier: this.verifierAddress,
         router: this.routerAddress ?? "(relayer-commit disabled)",
+        allocatorSigner: this.allocatorAccount.address,
+        dedicatedAllocatorSigner: this.allocatorAccount.address !== this.solverAddress,
       },
       "V3 Chain client initialized"
     );
@@ -313,6 +328,7 @@ export class ChainClientV3 {
       throw new Error("FREEFLO_ALLOCATOR_ADDRESS not configured");
     }
     return (await this.walletClient.signTypedData({
+      account: this.allocatorAccount,
       domain: freefloAllocatorDomain(this.compactAllocatorAddress, this.chainId),
       types: FREEFLO_ALLOCATOR_AUTH_TYPES,
       primaryType: "ClaimAuthorization",

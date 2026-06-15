@@ -107,6 +107,8 @@ async function main() {
     // Optional: enables the TIER-1 sign-once Compact fill path (both must be set).
     compactArbiterAddress: config.compactArbiterAddress,
     compactAllocatorAddress: config.compactAllocatorAddress,
+    // Optional: dedicated allocator signing key (separates allocator authority from the filler).
+    compactAllocatorSignerKey: config.compactAllocatorSignerKey,
   });
 
   solverAddress = chain.solverAddress;

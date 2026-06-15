@@ -120,6 +120,14 @@ export const config = {
   compactArbiterAddress: (process.env.COMPACT_ARBITER_ADDRESS || undefined) as Address | undefined,
   compactAllocatorAddress: (process.env.FREEFLO_ALLOCATOR_ADDRESS || undefined) as Address | undefined,
 
+  // Allocator signing key. The FreeFloAllocator authorizes each claim with an off-chain ECDSA sig;
+  // when ALLOCATOR_SIGNER_KEY is set the solver signs allocatorData with THIS key instead of the
+  // solver fill key, separating allocator authority from the filler/relayer wallet. Unset = fall back
+  // to SOLVER_PRIVATE_KEY (matches the live allocator 0x2C87, whose signer IS the solver key). NOTE:
+  // splitting the on-chain authority requires deploying a NEW FreeFloAllocator with this key's address
+  // as ALLOCATOR_SIGNER and re-wiring the lock id — this is only the client-side plumbing.
+  compactAllocatorSignerKey: (process.env.ALLOCATOR_SIGNER_KEY || undefined) as Hex | undefined,
+
   // Inbound hardening for the open Compact fill endpoint. The pre-fiat gate already prevents fund
   // loss (a fake/unfunded order reverts before any SEPA), so this is a RESOURCE-abuse guard: stop
   // anonymous spam from burning fill gas / Qonto idempotency slots / memory.
