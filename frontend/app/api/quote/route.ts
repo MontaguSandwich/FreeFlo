@@ -26,7 +26,13 @@ interface Quote {
   expiresAt: number;
 }
 
-async function fetchFromSolver(url: string, amount: string, currency: string): Promise<Quote[]> {
+interface SolverQuoteResult {
+  quotes: Quote[];
+  minUsdcAmount?: number; // solver offramp minimum (USDC base units)
+  belowMinimum?: boolean; // requested amount is below the minimum
+}
+
+async function fetchFromSolver(url: string, amount: string, currency: string): Promise<SolverQuoteResult> {
   try {
     const response = await fetch(
       `${url}/api/quote?amount=${amount}&currency=${currency}`,
@@ -38,14 +44,18 @@ async function fetchFromSolver(url: string, amount: string, currency: string): P
 
     if (!response.ok) {
       console.error(`Solver ${url} error: ${response.status}`);
-      return [];
+      return { quotes: [] };
     }
 
     const data = await response.json();
-    return data.quotes || [];
+    return {
+      quotes: data.quotes || [],
+      minUsdcAmount: data.minUsdcAmount,
+      belowMinimum: data.belowMinimum,
+    };
   } catch (error) {
     console.error(`Failed to fetch from solver ${url}:`, error);
-    return [];
+    return { quotes: [] };
   }
 }
 
@@ -67,7 +77,7 @@ export async function GET(request: NextRequest) {
   );
 
   // Flatten and dedupe quotes (by solver address + rtpn)
-  const allQuotes = results.flat();
+  const allQuotes = results.flatMap(r => r.quotes);
   const seen = new Set<string>();
   const uniqueQuotes = allQuotes.filter(q => {
     const key = `${q.solver.address}-${q.rtpn}`;
@@ -79,5 +89,12 @@ export async function GET(request: NextRequest) {
   // Sort by best rate (highest fiatAmount first)
   uniqueQuotes.sort((a, b) => b.fiatAmount - a.fiatAmount);
 
-  return NextResponse.json({ quotes: uniqueQuotes });
+  // Surface the offramp minimum: the smallest min any solver reports, and whether the
+  // requested amount is below it (no quotes + a solver said so) — so the UI can gate
+  // sub-minimum amounts instead of starting a transfer that strands at commit.
+  const mins = results.map(r => r.minUsdcAmount).filter((m): m is number => typeof m === 'number');
+  const minUsdcAmount = mins.length ? Math.min(...mins) : undefined;
+  const belowMinimum = uniqueQuotes.length === 0 && results.some(r => r.belowMinimum);
+
+  return NextResponse.json({ quotes: uniqueQuotes, minUsdcAmount, belowMinimum });
 }

@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 pub enum IntentStatus {
     None = 0,
     PendingQuote = 1,
-    Committed = 2,     // User committed to a quote, solver should fulfill
+    Committed = 2, // User committed to a quote, solver should fulfill
     Fulfilled = 3,
     Cancelled = 4,
     Expired = 5,
@@ -127,8 +127,8 @@ impl ChainClient {
         let usdc_amount = U256::from_be_slice(&result[base + 32..base + 64]);
         // currency at base+64..base+96 (not needed for validation)
         let status = IntentStatus::from(result[base + 96 + 31]); // Last byte of status word
-        // createdAt at base+128..base+160
-        // committedAt at base+160..base+192
+                                                                 // createdAt at base+128..base+160
+                                                                 // committedAt at base+160..base+192
         let selected_solver = Address::from_slice(&result[base + 192 + 12..base + 224]);
         // selectedRtpn at base+224..base+256 (not needed for validation)
         // selectedFiatAmount at base+256..base+288 (this is in cents, 2 decimals)
@@ -230,7 +230,7 @@ fn decode_dynamic_string(data: &[u8], base: usize, field_index: usize) -> Option
 }
 
 /// Normalize an IBAN for comparison: strip whitespace and uppercase.
-fn normalize_iban(iban: &str) -> String {
+pub(crate) fn normalize_iban(iban: &str) -> String {
     iban.chars()
         .filter(|c| !c.is_whitespace())
         .collect::<String>()

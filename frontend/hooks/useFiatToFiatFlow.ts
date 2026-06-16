@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   useAccount,
   useChainId,
-  useWriteContract,
-  useWaitForTransactionReceipt,
   useReadContract,
   usePublicClient,
   useWalletClient,
@@ -90,7 +88,34 @@ export const ORCHESTRATOR_ABI = [
       { name: "timestamp", type: "uint256", indexed: false },
     ],
   },
+  // cancelIntent reverts this (selector 0x9481f8b9) when the intent no longer exists —
+  // e.g. it was already cancelled/pruned outside our app (the Peer UI). Declaring it
+  // lets viem decode the revert instead of showing a raw selector.
+  { type: "error", name: "IntentNotFound", inputs: [{ name: "intentHash", type: "bytes32" }] },
 ] as const;
+
+// The ZKP2P Orchestrator reverts IntentNotFound(bytes32) when an intent is gone —
+// already cancelled/pruned outside our app. We treat that as "already cancelled" so the
+// user is never wedged on a dead verify screen (the on-chain intent can't be re-cancelled).
+function isIntentGoneError(err: unknown): boolean {
+  const msg = String((err as { message?: string } | undefined)?.message ?? err ?? "");
+  return msg.includes("IntentNotFound") || msg.toLowerCase().includes("0x9481f8b9");
+}
+
+// The router's commit reverts SlippageExceeded (0x71c4efed) — or OffRampV3 QuoteNotFound
+// (0xcf533f49) — when there's no on-chain quote >= the user's floor. The usual cause is
+// that the onramped amount is below the solver's minimum, so the solver never quoted it
+// on-chain even though the quote API (which doesn't enforce the minimum) showed a price.
+function isNoQuoteError(err: unknown): boolean {
+  const e = err as { shortMessage?: string; message?: string } | undefined;
+  const msg = String(e?.shortMessage ?? e?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("slippageexceeded") ||
+    msg.includes("0x71c4efed") ||
+    msg.includes("quotenotfound") ||
+    msg.includes("0xcf533f49")
+  );
+}
 
 // ============ Types ============
 
@@ -318,12 +343,19 @@ export function useFiatToFiatFlow() {
   // FreeFlo quotes
   const [freefloQuotes, setFreefloQuotes] = useState<any[]>([]);
 
+  // Live solver-derived EUR estimate for the input preview (null until fetched).
+  const [estimatedEur, setEstimatedEur] = useState<number | null>(null);
+  // True while computing the binding slippage floor from a live solver quote.
+  const [isPricingFloor, setIsPricingFloor] = useState(false);
+
   // Peer extension state
   const [extensionState, setExtensionState] = useState<string>("unknown");
 
   // Contract interactions
-  const { writeContract: routerCommit, data: routerCommitHash } = useWriteContract();
-  const { isSuccess: isRouterCommitConfirmed } = useWaitForTransactionReceipt({ hash: routerCommitHash });
+  // Commit + reclaim are simulate-first (see handleRouterCommit / handleReclaimTransfer)
+  // so a doomed tx surfaces a clear error instead of a reverting signature.
+  const [isCommitting, setIsCommitting] = useState(false);
+  const [isReclaiming, setIsReclaiming] = useState(false);
 
   // Local state for signaling and cancelling
   const [isSignaling, setIsSignaling] = useState(false);
@@ -346,6 +378,9 @@ export function useFiatToFiatFlow() {
   // it's still active on-chain, leaving a stranded "active order" (409 on retry). ----
   const flowStorageKey = address ? `ff-flow-${address.toLowerCase()}` : null;
   const rehydratedKeyRef = useRef<string | null>(null);
+  // A router transfer the user just reclaimed/cancelled this session — never re-resume
+  // it from a stale PENDING read.
+  const reclaimedIntentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!flowStorageKey || rehydratedKeyRef.current === flowStorageKey) return;
@@ -379,22 +414,53 @@ export function useFiatToFiatFlow() {
     } catch { /* ignore quota/serialization */ }
   }, [flowStorageKey, step, flowData]);
 
-  // Resume a pending transfer after a reload / lost flow state: if the connected
-  // wallet already has a PENDING transfer on the router (the onramp hook fired but
-  // the UI state was lost), jump straight to the commit flow so the offramp leg can
-  // still be finished within the selection window.
+  // Reconcile the UI with the on-chain router transfer (recovery after a reload / lost
+  // state). Two cases:
+  //  - PENDING with no live flow → resume into the commit flow so the offramp leg can
+  //    finish within the selection window.
+  //  - the transfer we're showing went TERMINAL (CANCELLED/EXPIRED — e.g. the user just
+  //    reclaimed, or it timed out) → clear the flow so they're not stranded on a dead
+  //    commit screen (which localStorage would otherwise keep restoring).
   useEffect(() => {
     if (!pendingTransfer) return;
     const pt = pendingTransfer as unknown as {
       intentId: `0x${string}`; usdcAmount: bigint; createdAt: bigint; status: number;
     };
+    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    if (!pt.intentId || pt.intentId === ZERO) return;
+    // Never re-resume a transfer the user just reclaimed this session, even if the read
+    // cache still shows it PENDING for a moment.
+    if (reclaimedIntentRef.current === pt.intentId) return;
+
+    const PENDING = 1, CANCELLED = 4, EXPIRED = 5;
+    const routerStages: FlowStep[] = ["router_waiting", "router_commit"];
+
+    // Dead transfer while the UI shows a committable screen → drop it.
+    if (
+      (Number(pt.status) === CANCELLED || Number(pt.status) === EXPIRED) &&
+      routerStages.includes(step) &&
+      flowData.routerIntentId === pt.intentId
+    ) {
+      if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
+      setFlowData((prev) => ({
+        ...prev,
+        routerIntentId: null,
+        selectedSolver: null,
+        quotedEurAmount: 0,
+        routerIntentCreatedAt: null,
+      }));
+      setStep("select_flow");
+      setError("That transfer was reclaimed or expired — you're back to the start.");
+      return;
+    }
+
+    // PENDING with no live flow → resume into the commit flow.
     const earlySteps: FlowStep[] = [
       "select_flow", "input_all", "finding_quotes", "select_maker",
       "zkp2p_signal", "zkp2p_send_venmo", "zkp2p_verify",
       "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
     ];
-    const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    if (Number(pt.status) === 1 && earlySteps.includes(step) && pt.intentId && pt.intentId !== ZERO) {
+    if (Number(pt.status) === PENDING && earlySteps.includes(step)) {
       setFlowData((prev) => ({
         ...prev,
         routerIntentId: pt.intentId,
@@ -403,7 +469,53 @@ export function useFiatToFiatFlow() {
       }));
       setStep("router_waiting");
     }
-  }, [pendingTransfer, step]);
+  }, [pendingTransfer, step, flowData.routerIntentId, flowStorageKey]);
+
+  // Liveness probe — don't strand the user on a restored verify/proof screen for a
+  // ZKP2P intent that no longer exists on-chain (e.g. it was cancelled via the Peer
+  // UI). Simulate cancelIntent as a READ-ONLY probe; ONLY IntentNotFound clears the
+  // flow — a live-but-not-yet-cancellable intent reverts differently and is left
+  // untouched, so there are no false resets. Runs at most once per intent hash.
+  const probedIntentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const hash = flowData.zkp2pIntentHash;
+    const proofStages: FlowStep[] = [
+      "zkp2p_verify", "zkp2p_authenticating", "zkp2p_select_payment", "zkp2p_fulfilling",
+    ];
+    if (!hash || !publicClient || !address || !proofStages.includes(step)) return;
+    if (probedIntentRef.current === hash) return;
+    probedIntentRef.current = hash;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await publicClient.simulateContract({
+          address: ZKP2P_V3_ORCHESTRATOR,
+          abi: ORCHESTRATOR_ABI,
+          functionName: "cancelIntent",
+          args: [hash],
+          account: address,
+        });
+        // Simulation succeeded → the intent exists and is cancellable → live. No-op.
+      } catch (err) {
+        if (cancelled || !isIntentGoneError(err)) return; // any other revert → keep the flow
+        if (flowStorageKey) {
+          try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ }
+        }
+        setFlowData((prev) => ({
+          ...prev,
+          zkp2pIntentHash: null,
+          zkp2pQuote: null,
+          routerIntentId: null,
+        }));
+        setStep("select_flow");
+        setError("Your previous order was already cancelled — starting fresh.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, flowData.zkp2pIntentHash, publicClient, address, flowStorageKey]);
 
   // ============ Event Polling (replaces useWatchContractEvent) ============
 
@@ -435,6 +547,31 @@ export function useFiatToFiatFlow() {
       const args = (log as any).args;
       if (args?.intentId === flowData.routerIntentId) {
         setStep("success");
+      }
+    }, [flowData.routerIntentId]),
+  );
+
+  // Detect an EXTERNAL commit (the solver/relayer called commitFor on the user's
+  // behalf — the gasless 3->2 path). Active while we'd otherwise wait for / show the
+  // manual commit; on TransferCommitted for our intent we skip straight to the
+  // pending screen. The manual commit (handleRouterCommit) stays as the fallback
+  // when no relayer is running, so this poller is purely additive.
+  useLogPoller(
+    (step === "router_waiting" || step === "router_commit") && !!flowData.routerIntentId,
+    FIAT_TO_FIAT_ROUTER_ADDRESS,
+    "event TransferCommitted(address indexed user, bytes32 indexed intentId, address solver, uint256 eurAmount)",
+    useCallback((log: Log) => {
+      const args = (log as any).args;
+      if (args?.intentId === flowData.routerIntentId) {
+        setFlowData((prev) => ({
+          ...prev,
+          selectedSolver: (args.solver as `0x${string}`) ?? prev.selectedSolver,
+          // eurAmount is the FIRM on-chain committed quote (cents) — the authoritative
+          // "you receive". Always use it, overriding any earlier /api/quote estimate
+          // (which could be stale, e.g. quoted against a prior intent's amount).
+          quotedEurAmount: Number(args.eurAmount) / 100,
+        }));
+        setStep("freeflo_pending");
       }
     }, [flowData.routerIntentId]),
   );
@@ -524,11 +661,90 @@ export function useFiatToFiatFlow() {
 
   // ============ Quote Fetching ============
 
-  const calculateEstimatedEur = useCallback((usdAmount: number): number => {
-    const usdcEstimate = usdAmount * 0.999; // ~0.1% ZKP2P fee
-    const eurEstimate = usdcEstimate * 0.92; // Approximate USD/EUR rate
-    return Math.floor(eurEstimate * 100) / 100;
+  // Live EUR estimate from the FreeFlo solver's own quote API for a given USDC
+  // amount. This is the SAME pricing the on-chain commit checks, so a floor
+  // derived from it stays self-consistent with selectQuoteAndCommit. Pure (no
+  // state) so it serves both the input preview and the binding floor.
+  const fetchSolverEurEstimate = useCallback(async (usdcAmount: bigint): Promise<number | null> => {
+    const amountNum = Number(usdcAmount) / 1_000_000;
+    if (!(amountNum > 0)) return null;
+    try {
+      const res = await fetch(`/api/quote?amount=${amountNum}&currency=EUR`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      // The proxy sorts quotes best-first; fiatAmount is in euros.
+      const eur = Number((data.quotes ?? [])[0]?.fiatAmount);
+      return Number.isFinite(eur) && eur > 0 ? eur : null;
+    } catch {
+      return null;
+    }
   }, []);
+
+  // Check the offramp minimum for a USDC amount via the solver quote API. Returns
+  // ok=false (with the minimum in USDC) when the amount is below the solver's minimum
+  // — used to gate sub-minimum transfers before they strand at commit. Fails OPEN on
+  // a transient API error (the simulate-first commit + reclaim still protect the user).
+  const checkOfframpMinimum = useCallback(
+    async (usdcAmount: bigint): Promise<{ ok: boolean; minUsdc: number | null }> => {
+      const amountNum = Number(usdcAmount) / 1_000_000;
+      if (!(amountNum > 0)) return { ok: false, minUsdc: null };
+      try {
+        const res = await fetch(`/api/quote?amount=${amountNum}&currency=EUR`);
+        if (!res.ok) return { ok: true, minUsdc: null };
+        const data = await res.json();
+        const minUsdc = typeof data.minUsdcAmount === "number" ? data.minUsdcAmount / 1_000_000 : null;
+        const ok = !data.belowMinimum && (data.quotes?.length ?? 0) > 0;
+        return { ok, minUsdc };
+      } catch {
+        return { ok: true, minUsdc: null };
+      }
+    },
+    [],
+  );
+
+  // Input-screen preview (debounced): a live, solver-derived "≈ €X" as the user
+  // types. Estimates the onramp output (~0.1% ZKP2P fee, USDC≈USD) then asks the
+  // solver what that USDC fetches in EUR. Display only — the binding floor is set
+  // from the REAL onramped amount at maker selection (priceFloor).
+  useEffect(() => {
+    const amount = parseFloat(usdInput);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setEstimatedEur(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const estUsdc = BigInt(Math.floor(amount * 0.999 * 1_000_000));
+      const eur = await fetchSolverEurEstimate(estUsdc);
+      if (!cancelled) setEstimatedEur(eur);
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [usdInput, selectedCurrency, fetchSolverEurEstimate]);
+
+  // Set the load-bearing slippage floor from a LIVE solver quote on the real
+  // onramped USDC amount. Once commit is automatic (commitFor), this floor is the
+  // user's only protection, so it MUST track live pricing — never a constant.
+  const priceFloor = useCallback(async (usdcAmount: bigint) => {
+    setIsPricingFloor(true);
+    setError(null);
+    const liveEur = await fetchSolverEurEstimate(usdcAmount);
+    if (liveEur === null) {
+      setIsPricingFloor(false);
+      setError("Couldn't fetch a live price to set your protection floor. Tap Retry price before locking.");
+      return;
+    }
+    const minEur = Math.floor(liveEur * (1 - slippagePercent / 100) * 100) / 100;
+    setFlowData((prev) => ({ ...prev, minEurAmount: minEur }));
+    setIsPricingFloor(false);
+  }, [fetchSolverEurEstimate, slippagePercent]);
+
+  // Re-run floor pricing for the in-flight transfer (SignalScreen retry).
+  const repriceFloor = useCallback(() => {
+    if (flowData.usdcAmount > BigInt(0)) void priceFloor(flowData.usdcAmount);
+  }, [flowData.usdcAmount, priceFloor]);
 
   // Fetch ZKP2P quotes via server-side proxy (avoids CORS)
   const fetchZkp2pQuotes = useCallback(async (fiatAmount: number, platform: string, currency: string) => {
@@ -570,14 +786,16 @@ export function useFiatToFiatFlow() {
 
       // Map API response to our ZkpQuote interface
       const mapped: ZkpQuote[] = quotes.map((q: any) => {
-        // The readable handle the buyer must pay (e.g. a Revolut/Venmo username) lives
-        // in the quote's curator-registered `payeeData.offchainId`. The previous
-        // `maker.depositData.*Username` path does NOT exist on the /v2/quote response,
-        // so it always fell back to "" → the send screen rendered "@unknown".
-        // `intent.payeeDetails` is the HASHED on-chain id (kept for the gating call and
-        // for the apiGetPayeeDetails fallback when a maker has no curated payeeData).
+        // The readable handle the buyer must pay (e.g. a Revolut username) lives on the
+        // quote's `maker.offchainId` (confirmed on the /v2/quote response — `payeeData`
+        // is null there, and `maker.depositData` doesn't exist). Reading the wrong path
+        // is why the maker list showed no handle. Keep payeeData + the lazy
+        // /api/zkp2p-payee resolver as fallbacks. `intent.payeeDetails` is the HASHED
+        // on-chain id (kept for the gating call and the resolver lookup).
         const payeeUsername: string =
-          q.payeeData?.offchainId
+          q.maker?.offchainId
+          || q.maker?.telegramUsername
+          || q.payeeData?.offchainId
           || q.payeeData?.telegramUsername
           || "";
 
@@ -665,28 +883,46 @@ export function useFiatToFiatFlow() {
       return;
     }
 
-    const estimatedEur = calculateEstimatedEur(amount);
-    const minEur = estimatedEur * (1 - slippagePercent / 100);
-
     setFlowData((prev) => ({
       ...prev,
       usdAmount: amount,
       eurIban: ibanInput,
       recipientName: nameInput,
-      minEurAmount: minEur,
+      // The binding floor is set from a live solver quote on the REAL onramped
+      // amount once a maker is selected (priceFloor in handleSelectMaker).
+      minEurAmount: 0,
     }));
 
     setStep("finding_quotes");
     setError(null);
 
     const quotes = await fetchZkp2pQuotes(amount, selectedPlatform, selectedCurrency);
-    if (quotes.length > 0) {
-      setStep("select_maker");
-    } else {
+    if (quotes.length === 0) {
       const platformName = PLATFORMS[selectedPlatform]?.name || selectedPlatform;
       setError(`No ${platformName} makers available for this amount. Try a different amount or platform.`);
       setStep("input_all");
+      return;
     }
+
+    // Gate the offramp minimum up front: the onramp output (USDC) must clear the
+    // solver's minimum or the transfer strands at commit (the solver skips quoting
+    // sub-minimum amounts on-chain). Check the best maker's USDC output.
+    const bestUsdc = quotes.reduce((max, q) => {
+      let t = BigInt(0);
+      try { t = BigInt(q.tokenAmount || "0"); } catch { /* ignore */ }
+      return t > max ? t : max;
+    }, BigInt(0));
+    const { ok, minUsdc } = await checkOfframpMinimum(bestUsdc);
+    if (!ok) {
+      const minLabel = minUsdc ? minUsdc.toFixed(2) : "0.10";
+      setError(
+        `Amount too small — after fees the euro conversion needs at least ~${minLabel} USDC. Increase your amount and try again.`,
+      );
+      setStep("input_all");
+      return;
+    }
+
+    setStep("select_maker");
   };
 
   const handleSelectMaker = (quote: ZkpQuote) => {
@@ -696,8 +932,13 @@ export function useFiatToFiatFlow() {
       zkp2pQuote: quote,
       usdcAmount,
       venmoPayee: quote.payeeDetails,
+      minEurAmount: 0, // recomputed live from the real USDC just below
     }));
     setStep("zkp2p_signal");
+
+    // Set the load-bearing slippage floor from a live solver quote on the REAL
+    // onramped USDC. The SignalScreen shows it and handleSignalIntent signs it.
+    void priceFloor(usdcAmount);
 
     // The handle usually arrives on the quote (payeeData.offchainId). If this maker
     // has no curated payee data, resolve it from the hashed on-chain id so the send
@@ -916,6 +1157,15 @@ export function useFiatToFiatFlow() {
       setStep("select_maker");
       setError(null);
     } catch (err: any) {
+      // Already cancelled/pruned elsewhere (e.g. via the Peer UI): there's nothing
+      // on-chain left to cancel, so don't show an error — clear the stale flow and
+      // start fresh so the user is no longer wedged on the dead verify screen.
+      if (isIntentGoneError(err)) {
+        console.warn("ZKP2P intent already gone (IntentNotFound) — clearing stale flow");
+        resetFlow();
+        setError("That order was already cancelled — you're back to the start.");
+        return;
+      }
       console.error("Cancel intent failed:", err);
       setError(`Failed to cancel intent: ${err.message || "Unknown error"}`);
     } finally {
@@ -1033,13 +1283,21 @@ export function useFiatToFiatFlow() {
   useEffect(() => {
     if (step !== "router_waiting" || !flowData.routerIntentId) return;
 
+    let cancelled = false;
     const pollQuotes = async () => {
-      // Use the router's on-chain amount as source of truth — flowData.usdcAmount can
-      // be 0 after a localStorage resume (it isn't restored there).
-      const ptAmt = pendingTransfer
-        ? BigInt((pendingTransfer as { usdcAmount: bigint }).usdcAmount)
-        : BigInt(0);
-      const quotes = await fetchFreefloQuotes(ptAmt > BigInt(0) ? ptAmt : flowData.usdcAmount);
+      // Quote the CURRENT intent's real onramped amount. Prefer flowData.usdcAmount
+      // (set from TransferInitiated); fall back to the on-chain pendingTransfer ONLY
+      // when it's for THIS intent. A stale cached transfer from a prior/reclaimed
+      // intent would otherwise quote the wrong amount — the source of the stale figure.
+      const pt = pendingTransfer as { intentId?: `0x${string}`; usdcAmount?: bigint } | undefined;
+      const ptAmt =
+        pt && pt.intentId === flowData.routerIntentId ? BigInt(pt.usdcAmount ?? BigInt(0)) : BigInt(0);
+      const amt = flowData.usdcAmount > BigInt(0) ? flowData.usdcAmount : ptAmt;
+      if (amt <= BigInt(0)) return;
+      const quotes = await fetchFreefloQuotes(amt);
+      // A relayer may have committed (advancing us to freeflo_pending) while this fetch
+      // was in flight — don't yank the step back to router_commit.
+      if (cancelled) return;
       const best = quotes[0];
       // /api/quote returns fiatAmount in euros (not outputAmount). Guard against a
       // missing/NaN amount so we never advance to commit with a bad figure.
@@ -1056,29 +1314,77 @@ export function useFiatToFiatFlow() {
 
     const interval = setInterval(pollQuotes, 2000);
     pollQuotes();
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [step, flowData.routerIntentId, flowData.usdcAmount, pendingTransfer, fetchFreefloQuotes]);
 
-  // Handle Router commit
-  const handleRouterCommit = () => {
-    if (!flowData.selectedSolver) return;
-
-    routerCommit({
-      address: FIAT_TO_FIAT_ROUTER_ADDRESS,
-      abi: FIAT_TO_FIAT_ROUTER_ABI,
-      functionName: "commit",
-      // commit(address solver) — slippage is now enforced on-chain against the
-      // real quote, so no caller-supplied EUR amount is passed.
-      args: [flowData.selectedSolver],
-    });
+  // Handle Router commit — simulate FIRST so a doomed commit surfaces a clear message
+  // instead of prompting the user to sign a reverting tx. The common failure is
+  // SlippageExceeded: no on-chain quote >= the floor, usually because the onramped
+  // amount is below the solver's minimum (the quote API showed a price the solver
+  // won't honour on-chain). On success, send + advance to the pending screen.
+  const handleRouterCommit = async () => {
+    if (!flowData.selectedSolver || !publicClient || !walletClient) return;
+    setIsCommitting(true);
+    setError(null);
+    try {
+      const { request } = await publicClient.simulateContract({
+        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "commit",
+        // commit(address solver) — slippage is enforced on-chain against the real quote.
+        args: [flowData.selectedSolver],
+        account: walletClient.account,
+      });
+      const txHash = await walletClient.writeContract(request);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      setStep("freeflo_pending");
+    } catch (err: any) {
+      if (isNoQuoteError(err)) {
+        setError(
+          "No solver quote is available on-chain for this amount yet — it's most likely below the solver's minimum (~0.1 USDC / ~€0.09). Reclaim your USDC below and try a larger amount.",
+        );
+      } else {
+        setError(`Couldn't commit: ${err?.shortMessage || err?.message || "unknown error"}`);
+      }
+    } finally {
+      setIsCommitting(false);
+    }
   };
 
-  // Watch for commit confirmation
-  useEffect(() => {
-    if (isRouterCommitConfirmed && step === "router_commit") {
-      setStep("freeflo_pending");
+  // Reclaim a PENDING router transfer (router.cancel() → USDC back to the user). The
+  // escape when no quote ever lands (e.g. a sub-minimum amount) so the user is never
+  // wedged on the commit screen.
+  const handleReclaimTransfer = async () => {
+    if (!publicClient || !walletClient) return;
+    setIsReclaiming(true);
+    setError(null);
+    try {
+      const { request } = await publicClient.simulateContract({
+        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "cancel",
+        args: [],
+        account: walletClient.account,
+      });
+      const txHash = await walletClient.writeContract(request);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      // Mark reclaimed so the resume effect won't re-restore it from a stale PENDING
+      // read, and refresh the on-chain read before resetting.
+      reclaimedIntentRef.current =
+        flowData.routerIntentId ??
+        ((pendingTransfer as { intentId?: `0x${string}` } | undefined)?.intentId ?? null);
+      try { await refetchPendingTransfer(); } catch { /* noop */ }
+      resetFlow();
+      setError("Reclaimed your USDC — you're back to the start.");
+    } catch (err: any) {
+      setError(`Couldn't reclaim: ${err?.shortMessage || err?.message || "unknown error"}`);
+    } finally {
+      setIsReclaiming(false);
     }
-  }, [isRouterCommitConfirmed, step]);
+  };
 
   // ============ Format Helpers ============
 
@@ -1143,7 +1449,10 @@ export function useFiatToFiatFlow() {
     extensionState,
     isSignaling,
     isCancelling,
+    isCommitting,
+    isReclaiming,
     isConnecting,
+    isPricingFloor,
     zkp2pQuotes,
     verifyData,
     // form inputs (controlled)
@@ -1162,13 +1471,13 @@ export function useFiatToFiatFlow() {
     // derived
     progress,
     deadlineRemaining,
+    estimatedEur,
     // formatters / pure helpers
     formatUsd,
     formatEur,
     formatUsdc,
     formatPayee,
     formatCountdown,
-    calculateEstimatedEur,
     // handlers
     handleStart,
     handleInputSubmit,
@@ -1179,6 +1488,8 @@ export function useFiatToFiatFlow() {
     handleSelectAndFulfill,
     handleCancelIntent,
     handleRouterCommit,
+    handleReclaimTransfer,
+    repriceFloor,
     connectExtension,
     resetFlow,
   };

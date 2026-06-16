@@ -108,6 +108,40 @@ export const config = {
   offRampV3Address: optionalEnv("OFFRAMP_V3_ADDRESS", "") as Address,
   paymentVerifierAddress: optionalEnv("PAYMENT_VERIFIER_ADDRESS", "") as Address,
 
+  // FiatToFiatRouter — when set, the solver acts as a gasless relayer: after quoting
+  // a router-originated intent it calls commitFor(user), collapsing fiat->fiat 3->2.
+  // Unset = no relayer behavior (the user commits via the frontend, as before).
+  fiatToFiatRouterAddress: optionalEnv("FIAT_TO_FIAT_ROUTER_ADDRESS", "") as Address,
+
+  // Compact (TIER-1 sign-once offramp) — when BOTH are set, the solver exposes the
+  // POST /api/compact/fill endpoint and can fill user-signed Compact orders (send SEPA,
+  // attest, arbiter.fill). Unset = the Compact path is disabled (additive; existing
+  // intent watching/fulfillment is unaffected). Cast undefined when unset.
+  compactArbiterAddress: (process.env.COMPACT_ARBITER_ADDRESS || undefined) as Address | undefined,
+  compactAllocatorAddress: (process.env.FREEFLO_ALLOCATOR_ADDRESS || undefined) as Address | undefined,
+
+  // Allocator signing key. The FreeFloAllocator authorizes each claim with an off-chain ECDSA sig;
+  // when ALLOCATOR_SIGNER_KEY is set the solver signs allocatorData with THIS key instead of the
+  // solver fill key, separating allocator authority from the filler/relayer wallet. Unset = fall back
+  // to SOLVER_PRIVATE_KEY (matches the live allocator 0x2C87, whose signer IS the solver key). NOTE:
+  // splitting the on-chain authority requires deploying a NEW FreeFloAllocator with this key's address
+  // as ALLOCATOR_SIGNER and re-wiring the lock id — this is only the client-side plumbing.
+  compactAllocatorSignerKey: (process.env.ALLOCATOR_SIGNER_KEY || undefined) as Hex | undefined,
+
+  // Inbound hardening for the open Compact fill endpoint. The pre-fiat gate already prevents fund
+  // loss (a fake/unfunded order reverts before any SEPA), so this is a RESOURCE-abuse guard: stop
+  // anonymous spam from burning fill gas / Qonto idempotency slots / memory.
+  //  - apiKey: when set, POST /api/compact/fill + GET /api/compact/status require a matching
+  //    `X-Solver-API-Key` header. The Next /api/compact-fill proxy injects it server-side so the
+  //    browser never holds it. Unset = no auth (local dev) + a boot warning when the Compact path is on.
+  //  - rate*/maxInflight: per-IP fixed-window limit on fills + a hard cap on concurrent orders.
+  compactFill: {
+    apiKey: optionalEnv("COMPACT_FILL_API_KEY", ""),
+    rateWindowMs: parseInt(optionalEnv("COMPACT_FILL_RATE_WINDOW_MS", "60000")),
+    rateMax: parseInt(optionalEnv("COMPACT_FILL_RATE_MAX", "5")),
+    maxInflight: parseInt(optionalEnv("COMPACT_FILL_MAX_INFLIGHT", "50")),
+  },
+
   // ==========================================================================
   // ATTESTATION SERVICE (for zkTLS proof verification)
   // ==========================================================================

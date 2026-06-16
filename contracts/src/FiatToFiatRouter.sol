@@ -19,7 +19,8 @@ import { OffRampV3 } from "./OffRampV3.sol";
  * 2. User completes the source fiat payment and proves it via ZKP2P/Peer
  * 3. ZKP2P fulfillIntent triggers execute() on this contract
  * 4. Router pulls USDC, creates FreeFlo intent, stores pending transfer
- * 5. User calls commit() to select solver quote and commit to the payout transfer
+ * 5. A relayer/solver/keeper calls commitFor(user) (or the user calls commit())
+ *    to select the best solver quote >= the user's floor and commit the transfer
  * 6. FreeFlo solver fulfills, fiat arrives in the user's destination account
  */
 contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
@@ -242,7 +243,8 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
     // ============ User Functions ============
 
     /**
-     * @notice Commit to a solver's quote and initiate the SEPA transfer.
+     * @notice Commit to a specific solver's quote and initiate the SEPA transfer
+     *         (self-service path — the user sends this tx and pays gas).
      * @param solver The solver whose on-chain quote to accept.
      * @dev Slippage is enforced against the REAL on-chain quote, not a
      *      caller-supplied number — a solver cannot quote a low figure on-chain
@@ -262,6 +264,47 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
             revert SlippageExceeded(realEurAmount, transfer.minEurAmount);
         }
 
+        _commit(transfer, solver, realEurAmount);
+    }
+
+    /**
+     * @notice Permissionless, gasless-for-the-user commit: anyone (a FreeFlo
+     *         relayer, the solver, a keeper) selects the BEST on-chain
+     *         SEPA_INSTANT quote that clears the user's signed floor and commits
+     *         on their behalf — collapsing the user's commit signature.
+     * @param user The user whose pending transfer to commit.
+     * @dev The user pre-authorized this when they signed the ZKP2P intent with
+     *      this router as the postIntentHook and `minEurAmount` as the floor.
+     *      Safety comes from two on-chain guarantees, so NO trusted relayer is
+     *      required:
+     *        1. The committed quote must be >= the user-signed floor.
+     *        2. We pick the HIGHEST eligible quote, so the caller cannot route
+     *           the user to a worse-but-above-floor solver (best execution).
+     */
+    function commitFor(address user) external nonReentrant {
+        PendingTransfer storage transfer = pendingTransfers[user];
+
+        // Validate state
+        if (transfer.user == address(0)) revert NoPendingTransfer();
+        if (transfer.status != TransferStatus.PENDING) revert TransferNotPending();
+
+        // Pick the best on-chain SEPA_INSTANT quote and enforce the floor.
+        (address bestSolver, uint256 bestEur) = _bestSepaQuote(transfer.intentId);
+        if (bestSolver == address(0) || bestEur < transfer.minEurAmount) {
+            revert SlippageExceeded(bestEur, transfer.minEurAmount);
+        }
+
+        _commit(transfer, bestSolver, bestEur);
+    }
+
+    /**
+     * @dev Shared commit tail: approve, select the quote on OffRampV3 (Router is
+     *      the depositor), reset approval, mark committed. Caller MUST have
+     *      validated `transfer` is PENDING and `solver`'s quote clears the floor.
+     */
+    function _commit(PendingTransfer storage transfer, address solver, uint256 eurAmount)
+        internal
+    {
         // Approve OffRampV3 to pull USDC
         usdc.forceApprove(address(offRamp), transfer.usdcAmount);
 
@@ -280,7 +323,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
         // Update status
         transfer.status = TransferStatus.COMMITTED;
 
-        emit TransferCommitted(msg.sender, transfer.intentId, solver, realEurAmount);
+        emit TransferCommitted(transfer.user, transfer.intentId, solver, eurAmount);
     }
 
     /**
@@ -424,6 +467,34 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
 
     function _decodePayload(bytes calldata data) internal pure returns (HookPayload memory) {
         return abi.decode(data, (HookPayload));
+    }
+
+    /**
+     * @dev Returns the SEPA_INSTANT quote with the highest `fiatAmount` for an
+     *      intent (best execution for the user), or (address(0), 0) if none.
+     *      SEPA_STANDARD quotes are ignored — the router only commits to INSTANT.
+     *      The quote set is bounded by the number of solvers that quoted within
+     *      OffRampV3's 5-minute quote window, so the loop is small and bounded.
+     *      Within the valid selection window every quoted price is still
+     *      unexpired (a quote's expiry == the intent's selection-window close),
+     *      so no expiry filtering is needed here — selectQuoteAndCommit re-checks
+     *      both the window and the quote on commit.
+     */
+    function _bestSepaQuote(bytes32 intentId)
+        internal
+        view
+        returns (address bestSolver, uint256 bestEur)
+    {
+        OffRampV3.QuoteKey[] memory keys = offRamp.getIntentQuotes(intentId);
+        for (uint256 i = 0; i < keys.length; i++) {
+            if (keys[i].rtpn != OffRampV3.RTPN.SEPA_INSTANT) continue;
+            uint256 fiatAmount =
+                offRamp.getQuote(intentId, keys[i].solver, OffRampV3.RTPN.SEPA_INSTANT).fiatAmount;
+            if (fiatAmount > bestEur) {
+                bestEur = fiatAmount;
+                bestSolver = keys[i].solver;
+            }
+        }
     }
 
     // ============ Admin Functions ============

@@ -7,6 +7,18 @@ optimizer = true
 optimizer_runs = 200
 remappings = ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
 
+# Isolated profile for the live-Compact fork E2E: The Compact needs transient storage (Cancun),
+# which solc 0.8.20 can't target. Run with: FOUNDRY_PROFILE=fork forge test --match-contract
+# CompactForkE2E --fork-url <base-rpc>. Only affects our (^0.8.20) contracts; the live Compact
+# executes from forked bytecode.
+[profile.fork]
+solc = "0.8.28"
+evm_version = "cancun"
+via_ir = true
+optimizer = true
+# Low runs => less aggressive inlining under via-ir => avoids "stack too deep" in the big fork tests.
+optimizer_runs = 1
+
 [rpc_endpoints]
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
 base = "${BASE_RPC_URL}"

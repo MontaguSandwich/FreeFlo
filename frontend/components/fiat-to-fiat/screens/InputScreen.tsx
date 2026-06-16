@@ -40,7 +40,7 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
     availableCurrencies,
     slippagePercent,
     formatEur,
-    calculateEstimatedEur,
+    estimatedEur,
     handleInputSubmit,
   } = flow;
 
@@ -100,7 +100,11 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
 
       {showEstimate && (
         <SummaryGroup>
-          <SummaryRow label="Estimated euros received" value={`≈ ${formatEur(calculateEstimatedEur(amt))}`} accent />
+          <SummaryRow
+            label="Estimated euros received"
+            value={estimatedEur !== null ? `≈ ${formatEur(estimatedEur)}` : "Fetching live rate…"}
+            accent
+          />
           <SummaryRow label="Price protection" value={`${slippagePercent}% slippage`} />
         </SummaryGroup>
       )}

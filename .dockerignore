@@ -1,0 +1,21 @@
+# Keep the build context small. The solver image builds from the REPO ROOT (needs ./solver and
+# ./providers/prover), so exclude everything else + all build outputs.
+.git
+**/node_modules
+**/target
+**/dist
+**/.next
+**/.DS_Store
+*.log
+
+# Other components not needed by the solver/attestation images.
+frontend
+contracts
+docs
+.claude
+
+# Never ship secrets into an image layer.
+**/.env
+**/.env.*
+!**/.env.example
+deploy/*.env

@@ -1,128 +1,60 @@
-version: '3.8'
-
-# ============================================
-# ZKP2P Off-Ramp Docker Compose
-# ============================================
-# 
-# Quick start:
-#   1. cp env.production.example .env
-#   2. Edit .env with your values
-#   3. docker compose up -d
+# FreeFlo backend — solver + attestation on one host. See deploy/DEPLOY.md.
 #
-# Services:
-#   - solver: Main solver service (quoting, fulfillment orchestration)
-#   - attestation-service: TLSNotary proof verification & EIP-712 signing
-#   - nginx: Reverse proxy with SSL termination
+# The frontend (Vercel) reaches the solver SERVER-SIDE over plain HTTP, so no TLS/reverse-proxy is
+# needed here; the solver's /api/compact/fill is protected by COMPACT_FILL_API_KEY (Phase 1). The
+# attestation service holds the witness key and is NOT published to the host — only the solver
+# reaches it over the internal compose network.
 
 services:
-  # ============================================
-  # Attestation Service (Rust)
-  # ============================================
-  # Verifies TLSNotary proofs and signs EIP-712 attestations
   attestation-service:
     build:
-      context: .
-      dockerfile: attestation-service/Dockerfile
-    container_name: zkp2p-attestation
+      context: ./attestation
+    image: freeflo-attestation
+    container_name: freeflo-attestation
     restart: unless-stopped
-    ports:
-      - "4001:4001"
-    environment:
-      - ATTESTATION_PORT=${ATTESTATION_PORT:-4001}
-      - WITNESS_PRIVATE_KEY=${WITNESS_PRIVATE_KEY}
-      - DOMAIN_NAME=${DOMAIN_NAME:-zkp2p-offramp}
-      - DOMAIN_VERSION=${DOMAIN_VERSION:-1}
-      - CHAIN_ID=${CHAIN_ID:-84532}
-      - VERIFYING_CONTRACT=${PAYMENT_VERIFIER_ADDRESS}
-      - RUST_LOG=${RUST_LOG:-info}
-    networks:
-      - zkp2p-network
+    env_file:
+      - ./deploy/attestation.env
+    expose:
+      - "4001"            # internal only (no host port published)
+    networks: [freeflo]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:4001/api/v1/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 20s
 
-  # ============================================
-  # Solver Service (Node.js)
-  # ============================================
-  # Handles quoting, fiat transfers, and on-chain fulfillment
   solver:
     build:
-      context: ./solver
-      dockerfile: Dockerfile
-    container_name: zkp2p-solver
+      context: .
+      dockerfile: solver/Dockerfile
+    image: freeflo-solver
+    container_name: freeflo-solver
     restart: unless-stopped
-    ports:
-      - "8080:8080"  # Health check
-      - "8081:8081"  # Quote API
+    # The solver loads ENV_FILE via dotenv (override:true). We bind-mount the real env file
+    # read-write so rotating Qonto OAuth tokens (written back to ENV_FILE) survive restarts.
     environment:
-      # Chain
-      - RPC_URL=${RPC_URL}
-      - CHAIN_ID=${CHAIN_ID:-84532}
-      - OFFRAMP_V2_ADDRESS=${OFFRAMP_V3_ADDRESS}
-      - OFFRAMP_V3_ADDRESS=${OFFRAMP_V3_ADDRESS}
-      - PAYMENT_VERIFIER_ADDRESS=${PAYMENT_VERIFIER_ADDRESS}
-      - SOLVER_PRIVATE_KEY=${SOLVER_PRIVATE_KEY}
-      
-      # Qonto
-      - QONTO_ENABLED=${QONTO_ENABLED:-true}
-      - QONTO_AUTH_METHOD=${QONTO_AUTH_METHOD:-oauth}
-      - QONTO_ACCESS_TOKEN=${QONTO_ACCESS_TOKEN}
-      - QONTO_REFRESH_TOKEN=${QONTO_REFRESH_TOKEN}
-      - QONTO_CLIENT_ID=${QONTO_CLIENT_ID}
-      - QONTO_CLIENT_SECRET=${QONTO_CLIENT_SECRET}
-      - QONTO_BANK_ACCOUNT_ID=${QONTO_BANK_ACCOUNT_ID}
-      - QONTO_FEE_BPS=${QONTO_FEE_BPS:-50}
-      
-      # Attestation (internal service)
-      - ATTESTATION_SERVICE_URL=http://attestation-service:4001
-      
-      # Prover (disabled in Docker - proofs generated externally)
-      - PROVER_ENABLED=false
-      
-      # Database
-      - DB_PATH=/app/data/solver.db
-      
-      # Ports
-      - HEALTH_PORT=8080
-      - QUOTE_API_PORT=8081
+      - ENV_FILE=/app/solver.env
     volumes:
+      - ./deploy/solver.env:/app/solver.env
       - solver-data:/app/data
+    ports:
+      - "8080:8080"       # health
+      - "8081:8081"       # quote + compact-fill API (Vercel SOLVER_API_URL points here)
     depends_on:
       attestation-service:
         condition: service_healthy
-    networks:
-      - zkp2p-network
+    networks: [freeflo]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 15s
-
-  # ============================================
-  # Nginx Reverse Proxy
-  # ============================================
-  nginx:
-    image: nginx:alpine
-    container_name: zkp2p-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - solver
-    networks:
-      - zkp2p-network
+      start_period: 30s
 
 volumes:
   solver-data:
 
 networks:
-  zkp2p-network:
+  freeflo:
     driver: bridge

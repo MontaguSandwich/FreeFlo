@@ -61,7 +61,7 @@ export function FiatToFiatFlow() {
     deadlineRemaining,
     formatEur,
     formatCountdown,
-    calculateEstimatedEur,
+    estimatedEur,
     handleCancelIntent,
   } = flow;
 
@@ -85,10 +85,15 @@ export function FiatToFiatFlow() {
   // ---- Rail projection (read-only over flowData / derived) -----------------
   const symbol = CURRENCIES[selectedCurrency]?.symbol || "$";
   const amountIn = `${symbol}${flowData.usdAmount.toFixed(2)}`;
-  // Firm euro figure once a FreeFlo quote resolves; estimate otherwise.
+  // Firm euro figure once a FreeFlo quote resolves; otherwise the committed floor,
+  // then the live input estimate. Show "…" until one of those resolves.
   const hasFirmEur = flowData.quotedEurAmount > 0;
-  const estEur = flowData.minEurAmount > 0 ? flowData.minEurAmount : calculateEstimatedEur(flowData.usdAmount);
-  const amountOut = formatEur(hasFirmEur ? flowData.quotedEurAmount : estEur);
+  const estEur = flowData.minEurAmount > 0 ? flowData.minEurAmount : (estimatedEur ?? 0);
+  const amountOut = hasFirmEur
+    ? formatEur(flowData.quotedEurAmount)
+    : estEur > 0
+      ? formatEur(estEur)
+      : "…";
 
   const showRail = step !== "select_flow" && step !== "success";
   // The deadline clock surfaces once the FreeFlo intent exists (INV-7).

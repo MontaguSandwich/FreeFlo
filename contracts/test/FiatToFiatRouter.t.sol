@@ -32,6 +32,8 @@ contract FiatToFiatRouterTest is Test {
     address constant USER = address(0x1111);
     address constant SOLVER = address(0x2222);
     address constant DEPOSIT_OWNER = address(0x3333);
+    address constant SOLVER2 = address(0x6666);
+    address constant KEEPER = address(0x7777); // arbitrary relayer/keeper for commitFor
 
     uint256 constant WITNESS_PK =
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
@@ -148,6 +150,16 @@ contract FiatToFiatRouterTest is Test {
             100_000, // 0.10 USDC fee
             15 // 15 seconds
         );
+    }
+
+    function _submitQuoteFrom(
+        bytes32 intentId,
+        address solver,
+        OffRampV3.RTPN rtpn,
+        uint256 fiatAmount
+    ) internal {
+        vm.prank(solver);
+        offRamp.submitQuote(intentId, rtpn, fiatAmount, 100_000, 15);
     }
 
     // ============ execute() tests ============
@@ -338,6 +350,127 @@ contract FiatToFiatRouterTest is Test {
         vm.expectEmit(true, true, false, true);
         emit TransferCommitted(USER, intentId, SOLVER, 9200);
         router.commit(SOLVER);
+    }
+
+    // ============ commitFor() tests ============
+
+    function test_CommitFor_PicksBestQuote() public {
+        uint256 amount = 100_000_000;
+        bytes32 intentId = _executeHook(USER, amount); // floor 8500
+
+        // Two solvers quote; both clear the floor. commitFor must pick the higher.
+        _submitQuoteFrom(intentId, SOLVER, OffRampV3.RTPN.SEPA_INSTANT, 9000);
+        _submitQuoteFrom(intentId, SOLVER2, OffRampV3.RTPN.SEPA_INSTANT, 9200);
+
+        // A keeper (not the user, not a solver) commits on the user's behalf.
+        vm.prank(KEEPER);
+        router.commitFor(USER);
+
+        OffRampV3.Intent memory intent = offRamp.getIntent(intentId);
+        assertEq(intent.selectedSolver, SOLVER2);
+        assertEq(intent.selectedFiatAmount, 9200);
+        assertEq(uint256(intent.status), uint256(OffRampV3.IntentStatus.COMMITTED));
+        assertEq(
+            uint256(router.getPendingTransfer(USER).status),
+            uint256(FiatToFiatRouter.TransferStatus.COMMITTED)
+        );
+        // USDC moved router -> offRamp
+        assertEq(usdc.balanceOf(address(router)), 0);
+        assertEq(usdc.balanceOf(address(offRamp)), amount);
+    }
+
+    function test_CommitFor_PicksBestRegardlessOfOrder() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000);
+
+        // Highest quote submitted FIRST — selection must still pick it.
+        _submitQuoteFrom(intentId, SOLVER, OffRampV3.RTPN.SEPA_INSTANT, 9300);
+        _submitQuoteFrom(intentId, SOLVER2, OffRampV3.RTPN.SEPA_INSTANT, 9000);
+
+        vm.prank(KEEPER);
+        router.commitFor(USER);
+
+        assertEq(offRamp.getIntent(intentId).selectedSolver, SOLVER);
+        assertEq(offRamp.getIntent(intentId).selectedFiatAmount, 9300);
+    }
+
+    function test_CommitFor_PermissionlessCaller() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000);
+        _submitSolverQuote(intentId); // SOLVER @ 9200
+
+        // Any address can trigger the commit — there is no relayer allowlist.
+        vm.prank(address(0xDEAD));
+        router.commitFor(USER);
+
+        assertEq(
+            uint256(offRamp.getIntent(intentId).status),
+            uint256(OffRampV3.IntentStatus.COMMITTED)
+        );
+    }
+
+    function test_CommitFor_IgnoresSepaStandard() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000);
+
+        // A SEPA_STANDARD quote is higher, but the router only commits INSTANT.
+        _submitQuoteFrom(intentId, SOLVER, OffRampV3.RTPN.SEPA_INSTANT, 9000);
+        _submitQuoteFrom(intentId, SOLVER2, OffRampV3.RTPN.SEPA_STANDARD, 9999);
+
+        vm.prank(KEEPER);
+        router.commitFor(USER);
+
+        OffRampV3.Intent memory intent = offRamp.getIntent(intentId);
+        assertEq(intent.selectedSolver, SOLVER); // the INSTANT quote, not the higher STANDARD
+        assertEq(intent.selectedFiatAmount, 9000);
+        assertEq(uint256(intent.selectedRtpn), uint256(OffRampV3.RTPN.SEPA_INSTANT));
+    }
+
+    function test_CommitFor_EmitsEvent() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000);
+        _submitSolverQuote(intentId); // SOLVER @ 9200
+
+        vm.expectEmit(true, true, false, true);
+        emit TransferCommitted(USER, intentId, SOLVER, 9200);
+        vm.prank(KEEPER);
+        router.commitFor(USER);
+    }
+
+    function test_CommitFor_RevertsAllBelowFloor() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000); // floor 8500
+        _submitQuoteFrom(intentId, SOLVER, OffRampV3.RTPN.SEPA_INSTANT, 8000); // below floor
+
+        vm.prank(KEEPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(FiatToFiatRouter.SlippageExceeded.selector, 8000, 8500)
+        );
+        router.commitFor(USER);
+    }
+
+    function test_CommitFor_RevertsNoQuotes() public {
+        _executeHook(USER, 100_000_000); // floor 8500, no solver quotes
+
+        vm.prank(KEEPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(FiatToFiatRouter.SlippageExceeded.selector, 0, 8500)
+        );
+        router.commitFor(USER);
+    }
+
+    function test_CommitFor_RevertsWhenNoPending() public {
+        vm.prank(KEEPER);
+        vm.expectRevert(FiatToFiatRouter.NoPendingTransfer.selector);
+        router.commitFor(USER);
+    }
+
+    function test_CommitFor_RevertsWhenAlreadyCommitted() public {
+        bytes32 intentId = _executeHook(USER, 100_000_000);
+        _submitSolverQuote(intentId);
+
+        vm.prank(USER);
+        router.commit(SOLVER);
+
+        // Second commit (now COMMITTED, not PENDING) must revert.
+        vm.prank(KEEPER);
+        vm.expectRevert(FiatToFiatRouter.TransferNotPending.selector);
+        router.commitFor(USER);
     }
 
     // ============ cancel() tests ============
