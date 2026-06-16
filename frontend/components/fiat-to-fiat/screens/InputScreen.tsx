@@ -11,6 +11,7 @@ import {
   Field,
   SummaryGroup,
   SummaryRow,
+  NoticeBanner,
   phaseOfFour,
 } from "../ui";
 
@@ -20,8 +21,9 @@ import {
  *  - controlled inputs bind to the hook's usdInput/ibanInput/nameInput +
  *    selectedPlatform/selectedCurrency setters.
  *  - the estimate well shows only when `usdInput && parseFloat(usdInput) > 0`.
- *  - the CTA calls handleInputSubmit and is disabled with the EXACT condition
- *    `!usdInput || parseFloat(usdInput) <= 0 || !ibanInput || !nameInput`.
+ *  - the CTA calls handleInputSubmit and is disabled when amount/IBAN/name are
+ *    empty OR the selected platform is locked for this wallet's ZKP2P tier
+ *    (e.g. PayPal needs PLUS) — see platformLock below.
  *  - IBAN is upper-cased on change (uppercaseValue), mirroring the original.
  */
 export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
@@ -39,6 +41,8 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
     setSelectedCurrency,
     availableCurrencies,
     slippagePercent,
+    takerTier,
+    platformLock,
     formatEur,
     estimatedEur,
     handleInputSubmit,
@@ -47,7 +51,19 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
   const symbol = CURRENCIES[selectedCurrency]?.symbol || "$";
   const amt = parseFloat(usdInput);
   const showEstimate = Boolean(usdInput) && amt > 0;
-  const disabled = !usdInput || parseFloat(usdInput) <= 0 || !ibanInput || !nameInput;
+  // Gate up front on the wallet's ZKP2P tier so a locked method (e.g. PayPal needs
+  // PLUS) can't start a flow that would 403 at "Lock order". platformLock() returns
+  // null until tier data loads, so this is a no-op when we don't know yet.
+  const selectedLock = platformLock(selectedPlatform);
+  const isPlatformLocked = Boolean(selectedLock?.locked);
+  const platformName = PLATFORMS[selectedPlatform]?.name || selectedPlatform;
+  const platformOptions = Object.values(PLATFORMS).map((p) => {
+    const lock = platformLock(p.id);
+    const suffix = lock?.locked ? ` 🔒${lock.minTierRequired ? ` ${lock.minTierRequired}` : ""}` : "";
+    return { value: p.id, label: `${p.icon} ${p.name}${suffix}` };
+  });
+  const disabled =
+    !usdInput || parseFloat(usdInput) <= 0 || !ibanInput || !nameInput || isPlatformLocked;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -70,7 +86,7 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
           label="Pay with"
           value={selectedPlatform}
           onChange={setSelectedPlatform}
-          options={Object.values(PLATFORMS).map((p) => ({ value: p.id, label: `${p.icon} ${p.name}` }))}
+          options={platformOptions}
         />
         <PlatformSelect
           label="Currency"
@@ -79,6 +95,14 @@ export function InputScreen({ flow }: { flow: FiatToFiatFlowApi }) {
           options={availableCurrencies.map((c) => ({ value: c.code, label: `${c.flag} ${c.code}` }))}
         />
       </Box>
+
+      {isPlatformLocked && (
+        <NoticeBanner kind="warning">
+          {platformName} requires a ZKP2P {selectedLock?.minTierRequired || "higher"} tier
+          {takerTier?.tier ? ` — your wallet is ${takerTier.tier}` : ""}. Pick another payment
+          method, or build more ZKP2P volume to unlock it.
+        </NoticeBanner>
+      )}
 
       <MoneyInput
         symbol={symbol}

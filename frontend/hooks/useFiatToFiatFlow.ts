@@ -184,6 +184,33 @@ export const ZKP2P_ENVIRONMENT = 'production' as const;
 // the enclave. Distinct from FreeFlo's own offramp attestation service.
 export const PEER_ATTESTATION_URL = 'https://attestation-service.zkp2p.xyz' as const;
 
+/**
+ * Turn the zkp2p-gating proxy's error payload into a human-readable reason.
+ * The proxy forwards the upstream ZKP2P body verbatim in `details`, e.g. a 403
+ * tier gate: {"message":"paypal requires PLUS tier or higher. Complete $2000 in
+ * volume to unlock.","errorCode":"paypal_requires_plus_tier_or_higher_..."}.
+ * Surfacing that `message` tells the user WHY signalling failed (a ZKP2P
+ * account-policy gate on certain payment methods such as PayPal/Venmo) instead
+ * of the opaque "Failed to fetch gating signature from API". Falls back to the
+ * proxy's own `error` string, then the HTTP status.
+ */
+function gatingErrorMessage(result: unknown, status: number): string {
+  const r = (result ?? {}) as { error?: string; details?: unknown };
+  let detail = "";
+  if (typeof r.details === "string") {
+    // `details` is usually the raw upstream JSON body — pull `.message` out of it.
+    try {
+      detail = (JSON.parse(r.details) as { message?: string })?.message ?? r.details;
+    } catch {
+      detail = r.details;
+    }
+  } else if (r.details && typeof r.details === "object") {
+    detail = (r.details as { message?: string }).message ?? "";
+  }
+  detail = (detail || r.error || "").trim();
+  return detail || `Gating request failed (HTTP ${status}).`;
+}
+
 export function useZkp2pClient() {
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
@@ -289,6 +316,30 @@ export function formatCountdown(seconds: number): string {
 
 // ============ Headless flow hook ============
 
+// ZKP2P per-wallet "taker tier" (from /v2/taker/tier via the zkp2p-tier proxy).
+// Tier is keyed to the connected wallet's cumulative volume and gates higher-risk
+// payment methods: PEASANT(0) → PEER($500) → PLUS($2000) → PRO($10k). Each platform
+// limit says whether that method isLocked for this wallet and the minTier it needs.
+export interface TakerPlatformLimit {
+  platformName: string;
+  isLocked: boolean;
+  minTierRequired: string | null;
+  effectiveCapDisplay?: string;
+}
+export interface TakerTier {
+  tier: string;
+  perIntentCapDisplay?: string;
+  maxOrderSizeDisplay?: string;
+  volumeToNextTierDisplay?: string;
+  nextTier?: string | null;
+  platformLimits?: TakerPlatformLimit[];
+}
+export interface PlatformLock {
+  locked: boolean;
+  minTierRequired: string | null;
+  cap: string | null;
+}
+
 export function useFiatToFiatFlow() {
   const { OFFRAMP_V3: OFFRAMP_V3_ADDRESS } = useNetworkAddresses();
   const { address, isConnected } = useAccount();
@@ -336,6 +387,43 @@ export function useFiatToFiatFlow() {
       }
     }
   }, [selectedPlatform, selectedCurrency]);
+
+  // Per-wallet ZKP2P taker tier — lets the picker show which payment methods are
+  // locked for THIS wallet (e.g. PayPal needs PLUS) BEFORE the user walks the whole
+  // flow into a /v3/intent 403 at "Lock order". Best-effort: on failure it stays
+  // null and we fall back to surfacing the real reason at signal time.
+  const [takerTier, setTakerTier] = useState<TakerTier | null>(null);
+  useEffect(() => {
+    if (!address) { setTakerTier(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/zkp2p-tier?owner=${address}&chainId=${chainId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.success && data.tier) setTakerTier(data.tier as TakerTier);
+      } catch {
+        /* leave null — the signal-time error surfacing is the safety net */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [address, chainId]);
+
+  // Whether a UI platform is locked for this wallet's tier. Returns null when we
+  // have no tier data yet (→ no gating; degrade to the prior behaviour). Matches the
+  // tier's platformName to our platform id case-insensitively.
+  const platformLock = useCallback((platformId: string): PlatformLock | null => {
+    if (!takerTier?.platformLimits) return null;
+    const lim = takerTier.platformLimits.find(
+      (p) => p.platformName?.toLowerCase() === platformId.toLowerCase(),
+    );
+    if (!lim) return null;
+    return {
+      locked: Boolean(lim.isLocked),
+      minTierRequired: lim.minTierRequired ?? null,
+      cap: lim.effectiveCapDisplay ?? null,
+    };
+  }, [takerTier]);
 
   // ZKP2P quotes
   const [zkp2pQuotes, setZkp2pQuotes] = useState<ZkpQuote[]>([]);
@@ -985,7 +1073,7 @@ export function useFiatToFiatFlow() {
     paymentMethod: string; // bytes32 hash from quote
     postIntentHook: string; // Router address for hook
     data: string; // Encoded hook payload
-  }): Promise<{ signature: `0x${string}`; expiration: string; referralFees: { recipient: `0x${string}`; fee: string }[] } | null> => {
+  }): Promise<{ signature: `0x${string}`; expiration: string; referralFees: { recipient: `0x${string}`; fee: string }[] }> => {
     // Resolve payment method and fiat currency hashes (same as SDK does)
     const catalog = getPaymentMethodsCatalog(chainId, ZKP2P_ENVIRONMENT);
     const paymentMethodHash = resolvePaymentMethodHashFromCatalog(params.processorName, catalog);
@@ -1007,31 +1095,31 @@ export function useFiatToFiatFlow() {
     };
 
 
-    try {
-      // Use server-side proxy to keep API key secret
-      const response = await fetch('/api/zkp2p-gating', {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
+    // Use server-side proxy to keep API key secret. A network failure reaching
+    // our own proxy throws a friendly message; a gating REJECTION (e.g. ZKP2P's
+    // PayPal "PLUS tier" gate) throws the REAL upstream reason so the user sees
+    // why, instead of the opaque "Failed to fetch gating signature from API".
+    const response = await fetch('/api/zkp2p-gating', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    }).catch((err) => {
+      console.error("Failed to reach gating proxy:", err);
+      throw new Error("Couldn't reach the gating service. Check your connection and try again.");
+    });
 
-      const result = await response.json();
+    const result: any = await response.json().catch(() => ({}));
 
-      if (!response.ok || !result.success) {
-        console.error("Gating API error:", response.status, result);
-        return null;
-      }
-
-
-      return {
-        signature: result.signature as `0x${string}`,
-        expiration: result.expiration,
-        referralFees: result.referralFees ?? [],
-      };
-    } catch (err) {
-      console.error("Failed to fetch gating signature:", err);
-      return null;
+    if (!response.ok || !result?.success) {
+      console.error("Gating API error:", response.status, result);
+      throw new Error(gatingErrorMessage(result, response.status));
     }
+
+    return {
+      signature: result.signature as `0x${string}`,
+      expiration: result.expiration,
+      referralFees: result.referralFees ?? [],
+    };
   };
 
   const handleSignalIntent = async () => {
@@ -1065,10 +1153,9 @@ export function useFiatToFiatFlow() {
         data: hookPayload,
       });
 
-      if (!gatingResult) {
-        throw new Error("Failed to fetch gating signature from API");
-      }
-
+      // fetchGatingSignature throws the real reason on failure (network issue or a
+      // ZKP2P gating rejection like the PayPal tier gate), so a returned result is
+      // always valid — no generic-null guard needed.
       const gatingSignature = gatingResult.signature;
       const signatureExpiration = gatingResult.expiration;
 
@@ -1468,6 +1555,9 @@ export function useFiatToFiatFlow() {
     setSelectedCurrency,
     availableCurrencies,
     slippagePercent,
+    // per-wallet ZKP2P tier + which platforms it locks (e.g. PayPal needs PLUS)
+    takerTier,
+    platformLock,
     // derived
     progress,
     deadlineRemaining,
