@@ -15,7 +15,6 @@ import {
   QontoBeneficiariesResponse,
   QontoError,
   QontoScaResponse,
-  QontoScaSessionStatus,
 } from "./qonto-types.js";
 
 const log = createLogger("qonto-client");
@@ -328,6 +327,13 @@ export class QontoClient {
       } catch (error) {
         lastError = error as Error;
 
+        // SCA-required is terminal for this retry loop — propagate immediately to
+        // createTransfer. Retrying here only burns attempts and makes Qonto mint a
+        // fresh throwaway sca_session_token each time (observed as duplicate 428s).
+        if (error instanceof QontoScaRequiredError) {
+          throw error;
+        }
+
         // Don't retry client errors (4xx) except rate limiting
         if (error instanceof QontoApiError && error.statusCode < 500 && error.statusCode !== 429) {
           throw error;
@@ -400,21 +406,21 @@ export class QontoClient {
   }
 
   /**
-   * Find a trusted beneficiary by IBAN
+   * Whether a TRUSTED beneficiary with this IBAN exists in the Qonto org.
+   * Returns true (a trusted match exists), false (lookup succeeded, none found), or
+   * null (the lookup itself failed). Distinguishing "not trusted" from "couldn't
+   * check" matters: an unattended payout must FAIL FAST on the former, but must NOT
+   * be blocked by a transient API error on the latter (fail open).
    */
-  async findTrustedBeneficiary(iban: string): Promise<string | null> {
+  async checkBeneficiaryTrusted(iban: string): Promise<boolean | null> {
     try {
-      const response = await this.listBeneficiaries({ 
+      const response = await this.listBeneficiaries({
         iban: iban.replace(/\s/g, "").toUpperCase(),
         trusted: true,
       });
-      
-      if (response.beneficiaries.length > 0) {
-        return response.beneficiaries[0].id;
-      }
-      return null;
+      return response.beneficiaries.length > 0;
     } catch (error) {
-      log.warn({ iban, error }, "Failed to find beneficiary");
+      log.warn({ iban, error }, "Trusted-beneficiary lookup failed (treating as unknown)");
       return null;
     }
   }
@@ -433,64 +439,6 @@ export class QontoClient {
   }
 
   // ============ SCA (Strong Customer Authentication) ============
-
-  /**
-   * Poll SCA session status
-   */
-  async getScaSessionStatus(scaSessionToken: string): Promise<QontoScaSessionStatus> {
-    const response = await fetch(`${this.baseUrl}/v2/sca/sessions/${scaSessionToken}`, {
-      method: "GET",
-      headers: this.getHeaders(),
-    });
-    
-    if (!response.ok) {
-      const text = await response.text();
-      throw new QontoApiError(`SCA session check failed: ${response.status}`, response.status, undefined, text);
-    }
-    
-    return response.json() as Promise<QontoScaSessionStatus>;
-  }
-
-  /**
-   * Wait for SCA approval with polling
-   * @param scaSessionToken The SCA session token from 428 response
-   * @param timeoutMs Maximum time to wait (default 5 minutes)
-   * @param pollIntervalMs Polling interval (default 2 seconds)
-   */
-  async waitForScaApproval(
-    scaSessionToken: string,
-    timeoutMs: number = 300000,
-    pollIntervalMs: number = 2000
-  ): Promise<boolean> {
-    const startTime = Date.now();
-    
-    log.info({ scaSessionToken: scaSessionToken.substring(0, 20) + "..." }, "Waiting for SCA approval...");
-    
-    while (Date.now() - startTime < timeoutMs) {
-      try {
-        const status = await this.getScaSessionStatus(scaSessionToken);
-        
-        log.debug({ status: status.status }, "SCA session status");
-        
-        if (status.status === "allow") {
-          log.info("SCA approved by user");
-          return true;
-        } else if (status.status === "deny") {
-          log.warn("SCA denied by user");
-          return false;
-        }
-        
-        // Still waiting
-        await this.sleep(pollIntervalMs);
-      } catch (error) {
-        log.warn({ error }, "Error polling SCA status");
-        await this.sleep(pollIntervalMs);
-      }
-    }
-    
-    log.warn("SCA approval timeout");
-    return false;
-  }
 
   /**
    * Approve a mocked SCA session in the sandbox. Real device/SMS approval isn't
@@ -542,32 +490,45 @@ export class QontoClient {
         idempotencyKey
       );
     } catch (error) {
-      // Handle SCA required
+      // Handle SCA required (428)
       if (error instanceof QontoScaRequiredError) {
-        log.info(
-          { scaMethods: error.scaMethods },
-          "SCA required - please approve on your Qonto app"
-        );
-        
-        // Sandbox can't do device/SMS SCA and the GET /v2/sca/sessions poll 404s,
-        // so approve the mocked session directly (pairs with the X-Qonto-2fa-Preference:
-        // mock header). Production keeps the real wait-for-device-approval path.
-        const approved = this.stagingToken
-          ? await this.approveMockScaSession(error.scaSessionToken)
-          : await this.waitForScaApproval(error.scaSessionToken);
-        
-        if (!approved) {
-          throw new QontoApiError("SCA approval denied or timed out", 428, "sca_denied");
+        // SANDBOX: device/SMS SCA isn't available and GET /v2/sca/sessions/{token}
+        // 404s, so approve the mocked session directly (pairs with the
+        // X-Qonto-2fa-Preference: mock header), then retry with the session token.
+        if (this.stagingToken) {
+          log.info({ scaMethods: error.scaMethods }, "SCA required - approving mocked sandbox session");
+          const approved = await this.approveMockScaSession(error.scaSessionToken);
+          if (!approved) {
+            throw new QontoApiError("SCA approval failed (sandbox mock)", 428, "sca_denied");
+          }
+          log.info("Retrying transfer with SCA token");
+          return await this.requestWithScaToken<QontoTransferResponse>(
+            "POST",
+            "/v2/sepa/transfers",
+            request,
+            error.scaSessionToken,
+            idempotencyKey
+          );
         }
-        
-        // Retry with SCA token
-        log.info("Retrying transfer with SCA token");
-        return await this.requestWithScaToken<QontoTransferResponse>(
-          "POST",
-          "/v2/sepa/transfers",
-          request,
-          error.scaSessionToken,
-          idempotencyKey
+
+        // PRODUCTION: an unattended solver cannot complete device SCA, and Qonto's
+        // GET /v2/sca/sessions/{token} status poll returns 404 in prod — so the old
+        // "wait up to 5 minutes for approval" path could NEVER succeed and just
+        // stranded the intent (no transfer created, USDC stuck). SCA only fires for
+        // NON-trusted beneficiaries, so fail FAST with an actionable reason instead.
+        // (QontoProvider.executeTransfer pre-checks trust and normally catches this
+        // first; this is the backstop.) Fix: a trusted beneficiary or a Qonto SCA
+        // exemption — see docs/agent/debugging.md "Qonto 428 sca_required".
+        log.error(
+          { scaMethods: error.scaMethods },
+          "SCA required in production (recipient not a trusted beneficiary) — failing fast; unattended solver cannot device-approve"
+        );
+        throw new QontoApiError(
+          "SCA required: the recipient is not a trusted Qonto beneficiary, and an unattended solver " +
+            "cannot complete device approval. Mark the beneficiary as trusted in Qonto (Settings → " +
+            "Beneficiaries), or obtain a Qonto SCA exemption for the API integration.",
+          428,
+          "sca_required_untrusted"
         );
       }
       throw error;

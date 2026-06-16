@@ -82,16 +82,16 @@ describe("QontoClient.createTransfer idempotency", () => {
     expect(idempotencyKeyOf(fetchMock.mock.calls[1])).toBe("offramp-0xRETRY");
   });
 
-  it("reuses the SAME key on the SCA approval retry path", async () => {
+  it("reuses the SAME key on the sandbox SCA mock-approve retry path", async () => {
     const scaToken = "sca-session-token-xyz";
-    // maxRetries=1 so the initial (SCA-triggering) POST is attempted exactly once before the
-    // 428 propagates to the SCA-approval flow, keeping the POST count deterministic at 2.
-    const client = new QontoClient({ ...baseConfig, maxRetries: 1 });
+    // Sandbox (stagingToken set): a 428 is mock-approved, then the transfer is retried with
+    // the session token. maxRetries=1 keeps the initial (SCA-triggering) POST at exactly one.
+    const client = new QontoClient({ ...baseConfig, useSandbox: true, stagingToken: "stg-token", maxRetries: 1 });
 
-    fetchMock.mockImplementation(async (_url: string, init: { method?: string; headers?: Record<string, string> }) => {
-      // SCA status poll -> approved.
-      if (init?.method === "GET") {
-        return new Response(JSON.stringify({ status: "allow" }), { status: 200 });
+    fetchMock.mockImplementation(async (url: string, init: { method?: string; headers?: Record<string, string> }) => {
+      // Mock-approve the SCA session.
+      if (typeof url === "string" && url.includes("/mocked_sca_sessions/")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
       }
       // Transfer retry carrying the SCA session token -> success.
       if (init?.headers?.["X-Qonto-Sca-Session-Token"]) {
@@ -107,12 +107,39 @@ describe("QontoClient.createTransfer idempotency", () => {
     await client.createTransfer(transferRequest, "offramp-0xSCA");
 
     const transferPosts = fetchMock.mock.calls.filter(
-      (c: unknown[]) => (c[1] as { method?: string } | undefined)?.method === "POST"
+      (c: unknown[]) =>
+        (c[1] as { method?: string } | undefined)?.method === "POST" &&
+        typeof c[0] === "string" &&
+        (c[0] as string).includes("/sepa/transfers")
     );
     expect(transferPosts).toHaveLength(2);
     // Both the initial 428 attempt and the SCA-token retry must carry the same idempotency key.
     expect(idempotencyKeyOf(transferPosts[0])).toBe("offramp-0xSCA");
     expect(idempotencyKeyOf(transferPosts[1])).toBe("offramp-0xSCA");
+  });
+
+  it("fails fast (no device-approval poll) when SCA is required in production", async () => {
+    // Prod (no stagingToken): the unattended solver can't device-approve and Qonto's status
+    // poll 404s, so SCA must fail fast with a clear, non-retryable reason — never a 5-min hang.
+    const client = new QontoClient({ ...baseConfig, maxRetries: 1 });
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ sca_session_token: "tok", sca_methods: ["paired_device"] }),
+        { status: 428 }
+      )
+    );
+
+    await expect(client.createTransfer(transferRequest, "offramp-0xPRODSCA")).rejects.toThrow(
+      /not a trusted Qonto beneficiary/
+    );
+    // No GET status poll, no mock-approve, no retry-with-token: only the single transfer POST.
+    expect(
+      fetchMock.mock.calls.every((c: unknown[]) => (c[1] as { method?: string } | undefined)?.method === "POST")
+    ).toBe(true);
+    const transferPosts = fetchMock.mock.calls.filter(
+      (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes("/sepa/transfers")
+    );
+    expect(transferPosts).toHaveLength(1);
   });
 
   it("refuses to send a transfer when no idempotency key is provided", async () => {

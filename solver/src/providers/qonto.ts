@@ -202,6 +202,33 @@ export class QontoProvider extends BaseProvider {
         };
       }
 
+      // Pre-flight trust check (production only). An unattended solver cannot complete
+      // Qonto SCA (device approval), so a NON-trusted beneficiary 428s and strands the
+      // transfer (no fiat sent, USDC stuck COMMITTED until the user reclaims). Fail FAST
+      // with a clear, actionable reason instead of attempting a doomed send. Fails OPEN:
+      // only a DEFINITIVE "not trusted" (false) blocks; an inconclusive lookup (null) or
+      // a trusted match (true) proceeds, so a transient API blip never blocks a real
+      // trusted transfer — the client's prod-SCA fail-fast is the backstop. Sandbox uses
+      // mock SCA, so it's exempt.
+      if (!this.config.useSandbox) {
+        const trusted = await this.client.checkBeneficiaryTrusted(iban);
+        if (trusted === false) {
+          log.error(
+            { iban: iban.substring(0, 8) + "...", recipientName },
+            "Beneficiary is not a trusted Qonto beneficiary — SCA would be required; failing fast"
+          );
+          return {
+            success: false,
+            transferId: "",
+            fiatSent: 0n,
+            error:
+              `Recipient "${recipientName}" (${iban.substring(0, 4)}…${iban.slice(-4)}) is not a trusted ` +
+              `Qonto beneficiary. Add it as a trusted beneficiary in Qonto (Settings → Beneficiaries) and ` +
+              `retry — unattended payouts to untrusted beneficiaries require SCA, which can't be auto-approved.`,
+          };
+        }
+      }
+
       // Step 2: Create the transfer
       const amountEur = (Number(fiatAmount) / 100).toFixed(2);
       const reference = `OFFRAMP-${intentId.substring(0, 8)}`;
