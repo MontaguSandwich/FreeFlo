@@ -11,19 +11,12 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
-import HistoryIcon from "@mui/icons-material/History";
-import IconButton from "@mui/material/IconButton";
-import Tooltip from "@mui/material/Tooltip";
-import Badge from "@mui/material/Badge";
 import { useFormStore } from "@/stores/formStore";
 import { useExecutionStore } from "@/stores/executionStore";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useApproveUSDC } from "@/hooks/useApproveUSDC";
 import { FlowCard, PrimaryButton, ProviderGlyph } from "@/components/fiat-to-fiat/ui";
 import { QuoteCard, QuoteCardSkeleton, NoQuotesMessage } from "./QuoteCard";
-import { TransactionHistory } from "./TransactionHistory";
-import { useHistoryUiStore } from "@/stores/historyUiStore";
-import { useReclaimableCount } from "@/hooks/useReclaimableCount";
 import {
   Currency,
   CURRENCIES,
@@ -54,11 +47,6 @@ const CURRENCY_ORDER: Currency[] = ["EUR", "GBP", "USD", "BRL", "INR"];
 export function OfframpInput({ onStartExecution }: OfframpInputProps) {
   // ---- Wallet ----------------------------------------------------------
   const { isConnected, address } = useAccount();
-
-  // ---- History dialog --------------------------------------------------
-  const historyOpen = useHistoryUiStore((s) => s.open);
-  const setHistoryOpen = useHistoryUiStore((s) => s.setOpen);
-  const reclaimableCount = useReclaimableCount(address);
 
   // ---- Stores ----------------------------------------------------------
   const {
@@ -206,24 +194,8 @@ export function OfframpInput({ onStartExecution }: OfframpInputProps) {
                   })}
                 </Typography>
               )}
-              {isConnected && (
-                <Tooltip title="Transaction history">
-                  <IconButton
-                    size="small"
-                    onClick={() => setHistoryOpen(true)}
-                    aria-label="transaction history"
-                    sx={{ color: (t) => t.ff.textTertiary, "&:hover": { color: (t) => t.ff.brandStrong } }}
-                  >
-                    <Badge variant="dot" color="error" overlap="circular" invisible={reclaimableCount === 0}>
-                      <HistoryIcon sx={{ fontSize: 18 }} />
-                    </Badge>
-                  </IconButton>
-                </Tooltip>
-              )}
             </Box>
           </Box>
-
-          <TransactionHistory open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
           <TextField
             fullWidth
