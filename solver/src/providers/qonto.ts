@@ -600,12 +600,21 @@ function persistTokensToEnv(accessToken: string, refreshToken: string, useSandbo
     // refreshed rotating token survives restarts. Falls back to the old
     // sandbox->.env.testnet / prod->.env mapping when ENV_FILE is unset.
     const envFileName = process.env.ENV_FILE || (useSandbox ? ".env.testnet" : ".env");
-    let envPath = path.join(process.cwd(), envFileName);
-    if (!fs.existsSync(envPath)) {
+    // ENV_FILE may be ABSOLUTE — e.g. the Docker bind-mount /app/solver.env. The old
+    // path.join(cwd, envFileName) mangled an absolute path (/app + /app/solver.env ->
+    // /app/app/solver.env), so the file was never found and rotated Qonto tokens silently
+    // failed to persist ("Could not find .env file to persist tokens") — which broke Qonto
+    // auth on the next container restart (it reloaded a long-consumed refresh token →
+    // invalid_grant). Honor an absolute path as-is; only fall back to the solver/ subdir for
+    // a RELATIVE name (local dev run from the repo root).
+    let envPath = path.isAbsolute(envFileName)
+      ? envFileName
+      : path.join(process.cwd(), envFileName);
+    if (!fs.existsSync(envPath) && !path.isAbsolute(envFileName)) {
       envPath = path.join(process.cwd(), "solver", envFileName);
     }
     if (!fs.existsSync(envPath)) {
-      log.warn("Could not find .env file to persist tokens");
+      log.warn({ envFileName, envPath }, "Could not find .env file to persist tokens");
       return;
     }
 
