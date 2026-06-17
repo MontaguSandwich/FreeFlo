@@ -199,6 +199,18 @@ async function main() {
       compactFillApiKey: config.compactFill.apiKey || undefined,
       compactFillRate: { windowMs: config.compactFill.rateWindowMs, max: config.compactFill.rateMax },
       compactFillMaxInflight: config.compactFill.maxInflight,
+      // Read-only intent status for the frontend's offramp-wait poller (surfaces a terminal
+      // failure like "beneficiary not trusted" instead of hanging at "pending").
+      intentStatus: (intentId: string) => {
+        const i = db.getIntent(intentId);
+        if (!i) return null;
+        return {
+          status: i.status,
+          error: i.error,
+          transferId: i.providerTransferId,
+          fulfillmentTxHash: i.fulfillmentTxHash,
+        };
+      },
     },
   );
   quoteApiServer.listen(quoteApiPort, () => {

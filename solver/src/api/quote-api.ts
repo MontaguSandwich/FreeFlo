@@ -43,6 +43,18 @@ export interface QuoteApiOptions {
   compactFillRate?: { windowMs: number; max: number };
   /** Hard cap on concurrent (non-terminal) Compact orders — memory + abuse guard. */
   compactFillMaxInflight?: number;
+  /**
+   * Optional read-only lookup of an offramp intent's live status, so the frontend can
+   * surface a terminal failure (e.g. "beneficiary not trusted") during the offramp wait
+   * instead of sitting at "pending" until the deadline. Returns null when this solver has
+   * no record of the intent.
+   */
+  intentStatus?: (intentId: string) => {
+    status: string;
+    error: string | null;
+    transferId: string | null;
+    fulfillmentTxHash: string | null;
+  } | null;
 }
 
 /** Best-effort client IP: the first hop in X-Forwarded-For (set by our Next proxy / Vercel), else the socket. */
@@ -213,6 +225,28 @@ export function createQuoteApiServer(
       const supported = getSupportedRtpns(registry);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(supported, null, 2));
+      return;
+    }
+
+    // GET /api/intent-status?intentId=0x... — read-only offramp intent status so the UI can
+    // surface a TERMINAL failure (e.g. "beneficiary not trusted") during the offramp wait,
+    // instead of sitting at "pending" until the deadline. 404 {found:false} when this solver
+    // has no record of the intent → the frontend treats "unknown" as "keep waiting".
+    if (url.pathname === "/api/intent-status" && req.method === "GET") {
+      const intentId = url.searchParams.get("intentId");
+      if (!intentId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing intentId" }));
+        return;
+      }
+      const rec = options.intentStatus?.(intentId);
+      if (!rec) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ found: false }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ found: true, ...rec }));
       return;
     }
 

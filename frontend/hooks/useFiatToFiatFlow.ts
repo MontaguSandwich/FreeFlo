@@ -639,6 +639,42 @@ export function useFiatToFiatFlow() {
     }, [flowData.routerIntentId]),
   );
 
+  // Poll the SOLVER for a TERMINAL offramp failure during the wait (e.g. the recipient
+  // isn't a trusted Qonto beneficiary). Success is handled by the IntentFulfilled log poller
+  // above; this surfaces a FAILURE — the real reason + a reclaim escape — IMMEDIATELY instead
+  // of spinning until the 15-min deadline. The solver exposes its per-intent DB status at
+  // /api/intent-status (proxied); a 404/unknown means "keep waiting", and a 'pending_retry'
+  // status is transient (the solver is still trying), so only 'failed' is terminal.
+  const [offrampError, setOfframpError] = useState<string | null>(null);
+  useEffect(() => {
+    if (step !== "freeflo_pending" || !flowData.routerIntentId) return;
+    setOfframpError(null); // fresh wait
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const check = async () => {
+      try {
+        const res = await fetch(`/api/solver-intent-status?intentId=${flowData.routerIntentId}`);
+        if (!res.ok) return; // 404 = solver has no record yet → keep waiting
+        const data = await res.json();
+        if (!cancelled && data?.found && data.status === "failed") {
+          setOfframpError(
+            data.error ||
+              "The euro payout couldn't be completed. Your USDC is safe — reclaim it below and try again.",
+          );
+          if (timer) clearInterval(timer);
+        }
+      } catch {
+        /* network blip — keep polling */
+      }
+    };
+    void check();
+    timer = setInterval(check, 6000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [step, flowData.routerIntentId]);
+
   // Detect an EXTERNAL commit (the solver/relayer called commitFor on the user's
   // behalf — the gasless 3->2 path). Active while we'd otherwise wait for / show the
   // manual commit; on TransferCommitted for our intent we skip straight to the
@@ -1518,6 +1554,7 @@ export function useFiatToFiatFlow() {
     metadataUnsubRef.current = null;
     setSelectedCurrency("USD");
     setError(null);
+    setOfframpError(null);
     if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
   };
 
@@ -1533,6 +1570,8 @@ export function useFiatToFiatFlow() {
     flowData,
     error,
     setError,
+    // terminal offramp failure surfaced by the solver during the freeflo_pending wait
+    offrampError,
     extensionState,
     isSignaling,
     isCancelling,
