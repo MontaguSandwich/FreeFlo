@@ -54,8 +54,9 @@ export function FiatToFiatFlow() {
     step,
     flowData,
     error,
-    setError,
+    errorRecovery,
     isCancelling,
+    isReclaiming,
     selectedCurrency,
     progress,
     deadlineRemaining,
@@ -63,6 +64,9 @@ export function FiatToFiatFlow() {
     formatCountdown,
     estimatedEur,
     handleCancelIntent,
+    handleResolvePending,
+    dismissError,
+    resetFlow,
   } = flow;
 
   // ---- Not connected: re-skinned card (tokens) -----------------------------
@@ -122,7 +126,25 @@ export function FiatToFiatFlow() {
           Cancel intent
         </DangerButton>
       )}
-      <GhostButton onClick={() => setError(null)} sx={{ py: 0.5, px: 1.5, fontSize: "0.75rem" }}>
+      {/* A prior router slot is blocking this flow → reclaim it (cancel / rescueTimedOut /
+          rescueCommitted, picked on-chain). Replaces the old CLI-only recovery. */}
+      {errorRecovery === "reclaim" && (
+        <DangerButton
+          onClick={handleResolvePending}
+          loading={isReclaiming}
+          loadingLabel="Reclaiming…"
+          sx={{ width: "auto", py: 0.5, px: 1.5, fontSize: "0.75rem" }}
+        >
+          Reclaim previous transfer
+        </DangerButton>
+      )}
+      {/* This order is dead (expired / already used / not found) → start over cleanly. */}
+      {errorRecovery === "restart" && (
+        <DangerButton onClick={resetFlow} sx={{ width: "auto", py: 0.5, px: 1.5, fontSize: "0.75rem" }}>
+          Start over
+        </DangerButton>
+      )}
+      <GhostButton onClick={dismissError} sx={{ py: 0.5, px: 1.5, fontSize: "0.75rem" }}>
         Dismiss
       </GhostButton>
     </>

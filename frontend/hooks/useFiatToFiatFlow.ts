@@ -16,6 +16,7 @@ import {
   FIAT_TO_FIAT_ROUTER_ADDRESS,
   FIAT_TO_FIAT_ROUTER_ABI,
 } from "@/lib/router-contracts";
+import { friendlyTxError, type TxRecovery } from "@/lib/tx-errors";
 import { useNetworkAddresses } from "@/hooks/useNetworkAddresses";
 import { USDC_MAINNET_ADDRESS } from "@/lib/zkp2p-contracts";
 import {
@@ -365,6 +366,9 @@ export function useFiatToFiatFlow() {
     quotedEurAmount: 0,
   });
   const [error, setError] = useState<string | null>(null);
+  // When an error is recoverable, what the UI should offer (e.g. reclaim a stuck
+  // transfer, start over). Cleared alongside `error` via dismissError().
+  const [errorRecovery, setErrorRecovery] = useState<TxRecovery | null>(null);
 
   // Form inputs
   const [usdInput, setUsdInput] = useState("");
@@ -1380,6 +1384,7 @@ export function useFiatToFiatFlow() {
     const intentHash = flowData.zkp2pIntentHash;
     if (!intentHash || !verifyData || !zkp2pClient) return;
     setError(null);
+    setErrorRecovery(null);
     setStep("zkp2p_fulfilling");
     try {
       const proof: Record<string, unknown> = {
@@ -1397,8 +1402,19 @@ export function useFiatToFiatFlow() {
       // Fulfilled → hook fired. The TransferInitiated poller advances to router_waiting.
     } catch (err: any) {
       console.error("fulfillIntent failed:", err);
-      setError(`Verification failed: ${err?.message || "unknown error"}. Pick the payment again or retry.`);
-      setStep("zkp2p_select_payment");
+      // Decode the revert into plain language + the right recovery. The common case here
+      // is UserAlreadyHasPendingTransfer (0x4c0b07ac) — a stale router slot from a prior
+      // attempt — which arrives as an undecodable signature. Telling the user to "pick the
+      // payment again" can't clear a stuck slot, so route them to the reclaim action.
+      const f = friendlyTxError(err, "Verification failed — please retry.");
+      setError(f.message);
+      if (f.recovery === "reclaim") {
+        setErrorRecovery("reclaim");
+        setStep("error");
+      } else {
+        setErrorRecovery(f.recovery === "restart" ? "restart" : null);
+        setStep("zkp2p_select_payment");
+      }
     }
   };
 
@@ -1470,7 +1486,7 @@ export function useFiatToFiatFlow() {
           "No solver quote is available on-chain for this amount yet — it's most likely below the solver's minimum (~0.1 USDC / ~€0.09). Reclaim your USDC below and try a larger amount.",
         );
       } else {
-        setError(`Couldn't commit: ${err?.shortMessage || err?.message || "unknown error"}`);
+        setError(friendlyTxError(err, "Couldn't commit — please try again.").message);
       }
     } finally {
       setIsCommitting(false);
@@ -1507,6 +1523,93 @@ export function useFiatToFiatFlow() {
     } finally {
       setIsReclaiming(false);
     }
+  };
+
+  // Resolve a transfer slot that's blocking a NEW flow (the "you have an unfinished
+  // transfer" / UserAlreadyHasPendingTransfer 0x4c0b07ac case). Reads the on-chain status
+  // and runs the CORRECT recovery, simulate-first: PENDING → cancel(); PENDING past the
+  // 15m commit window → rescueTimedOut(user); COMMITTED → rescueCommitted(user). A
+  // too-early revert (CannotCancelYet/NotTimedOutYet) surfaces a clear "try again" message.
+  const handleResolvePending = async () => {
+    if (!publicClient || !walletClient || !address) return;
+    setIsReclaiming(true);
+    setError(null);
+    try {
+      const ptRaw = await publicClient.readContract({
+        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+        abi: FIAT_TO_FIAT_ROUTER_ABI,
+        functionName: "getPendingTransfer",
+        args: [address],
+      });
+      const pt = ptRaw as unknown as { intentId: `0x${string}`; createdAt: bigint; status: number };
+      const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+      const status = Number(pt.status);
+      const NONE = 0, COMMITTED = 2;
+
+      // Slot already free (or never existed / already terminal) → just clear the UI.
+      if (!pt.intentId || pt.intentId === ZERO || status === NONE || status > COMMITTED) {
+        reclaimedIntentRef.current = pt.intentId ?? null;
+        try { await refetchPendingTransfer(); } catch { /* noop */ }
+        setErrorRecovery(null);
+        resetFlow();
+        setError("No unfinished transfer to reclaim — you're clear to start.");
+        return;
+      }
+
+      // Simulate-first, then send the recovery that matches the slot's state.
+      let txHash: `0x${string}`;
+      if (status === COMMITTED) {
+        const { request } = await publicClient.simulateContract({
+          address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+          abi: FIAT_TO_FIAT_ROUTER_ABI,
+          functionName: "rescueCommitted",
+          args: [address],
+          account: walletClient.account,
+        });
+        txHash = await walletClient.writeContract(request);
+      } else {
+        const COMMIT_TIMEOUT = 15 * 60;
+        const pastWindow =
+          Number(pt.createdAt) > 0 && Date.now() / 1000 > Number(pt.createdAt) + COMMIT_TIMEOUT;
+        if (pastWindow) {
+          const { request } = await publicClient.simulateContract({
+            address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+            abi: FIAT_TO_FIAT_ROUTER_ABI,
+            functionName: "rescueTimedOut",
+            args: [address],
+            account: walletClient.account,
+          });
+          txHash = await walletClient.writeContract(request);
+        } else {
+          const { request } = await publicClient.simulateContract({
+            address: FIAT_TO_FIAT_ROUTER_ADDRESS,
+            abi: FIAT_TO_FIAT_ROUTER_ABI,
+            functionName: "cancel",
+            args: [],
+            account: walletClient.account,
+          });
+          txHash = await walletClient.writeContract(request);
+        }
+      }
+
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      reclaimedIntentRef.current = pt.intentId;
+      try { await refetchPendingTransfer(); } catch { /* noop */ }
+      setErrorRecovery(null);
+      resetFlow();
+      setError("Reclaimed your previous transfer — your USDC is back and you're clear to start.");
+    } catch (err: any) {
+      // CannotCancelYet / NotTimedOutYet → still inside its window; friendlyTxError returns
+      // the "try again shortly" copy. Leave errorRecovery set so the button stays available.
+      setError(friendlyTxError(err, "Couldn't reclaim — please try again shortly.").message);
+    } finally {
+      setIsReclaiming(false);
+    }
+  };
+
+  const dismissError = () => {
+    setError(null);
+    setErrorRecovery(null);
   };
 
   // ============ Format Helpers ============
@@ -1554,6 +1657,7 @@ export function useFiatToFiatFlow() {
     metadataUnsubRef.current = null;
     setSelectedCurrency("USD");
     setError(null);
+    setErrorRecovery(null);
     setOfframpError(null);
     if (flowStorageKey) { try { localStorage.removeItem(flowStorageKey); } catch { /* noop */ } }
   };
@@ -1570,6 +1674,8 @@ export function useFiatToFiatFlow() {
     flowData,
     error,
     setError,
+    errorRecovery,
+    dismissError,
     // terminal offramp failure surfaced by the solver during the freeflo_pending wait
     offrampError,
     extensionState,
@@ -1618,6 +1724,7 @@ export function useFiatToFiatFlow() {
     handleCancelIntent,
     handleRouterCommit,
     handleReclaimTransfer,
+    handleResolvePending,
     repriceFloor,
     connectExtension,
     resetFlow,

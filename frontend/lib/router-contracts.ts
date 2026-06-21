@@ -189,6 +189,16 @@ export const FIAT_TO_FIAT_ROUTER_ABI = [
     outputs: [],
     stateMutability: "nonpayable",
   },
+  // Reclaim a COMMITTED transfer whose solver never fulfilled (permissionless): cancels
+  // the OffRampV3 intent past its fulfilment window and returns the USDC to the user.
+  // The ONLY recovery for a stuck COMMITTED slot — cancel() is PENDING-only.
+  {
+    type: "function",
+    name: "rescueCommitted",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
   {
     type: "function",
     name: "markComplete",
