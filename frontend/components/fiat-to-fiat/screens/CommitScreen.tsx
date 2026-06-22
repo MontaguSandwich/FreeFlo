@@ -23,7 +23,7 @@ import { PrimaryButton, GhostButton, NoticeBanner, RiskGate, SummaryGroup, Summa
 export function CommitScreen({ flow }: { flow: FiatToFiatFlowApi }) {
   const {
     step, flowData, deadlineRemaining, formatUsdc, formatEur, formatCountdown,
-    handleRouterCommit, handleReclaimTransfer, isCommitting, isReclaiming,
+    handleRouterCommit, handleResolvePending, isCommitting, isReclaiming,
   } = flow;
   const [ack, setAck] = useState(false);
 
@@ -84,7 +84,7 @@ export function CommitScreen({ flow }: { flow: FiatToFiatFlowApi }) {
       {/* Escape hatch: if the solver has no on-chain quote (e.g. amount below its
           minimum), commit reverts — let the user reclaim the PENDING USDC and retry. */}
       <GhostButton
-        onClick={handleReclaimTransfer}
+        onClick={handleResolvePending}
         disabled={isCommitting}
         loading={isReclaiming}
         loadingLabel="Reclaiming…"

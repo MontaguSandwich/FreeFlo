@@ -13,7 +13,7 @@ import { StatusScreen, NoticeBanner, DangerButton } from "../ui";
  * instead of spinning until the 15-minute deadline.
  */
 export function FreefloPendingScreen({ flow }: { flow: FiatToFiatFlowApi }) {
-  const { offrampError, handleReclaimTransfer, isReclaiming } = flow;
+  const { offrampError, handleResolvePending, isReclaiming } = flow;
 
   if (offrampError) {
     return (
@@ -26,7 +26,7 @@ export function FreefloPendingScreen({ flow }: { flow: FiatToFiatFlowApi }) {
           Your USDC is safe and still held in the offramp — nothing was sent. Reclaim it back to
           your wallet and try again.
         </Typography>
-        <DangerButton loading={isReclaiming} loadingLabel="Reclaiming…" onClick={handleReclaimTransfer}>
+        <DangerButton loading={isReclaiming} loadingLabel="Reclaiming…" onClick={handleResolvePending}>
           Reclaim my USDC
         </DangerButton>
       </Box>

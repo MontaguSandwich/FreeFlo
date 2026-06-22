@@ -444,7 +444,7 @@ export function useFiatToFiatFlow() {
   const [extensionState, setExtensionState] = useState<string>("unknown");
 
   // Contract interactions
-  // Commit + reclaim are simulate-first (see handleRouterCommit / handleReclaimTransfer)
+  // Commit + reclaim are simulate-first (see handleRouterCommit / handleResolvePending)
   // so a doomed tx surfaces a clear error instead of a reverting signature.
   const [isCommitting, setIsCommitting] = useState(false);
   const [isReclaiming, setIsReclaiming] = useState(false);
@@ -1493,43 +1493,12 @@ export function useFiatToFiatFlow() {
     }
   };
 
-  // Reclaim a PENDING router transfer (router.cancel() → USDC back to the user). The
-  // escape when no quote ever lands (e.g. a sub-minimum amount) so the user is never
-  // wedged on the commit screen.
-  const handleReclaimTransfer = async () => {
-    if (!publicClient || !walletClient) return;
-    setIsReclaiming(true);
-    setError(null);
-    try {
-      const { request } = await publicClient.simulateContract({
-        address: FIAT_TO_FIAT_ROUTER_ADDRESS,
-        abi: FIAT_TO_FIAT_ROUTER_ABI,
-        functionName: "cancel",
-        args: [],
-        account: walletClient.account,
-      });
-      const txHash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
-      // Mark reclaimed so the resume effect won't re-restore it from a stale PENDING
-      // read, and refresh the on-chain read before resetting.
-      reclaimedIntentRef.current =
-        flowData.routerIntentId ??
-        ((pendingTransfer as { intentId?: `0x${string}` } | undefined)?.intentId ?? null);
-      try { await refetchPendingTransfer(); } catch { /* noop */ }
-      resetFlow();
-      setError("Reclaimed your USDC — you're back to the start.");
-    } catch (err: any) {
-      setError(`Couldn't reclaim: ${err?.shortMessage || err?.message || "unknown error"}`);
-    } finally {
-      setIsReclaiming(false);
-    }
-  };
-
-  // Resolve a transfer slot that's blocking a NEW flow (the "you have an unfinished
-  // transfer" / UserAlreadyHasPendingTransfer 0x4c0b07ac case). Reads the on-chain status
-  // and runs the CORRECT recovery, simulate-first: PENDING → cancel(); PENDING past the
-  // 15m commit window → rescueTimedOut(user); COMMITTED → rescueCommitted(user). A
-  // too-early revert (CannotCancelYet/NotTimedOutYet) surfaces a clear "try again" message.
+  // The universal reclaim handler — used by the commit/pending screens AND the error-banner
+  // recovery for a prior slot blocking a NEW flow (UserAlreadyHasPendingTransfer 0x4c0b07ac).
+  // Reads the on-chain status and runs the CORRECT recovery, simulate-first: PENDING →
+  // cancel(); PENDING past the 15m commit window → rescueTimedOut(user); COMMITTED →
+  // rescueCommitted(user). A too-early revert (CannotCancelYet/NotTimedOutYet) surfaces a
+  // clear "try again shortly" message instead of a confusing TransferNotPending revert.
   const handleResolvePending = async () => {
     if (!publicClient || !walletClient || !address) return;
     setIsReclaiming(true);
@@ -1723,7 +1692,6 @@ export function useFiatToFiatFlow() {
     handleSelectAndFulfill,
     handleCancelIntent,
     handleRouterCommit,
-    handleReclaimTransfer,
     handleResolvePending,
     repriceFloor,
     connectExtension,
