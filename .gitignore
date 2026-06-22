@@ -96,3 +96,4 @@ next-env.d.ts
 docs/
 MIGRATION_PLAN.md
 x-post.md
+sentinel/state/
