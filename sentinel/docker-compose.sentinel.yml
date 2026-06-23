@@ -1,0 +1,25 @@
+# FreeFlo Sentinel — run beside the solver/attestation stack on the EC2 box.
+# Standalone:  docker compose -f sentinel/docker-compose.sentinel.yml up -d --build
+# Or merge this `sentinel` service into the box's main docker-compose.yml so it shares the
+# network and can reach the solver at http://solver:8080.
+services:
+  sentinel:
+    build: .
+    container_name: freeflo-sentinel
+    restart: unless-stopped
+    env_file: ./.env # TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (local-only, gitignored)
+    environment:
+      # Reach the solver's internal health port over the compose network (service name).
+      SOLVER_HEALTH_URL: http://solver:8080
+      SENTINEL_INTERVAL_MS: "120000"
+      # Non-refund self-heal — leave false until you've watched it run clean for a while.
+      SENTINEL_AUTOHEAL: "false"
+      SENTINEL_COMPOSE_FILE: /work/docker-compose.yml
+    volumes:
+      - ./state:/app/state # persist incident dedupe state across restarts
+      # --- enable the two mounts below ONLY when SENTINEL_AUTOHEAL=true (restart capability) ---
+      # - /var/run/docker.sock:/var/run/docker.sock      # lets it restart the solver container
+      # - ../docker-compose.yml:/work/docker-compose.yml:ro
+    # When merged into the main compose, drop `build: .` path issues by setting:
+    #   build: ./sentinel
+    # and ensure this service is on the same network as `solver`.
