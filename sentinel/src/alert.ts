@@ -4,11 +4,10 @@ import type { StoredIncident } from "./store.js";
 
 const SEV: Record<Incident["severity"], string> = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
 
-/** Send a plain-text message to the configured Telegram chat. No-op (warns) if unconfigured. */
-export async function sendTelegram(cfg: Config, text: string): Promise<boolean> {
-  const { token, chatId } = cfg.telegram;
+/** Low-level: post a plain-text message to a Telegram chat with the given bot token. */
+export async function postTelegram(token: string, chatId: string, text: string): Promise<boolean> {
   if (!token || !chatId) {
-    console.warn("  (telegram not configured — TELEGRAM_CHAT_ID missing — skipping send)");
+    console.warn("  (telegram: token/chatId missing — skipping send)");
     return false;
   }
   try {
@@ -28,6 +27,11 @@ export async function sendTelegram(cfg: Config, text: string): Promise<boolean> 
     console.warn("  telegram send error:", (err as Error).message);
     return false;
   }
+}
+
+/** Send to the Sentinel's configured alert chat. No-op (warns) if unconfigured. */
+export async function sendTelegram(cfg: Config, text: string): Promise<boolean> {
+  return postTelegram(cfg.telegram.token, cfg.telegram.chatId, text);
 }
 
 function fmt(inc: Incident): string {

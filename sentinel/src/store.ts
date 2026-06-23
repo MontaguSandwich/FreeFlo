@@ -63,3 +63,21 @@ export function reconcile(state: SentinelState, current: Incident[], nowSec: num
   state.updatedAt = nowSec;
   return { newly, resolved };
 }
+
+// ---- Trade-tracker cursor (last processed block) — separate from the incident store. ----
+const CURSOR_FILE = resolve(STATE_DIR, "tracker-cursor.json");
+
+export function loadCursor(): bigint | null {
+  if (!existsSync(CURSOR_FILE)) return null;
+  try {
+    const j = JSON.parse(readFileSync(CURSOR_FILE, "utf8")) as { block?: string };
+    return j.block != null ? BigInt(j.block) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCursor(block: bigint): void {
+  if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
+  writeFileSync(CURSOR_FILE, JSON.stringify({ block: block.toString(), updatedAt: Math.floor(Date.now() / 1000) }, null, 2) + "\n");
+}

@@ -22,6 +22,14 @@ export const config = {
     chatId: process.env.TELEGRAM_CHAT_ID ?? "",
   },
 
+  // Trade-tracker bot (@freeflotradesbot) — the positive intent-lifecycle activity feed.
+  tracker: {
+    token: process.env.TRACKER_BOT_TOKEN ?? "",
+    chatId: process.env.TRACKER_CHAT_ID ?? "",
+    startBlock: process.env.TRACKER_START_BLOCK ? BigInt(process.env.TRACKER_START_BLOCK) : null,
+    intervalMs: Number(process.env.TRACKER_INTERVAL_MS ?? 30000),
+  },
+
   // Non-refund self-heal (restart / token-refresh). OFF by default — flip on once stable.
   autoheal: (process.env.SENTINEL_AUTOHEAL ?? "false").toLowerCase() === "true",
   composeFile: process.env.SENTINEL_COMPOSE_FILE ?? "/home/ec2-user/freeflo/docker-compose.yml",

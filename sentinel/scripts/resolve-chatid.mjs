@@ -1,15 +1,19 @@
-// One-shot helper: resolve the Telegram chat id from getUpdates and write it into
-// sentinel/.env (TELEGRAM_CHAT_ID). Run after you've messaged @freefreeflobot.
-//   node scripts/resolve-chatid.mjs
+// One-shot helper: resolve a Telegram chat id from getUpdates and write it into
+// sentinel/.env. Defaults to the Sentinel bot; pass var names for a different bot:
+//   node scripts/resolve-chatid.mjs                              # TELEGRAM_BOT_TOKEN  -> TELEGRAM_CHAT_ID
+//   node scripts/resolve-chatid.mjs TRACKER_BOT_TOKEN TRACKER_CHAT_ID
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+const TOKEN_VAR = process.argv[2] || "TELEGRAM_BOT_TOKEN";
+const CHAT_VAR = process.argv[3] || "TELEGRAM_CHAT_ID";
+
 const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "../.env");
 const env = readFileSync(envPath, "utf8");
-const token = env.match(/^TELEGRAM_BOT_TOKEN=(.+)$/m)?.[1]?.trim();
+const token = env.match(new RegExp(`^${TOKEN_VAR}=(.+)$`, "m"))?.[1]?.trim();
 if (!token) {
-  console.error("No TELEGRAM_BOT_TOKEN in sentinel/.env");
+  console.error(`No ${TOKEN_VAR} in sentinel/.env`);
   process.exit(1);
 }
 
@@ -26,18 +30,18 @@ for (const u of j.result) {
   if (m?.chat) chats.set(String(m.chat.id), `${m.chat.first_name || m.chat.title || "?"} @${m.chat.username || "?"}`);
 }
 if (chats.size === 0) {
-  console.error("No updates yet — send a message to @freefreeflobot, then re-run.");
+  console.error(`No updates yet — send a message to the bot for ${TOKEN_VAR}, then re-run.`);
   process.exit(2);
 }
 for (const [id, who] of chats) console.error(`  found chat ${id} (${who})`);
 if (chats.size !== 1) {
-  console.error("Multiple chats — set TELEGRAM_CHAT_ID in sentinel/.env manually.");
+  console.error(`Multiple chats — set ${CHAT_VAR} in sentinel/.env manually.`);
   process.exit(3);
 }
 
 const chatId = [...chats.keys()][0];
-const next = /^TELEGRAM_CHAT_ID=/m.test(env)
-  ? env.replace(/^TELEGRAM_CHAT_ID=.*$/m, `TELEGRAM_CHAT_ID=${chatId}`)
-  : env.replace(/\n*$/, `\nTELEGRAM_CHAT_ID=${chatId}\n`);
+const next = new RegExp(`^${CHAT_VAR}=`, "m").test(env)
+  ? env.replace(new RegExp(`^${CHAT_VAR}=.*$`, "m"), `${CHAT_VAR}=${chatId}`)
+  : env.replace(/\n*$/, `\n${CHAT_VAR}=${chatId}\n`);
 writeFileSync(envPath, next);
-console.log(`✓ chat id ${chatId} written to sentinel/.env`);
+console.log(`✓ chat id ${chatId} written to sentinel/.env as ${CHAT_VAR}`);

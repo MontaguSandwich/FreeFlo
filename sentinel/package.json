@@ -7,6 +7,7 @@
   "scripts": {
     "sweep": "tsx src/index.ts --once",
     "start": "tsx src/index.ts",
+    "tracker": "tsx src/tracker.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
