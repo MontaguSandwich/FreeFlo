@@ -10,6 +10,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import { useReadContract } from "wagmi";
 import { OFFRAMP_V2_ABI, IntentStatus } from "@/lib/contracts";
 import { useCancelIntent, computeCancelEligibility } from "@/hooks/useCancelIntent";
+import { friendlyTxError } from "@/lib/tx-errors";
 
 // Fallback window values (seconds) matching the contract, used until the on-chain
 // constants resolve.
@@ -147,7 +148,7 @@ export function IntentRow({
           </Button>
           {cancel.error && (
             <Alert severity="error" sx={{ mt: 1, "& .MuiAlert-message": { fontSize: "0.8rem" } }}>
-              {cancel.error.message.split("\n")[0]}
+              {friendlyTxError(cancel.error).message}
             </Alert>
           )}
           {cancel.isSuccess && (
