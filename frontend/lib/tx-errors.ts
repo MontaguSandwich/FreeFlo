@@ -108,6 +108,33 @@ const KNOWN: KnownError[] = [
     message: "The verification service rejected the proof (a signing-key/domain mismatch). Please contact support.",
     recovery: "none",
   },
+  // Reverts reachable on the USER-signed offramp path (selectQuoteAndCommit / cancelIntent on
+  // OffRampV3). Without these, the generic fallback labels them "retry" — wrong for a dead quote
+  // or a terminal intent, which loops the user. Selectors verified with `cast sig`.
+  {
+    selector: "0x8727a7f9",
+    names: ["QuoteExpired"],
+    message: "The quote you selected has expired. Please start a new order to get a fresh quote.",
+    recovery: "restart",
+  },
+  {
+    selector: "0x97a3caba",
+    names: ["SelectionWindowClosed"],
+    message: "The window to commit this quote has closed. Please start a new order.",
+    recovery: "restart",
+  },
+  {
+    selector: "0x039881d2",
+    names: ["InvalidIntentStatus"],
+    message: "This order has already moved past the stage where this action applies. Please start a new order.",
+    recovery: "restart",
+  },
+  {
+    selector: "0x3cc50b45",
+    names: ["NotDepositor"],
+    message: "This order belongs to a different wallet. Connect the wallet that created it to manage it.",
+    recovery: "none",
+  },
 ];
 
 const SELECTOR_RE = /0x[0-9a-fA-F]{8}\b/g;

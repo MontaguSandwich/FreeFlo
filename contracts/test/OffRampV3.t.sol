@@ -7,7 +7,7 @@ import { OffRampV3 } from "../src/OffRampV3.sol";
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 
 contract MockUSDC is ERC20 {
-    constructor() ERC20("USD Coin", "USDC") {}
+    constructor() ERC20("USD Coin", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -97,7 +97,9 @@ contract OffRampV3Test is Test {
         vm.prank(SOLVER);
         offRamp.fulfillIntentWithProof(intentId, att, sig);
 
-        assertEq(uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED));
+        assertEq(
+            uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED)
+        );
         assertEq(usdc.balanceOf(SOLVER), USDC_AMOUNT);
     }
 
@@ -110,7 +112,9 @@ contract OffRampV3Test is Test {
         vm.prank(SOLVER);
         offRamp.fulfillIntentWithProof(intentId, att, sig);
 
-        assertEq(uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED));
+        assertEq(
+            uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED)
+        );
     }
 
     function test_Fulfill_RevertsTwoCentUnderpayment() public {
