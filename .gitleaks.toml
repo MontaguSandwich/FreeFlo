@@ -1,0 +1,32 @@
+# FreeFlo secret-scan config — first codified detector from the 2026-07-06 audit.
+# Closes the exact gap that hid the live witness key: the default private-key/generic-api-key
+# rules did NOT fire on `WITNESS_PRIVATE_KEY= 0x<64hex>` (space after `=`).
+title = "FreeFlo secret scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "freeflo-sensitive-private-key"
+description = "64-hex private key assigned to a *_PRIVATE_KEY / WITNESS_/NOTARY_/SOLVER_/DEPLOYER_/ALLOCATOR_ var — whitespace-tolerant"
+# tolerant of any spaces around = or :, optional quotes, optional 0x — the case default gitleaks missed
+regex = '''(?i)(witness|notary|solver|deployer|allocator|attestation|owner)?[_-]?private[_-]?key\s*[=:]\s*['"]?(0x)?[0-9a-fA-F]{64}\b'''
+keywords = ["private_key", "privatekey", "private-key", "privkey"]
+
+# Global allowlist: known-public values so the detector stays quiet (noise kills continuous scanning).
+# These are the 7 false-positives the initial gitleaks run produced, all verified public/test material.
+[allowlist]
+description = "known-public test material — do not flag"
+regexes = [
+  '''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''', # Anvil/Hardhat default key #0
+]
+paths = [
+  '''tlsn/.*''',                     # vendored TLSNotary test-CA fixtures (RSA test keys)
+  '''.*\.env\.example$''',
+  '''.*\.env\.sample$''',
+  '''.*/test-zkp2p-api\.mjs$''',      # contains only public token addresses
+  '''SOLVER_DEPLOYMENT_GUIDE\.md''',  # YOUR_TOKEN placeholders
+  '''.*\.t\.sol$''',                  # Solidity test files legitimately hardcode test keys (Anvil/fake)
+  '''contracts/test/.*''',
+  '''test-solver/.*''',               # the already-remediated witness-key leak (rotated + deauthorized 2026-07-06); dir is gitignored. check-secrets.sh check-1 still blocks any NEW tracked .env here.
+]

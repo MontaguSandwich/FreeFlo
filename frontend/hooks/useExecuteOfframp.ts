@@ -9,6 +9,7 @@ import { useApproveUSDC } from "./useApproveUSDC";
 import { useCommitQuote } from "./useCommitQuote";
 import { usePollFulfillment } from "./usePollFulfillment";
 import { fetchOnChainQuotes, type RTPNQuote } from "@/lib/quotes";
+import { friendlyTxError } from "@/lib/tx-errors";
 
 export function useExecuteOfframp() {
   const { address } = useAccount();
@@ -108,8 +109,9 @@ export function useExecuteOfframp() {
     }
 
     if (createIntentHook.error) {
-      setStepStatus("createIntent", "failed", { error: createIntentHook.error.message });
-      setError(createIntentHook.error.message);
+      const friendly = friendlyTxError(createIntentHook.error).message;
+      setStepStatus("createIntent", "failed", { error: friendly });
+      setError(friendly);
     }
   }, [createIntentHook.isSuccess, createIntentHook.intentId, createIntentHook.hash, createIntentHook.error]);
 
@@ -135,8 +137,9 @@ export function useExecuteOfframp() {
       proceedToCommit();
     }
     if (approveHook.error && steps.find((s) => s.id === "approve")?.status === "pending") {
-      setStepStatus("approve", "failed", { error: approveHook.error.message });
-      setError(approveHook.error.message);
+      const friendly = friendlyTxError(approveHook.error).message;
+      setStepStatus("approve", "failed", { error: friendly });
+      setError(friendly);
     }
   }, [approveHook.isSuccess, approveHook.hash, approveHook.error]);
 
@@ -172,8 +175,9 @@ export function useExecuteOfframp() {
       setStepStatus("transferPending", "pending");
     }
     if (commitHook.error && steps.find((s) => s.id === "commit")?.status === "pending") {
-      setStepStatus("commit", "failed", { error: commitHook.error.message });
-      setError(commitHook.error.message);
+      const friendly = friendlyTxError(commitHook.error).message;
+      setStepStatus("commit", "failed", { error: friendly });
+      setError(friendly);
     }
   }, [commitHook.isSuccess, commitHook.hash, commitHook.error]);
 

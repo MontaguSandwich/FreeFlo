@@ -97,3 +97,12 @@ docs/
 MIGRATION_PLAN.md
 x-post.md
 sentinel/state/
+
+# local security-audit workspace
+audit/
+
+# secrets: NO non-example .env may be tracked (audit 2026-07-06: test-solver/attestation.env leaked a live witness key)
+*.env
+!*.env.example
+!*.env.sample
+test-solver/
