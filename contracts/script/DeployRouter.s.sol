@@ -28,11 +28,7 @@ contract DeployRouterScript is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        FiatToFiatRouter router = new FiatToFiatRouter(
-            usdc,
-            offRampV3,
-            zkp2pOrchestrator
-        );
+        FiatToFiatRouter router = new FiatToFiatRouter(usdc, offRampV3, zkp2pOrchestrator);
 
         console.log("FiatToFiatRouter deployed at:", address(router));
         console.log("  USDC:", usdc);
@@ -51,6 +47,8 @@ contract DeployRouterScript is Script {
         console.log("2. Test the full flow (V3 is permissionless - no registration needed!)");
         console.log("");
         console.log("Add to frontend/lib/router-contracts.ts:");
-        console.log("  export const FIAT_TO_FIAT_ROUTER_ADDRESS = \"", address(router), "\" as const;");
+        console.log(
+            "  export const FIAT_TO_FIAT_ROUTER_ADDRESS = \"", address(router), "\" as const;"
+        );
     }
 }

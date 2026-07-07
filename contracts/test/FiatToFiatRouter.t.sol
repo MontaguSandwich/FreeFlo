@@ -11,7 +11,7 @@ import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 
 // Mock USDC for testing
 contract MockUSDC is ERC20 {
-    constructor() ERC20("USD Coin", "USDC") {}
+    constructor() ERC20("USD Coin", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -50,17 +50,10 @@ contract FiatToFiatRouterTest is Test {
         uint256 minEurAmount
     );
     event TransferCommitted(
-        address indexed user,
-        bytes32 indexed intentId,
-        address solver,
-        uint256 eurAmount
+        address indexed user, bytes32 indexed intentId, address solver, uint256 eurAmount
     );
-    event TransferCancelled(
-        address indexed user, bytes32 indexed intentId, uint256 usdcAmount
-    );
-    event TransferExpired(
-        address indexed user, bytes32 indexed intentId, uint256 usdcAmount
-    );
+    event TransferCancelled(address indexed user, bytes32 indexed intentId, uint256 usdcAmount);
+    event TransferExpired(address indexed user, bytes32 indexed intentId, uint256 usdcAmount);
 
     function setUp() public {
         witness = vm.addr(WITNESS_PK);
@@ -68,18 +61,16 @@ contract FiatToFiatRouterTest is Test {
         usdc = new MockUSDC();
         verifier = new PaymentVerifier(witness);
         offRamp = new OffRampV3(address(usdc), address(verifier));
-        router = new FiatToFiatRouter(
-            address(usdc), address(offRamp), ORCHESTRATOR
-        );
+        router = new FiatToFiatRouter(address(usdc), address(offRamp), ORCHESTRATOR);
     }
 
     // ============ Helpers ============
 
-    function _buildExecutionContext(
-        address user,
-        uint256 amount,
-        bytes memory signalHookData
-    ) internal view returns (IPostIntentHookV2.HookExecutionContext memory) {
+    function _buildExecutionContext(address user, uint256 amount, bytes memory signalHookData)
+        internal
+        view
+        returns (IPostIntentHookV2.HookExecutionContext memory)
+    {
         bytes32 intentHash = keccak256(abi.encodePacked(user, amount, block.timestamp));
 
         IPostIntentHookV2.HookIntentContext memory intentCtx = IPostIntentHookV2.HookIntentContext({
@@ -104,31 +95,23 @@ contract FiatToFiatRouterTest is Test {
         });
     }
 
-    function _encodePayload(
-        string memory iban,
-        string memory name,
-        uint256 minEur
-    ) internal pure returns (bytes memory) {
+    function _encodePayload(string memory iban, string memory name, uint256 minEur)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encode(
-            FiatToFiatRouter.HookPayload({
-                iban: iban,
-                recipientName: name,
-                minEurAmount: minEur
-            })
+            FiatToFiatRouter.HookPayload({ iban: iban, recipientName: name, minEurAmount: minEur })
         );
     }
 
-    function _executeHook(address user, uint256 amount)
-        internal
-        returns (bytes32 intentId)
-    {
+    function _executeHook(address user, uint256 amount) internal returns (bytes32 intentId) {
         // Mint USDC to orchestrator and approve router
         usdc.mint(ORCHESTRATOR, amount);
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), amount);
 
-        bytes memory payload =
-            _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        bytes memory payload = _encodePayload("DE89370400440532013000", "John Doe", 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(user, amount, payload);
 
@@ -136,8 +119,7 @@ contract FiatToFiatRouterTest is Test {
         vm.stopPrank();
 
         // Read the pending transfer to get the intentId
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(user);
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(user);
         return transfer.intentId;
     }
 
@@ -170,26 +152,19 @@ contract FiatToFiatRouterTest is Test {
         bytes32 intentId = _executeHook(USER, amount);
 
         // Verify router state
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(USER);
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(USER);
         assertEq(transfer.user, USER);
         assertEq(transfer.usdcAmount, amount);
         assertEq(transfer.iban, "DE89370400440532013000");
         assertEq(transfer.recipientName, "John Doe");
         assertEq(transfer.minEurAmount, 8500);
-        assertEq(
-            uint256(transfer.status),
-            uint256(FiatToFiatRouter.TransferStatus.PENDING)
-        );
+        assertEq(uint256(transfer.status), uint256(FiatToFiatRouter.TransferStatus.PENDING));
 
         // Verify OffRampV3 intent was created
         OffRampV3.Intent memory intent = offRamp.getIntent(intentId);
         assertEq(intent.depositor, address(router));
         assertEq(intent.usdcAmount, amount);
-        assertEq(
-            uint256(intent.status),
-            uint256(OffRampV3.IntentStatus.PENDING_QUOTE)
-        );
+        assertEq(uint256(intent.status), uint256(OffRampV3.IntentStatus.PENDING_QUOTE));
 
         // USDC should be in router (not OffRamp yet - that happens at commit)
         assertEq(usdc.balanceOf(address(router)), amount);
@@ -202,8 +177,7 @@ contract FiatToFiatRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), amount);
 
-        bytes memory payload =
-            _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        bytes memory payload = _encodePayload("DE89370400440532013000", "John Doe", 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, amount, payload);
 
@@ -219,8 +193,7 @@ contract FiatToFiatRouterTest is Test {
     }
 
     function test_Execute_RevertsNonOrchestrator() public {
-        bytes memory payload =
-            _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        bytes memory payload = _encodePayload("DE89370400440532013000", "John Doe", 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
 
@@ -237,14 +210,11 @@ contract FiatToFiatRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), 100_000_000);
 
-        bytes memory payload =
-            _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
+        bytes memory payload = _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
 
-        vm.expectRevert(
-            FiatToFiatRouter.UserAlreadyHasPendingTransfer.selector
-        );
+        vm.expectRevert(FiatToFiatRouter.UserAlreadyHasPendingTransfer.selector);
         router.execute(ctx, "");
         vm.stopPrank();
     }
@@ -268,8 +238,7 @@ contract FiatToFiatRouterTest is Test {
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), 100_000_000);
 
-        bytes memory payload =
-            _encodePayload("DE89370400440532013000", "John Doe", 8500);
+        bytes memory payload = _encodePayload("DE89370400440532013000", "John Doe", 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
 
@@ -295,19 +264,12 @@ contract FiatToFiatRouterTest is Test {
         router.commit(SOLVER);
 
         // Verify router state
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(USER);
-        assertEq(
-            uint256(transfer.status),
-            uint256(FiatToFiatRouter.TransferStatus.COMMITTED)
-        );
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(USER);
+        assertEq(uint256(transfer.status), uint256(FiatToFiatRouter.TransferStatus.COMMITTED));
 
         // Verify OffRampV3 state
         OffRampV3.Intent memory intent = offRamp.getIntent(intentId);
-        assertEq(
-            uint256(intent.status),
-            uint256(OffRampV3.IntentStatus.COMMITTED)
-        );
+        assertEq(uint256(intent.status), uint256(OffRampV3.IntentStatus.COMMITTED));
         assertEq(intent.selectedSolver, SOLVER);
         assertEq(intent.receivingInfo, "DE89370400440532013000");
         assertEq(intent.recipientName, "John Doe");
@@ -328,9 +290,7 @@ contract FiatToFiatRouterTest is Test {
 
         vm.prank(USER);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                FiatToFiatRouter.SlippageExceeded.selector, 8000, 8500
-            )
+            abi.encodeWithSelector(FiatToFiatRouter.SlippageExceeded.selector, 8000, 8500)
         );
         router.commit(SOLVER);
     }
@@ -402,8 +362,7 @@ contract FiatToFiatRouterTest is Test {
         router.commitFor(USER);
 
         assertEq(
-            uint256(offRamp.getIntent(intentId).status),
-            uint256(OffRampV3.IntentStatus.COMMITTED)
+            uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.COMMITTED)
         );
     }
 
@@ -448,9 +407,7 @@ contract FiatToFiatRouterTest is Test {
         _executeHook(USER, 100_000_000); // floor 8500, no solver quotes
 
         vm.prank(KEEPER);
-        vm.expectRevert(
-            abi.encodeWithSelector(FiatToFiatRouter.SlippageExceeded.selector, 0, 8500)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FiatToFiatRouter.SlippageExceeded.selector, 0, 8500));
         router.commitFor(USER);
     }
 
@@ -489,12 +446,8 @@ contract FiatToFiatRouterTest is Test {
         assertEq(usdc.balanceOf(address(router)), 0);
 
         // Transfer status is CANCELLED
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(USER);
-        assertEq(
-            uint256(transfer.status),
-            uint256(FiatToFiatRouter.TransferStatus.CANCELLED)
-        );
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(USER);
+        assertEq(uint256(transfer.status), uint256(FiatToFiatRouter.TransferStatus.CANCELLED));
     }
 
     function test_Cancel_RevertsWhenCommitted() public {
@@ -534,12 +487,8 @@ contract FiatToFiatRouterTest is Test {
 
         assertEq(usdc.balanceOf(USER), amount);
 
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(USER);
-        assertEq(
-            uint256(transfer.status),
-            uint256(FiatToFiatRouter.TransferStatus.EXPIRED)
-        );
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(USER);
+        assertEq(uint256(transfer.status), uint256(FiatToFiatRouter.TransferStatus.EXPIRED));
     }
 
     function test_RescueTimedOut_RevertsBeforeTimeout() public {
@@ -589,8 +538,7 @@ contract FiatToFiatRouterTest is Test {
         router.commit(SOLVER);
 
         // Simulate solver fulfillment via OffRampV3
-        PaymentVerifier.PaymentAttestation memory attestation =
-        PaymentVerifier.PaymentAttestation({
+        PaymentVerifier.PaymentAttestation memory attestation = PaymentVerifier.PaymentAttestation({
             intentHash: intentId,
             amount: 9200, // fiat cents
             timestamp: block.timestamp,
@@ -623,8 +571,7 @@ contract FiatToFiatRouterTest is Test {
             )
         );
 
-        bytes32 digest =
-            keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(WITNESS_PK, digest);
         bytes memory signature = abi.encodePacked(r, s, v);
 
@@ -633,20 +580,13 @@ contract FiatToFiatRouterTest is Test {
 
         // Verify intent fulfilled
         OffRampV3.Intent memory intent = offRamp.getIntent(intentId);
-        assertEq(
-            uint256(intent.status),
-            uint256(OffRampV3.IntentStatus.FULFILLED)
-        );
+        assertEq(uint256(intent.status), uint256(OffRampV3.IntentStatus.FULFILLED));
 
         // Mark complete on router
         router.markComplete(USER);
 
-        FiatToFiatRouter.PendingTransfer memory transfer =
-            router.getPendingTransfer(USER);
-        assertEq(
-            uint256(transfer.status),
-            uint256(FiatToFiatRouter.TransferStatus.COMPLETED)
-        );
+        FiatToFiatRouter.PendingTransfer memory transfer = router.getPendingTransfer(USER);
+        assertEq(uint256(transfer.status), uint256(FiatToFiatRouter.TransferStatus.COMPLETED));
     }
 
     function test_MarkComplete_RevertsIfNotFulfilled() public {
@@ -682,8 +622,7 @@ contract FiatToFiatRouterTest is Test {
     // ============ encodePayload() tests ============
 
     function test_EncodePayload_MatchesDecode() public view {
-        bytes memory encoded =
-            router.encodePayload("DE89370400440532013000", "John Doe", 8500);
+        bytes memory encoded = router.encodePayload("DE89370400440532013000", "John Doe", 8500);
 
         // Decode it the same way the contract does
         FiatToFiatRouter.HookPayload memory decoded =
@@ -779,8 +718,7 @@ contract FiatToFiatRouterTest is Test {
             uint256(FiatToFiatRouter.TransferStatus.EXPIRED)
         );
         assertEq(
-            uint256(offRamp.getIntent(intentId).status),
-            uint256(OffRampV3.IntentStatus.CANCELLED)
+            uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.CANCELLED)
         );
     }
 
@@ -815,8 +753,7 @@ contract FiatToFiatRouterTest is Test {
         usdc.mint(ORCHESTRATOR, amount);
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), amount);
-        bytes memory payload =
-            _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
+        bytes memory payload = _encodePayload("FR7630006000011234567890189", "Jane Doe", 9000);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, amount, payload);
         vm.expectRevert(FiatToFiatRouter.UserAlreadyHasPendingTransfer.selector);
@@ -843,20 +780,36 @@ contract FiatToFiatRouterTest is Test {
             paymentId: "sepa-tx-allow-new",
             dataHash: keccak256("proof")
         });
-        bytes32 structHash = keccak256(abi.encode(
-            keccak256("PaymentAttestation(bytes32 intentHash,uint256 amount,uint256 timestamp,string paymentId,bytes32 dataHash)"),
-            attestation.intentHash, attestation.amount, attestation.timestamp,
-            keccak256(bytes(attestation.paymentId)), attestation.dataHash
-        ));
-        bytes32 domainSeparator = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("WisePaymentVerifier"), keccak256("1"), block.chainid, address(verifier)
-        ));
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "PaymentAttestation(bytes32 intentHash,uint256 amount,uint256 timestamp,string paymentId,bytes32 dataHash)"
+                ),
+                attestation.intentHash,
+                attestation.amount,
+                attestation.timestamp,
+                keccak256(bytes(attestation.paymentId)),
+                attestation.dataHash
+            )
+        );
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256("WisePaymentVerifier"),
+                keccak256("1"),
+                block.chainid,
+                address(verifier)
+            )
+        );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(WITNESS_PK, digest);
         vm.prank(SOLVER);
         offRamp.fulfillIntentWithProof(intentId, attestation, abi.encodePacked(r, s, v));
-        assertEq(uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED));
+        assertEq(
+            uint256(offRamp.getIntent(intentId).status), uint256(OffRampV3.IntentStatus.FULFILLED)
+        );
 
         // A new onramp for the SAME user now succeeds (prior transfer is done).
         bytes32 newIntentId = _executeHook(USER, amount);
@@ -886,8 +839,7 @@ contract FiatToFiatRouterTest is Test {
         usdc.mint(ORCHESTRATOR, 100_000_000);
         vm.startPrank(ORCHESTRATOR);
         usdc.approve(address(router), 100_000_000);
-        bytes memory payload =
-            _encodePayload("DE89370400440532013000", _repeat("B", 71), 8500);
+        bytes memory payload = _encodePayload("DE89370400440532013000", _repeat("B", 71), 8500);
         IPostIntentHookV2.HookExecutionContext memory ctx =
             _buildExecutionContext(USER, 100_000_000, payload);
         vm.expectRevert(FiatToFiatRouter.InvalidPayload.selector);

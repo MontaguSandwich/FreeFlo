@@ -32,26 +32,26 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
      * @notice Status of a pending transfer
      */
     enum TransferStatus {
-        NONE,       // No transfer exists
-        PENDING,    // Awaiting user commit
-        COMMITTED,  // User committed, awaiting solver fulfillment
-        COMPLETED,  // Solver fulfilled, EUR sent
-        CANCELLED,  // User cancelled, USDC returned
-        EXPIRED     // Timed out, USDC returned
+        NONE, // No transfer exists
+        PENDING, // Awaiting user commit
+        COMMITTED, // User committed, awaiting solver fulfillment
+        COMPLETED, // Solver fulfilled, EUR sent
+        CANCELLED, // User cancelled, USDC returned
+        EXPIRED // Timed out, USDC returned
     }
 
     /**
      * @notice A pending Venmo->SEPA transfer
      */
     struct PendingTransfer {
-        address user;           // User who initiated via ZKP2P
-        bytes32 intentId;       // FreeFlo intent ID
-        uint256 usdcAmount;     // USDC amount deposited
-        string iban;            // Destination IBAN
-        string recipientName;   // Recipient name for SEPA
-        uint256 minEurAmount;   // Minimum acceptable EUR (slippage protection)
-        uint256 createdAt;      // Block timestamp when created
-        TransferStatus status;  // Current status
+        address user; // User who initiated via ZKP2P
+        bytes32 intentId; // FreeFlo intent ID
+        uint256 usdcAmount; // USDC amount deposited
+        string iban; // Destination IBAN
+        string recipientName; // Recipient name for SEPA
+        uint256 minEurAmount; // Minimum acceptable EUR (slippage protection)
+        uint256 createdAt; // Block timestamp when created
+        TransferStatus status; // Current status
     }
 
     /**
@@ -95,28 +95,14 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
     );
 
     event TransferCommitted(
-        address indexed user,
-        bytes32 indexed intentId,
-        address solver,
-        uint256 eurAmount
+        address indexed user, bytes32 indexed intentId, address solver, uint256 eurAmount
     );
 
-    event TransferCompleted(
-        address indexed user,
-        bytes32 indexed intentId
-    );
+    event TransferCompleted(address indexed user, bytes32 indexed intentId);
 
-    event TransferCancelled(
-        address indexed user,
-        bytes32 indexed intentId,
-        uint256 usdcAmount
-    );
+    event TransferCancelled(address indexed user, bytes32 indexed intentId, uint256 usdcAmount);
 
-    event TransferExpired(
-        address indexed user,
-        bytes32 indexed intentId,
-        uint256 usdcAmount
-    );
+    event TransferExpired(address indexed user, bytes32 indexed intentId, uint256 usdcAmount);
 
     // ============ Errors ============
 
@@ -132,11 +118,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
 
     // ============ Constructor ============
 
-    constructor(
-        address _usdc,
-        address _offRamp,
-        address _zkp2pOrchestrator
-    ) Ownable(msg.sender) {
+    constructor(address _usdc, address _offRamp, address _zkp2pOrchestrator) Ownable(msg.sender) {
         usdc = IERC20(_usdc);
         offRamp = OffRampV3(_offRamp);
         zkp2pOrchestrator = _zkp2pOrchestrator;
@@ -150,10 +132,11 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
      * @param _ctx Execution context containing intent details and token amount
      * @param _fulfillHookData Additional data from fulfillIntent (unused, payload is in signalHookData)
      */
-    function execute(
-        HookExecutionContext calldata _ctx,
-        bytes calldata _fulfillHookData
-    ) external override nonReentrant {
+    function execute(HookExecutionContext calldata _ctx, bytes calldata _fulfillHookData)
+        external
+        override
+        nonReentrant
+    {
         // Silence unused parameter warning
         _fulfillHookData;
 
@@ -178,8 +161,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
             revert UserAlreadyHasPendingTransfer();
         }
         if (existing == TransferStatus.COMMITTED) {
-            OffRampV3.IntentStatus prior =
-                offRamp.getIntent(pendingTransfers[user].intentId).status;
+            OffRampV3.IntentStatus prior = offRamp.getIntent(pendingTransfers[user].intentId).status;
             if (
                 prior == OffRampV3.IntentStatus.PENDING_QUOTE
                     || prior == OffRampV3.IntentStatus.COMMITTED
@@ -209,10 +191,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
         usdc.forceApprove(address(offRamp), amount);
 
         // Create FreeFlo intent (Router is depositor)
-        bytes32 freefloIntentId = offRamp.createIntent(
-            amount,
-            OffRampV3.Currency.EUR
-        );
+        bytes32 freefloIntentId = offRamp.createIntent(amount, OffRampV3.Currency.EUR);
 
         // Reset approval
         usdc.forceApprove(address(offRamp), 0);
@@ -302,9 +281,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
      *      the depositor), reset approval, mark committed. Caller MUST have
      *      validated `transfer` is PENDING and `solver`'s quote clears the floor.
      */
-    function _commit(PendingTransfer storage transfer, address solver, uint256 eurAmount)
-        internal
-    {
+    function _commit(PendingTransfer storage transfer, address solver, uint256 eurAmount) internal {
         // Approve OffRampV3 to pull USDC
         usdc.forceApprove(address(offRamp), transfer.usdcAmount);
 
@@ -456,11 +433,9 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
         string calldata recipientName,
         uint256 minEurAmount
     ) external pure returns (bytes memory) {
-        return abi.encode(HookPayload({
-            iban: iban,
-            recipientName: recipientName,
-            minEurAmount: minEurAmount
-        }));
+        return abi.encode(
+            HookPayload({ iban: iban, recipientName: recipientName, minEurAmount: minEurAmount })
+        );
     }
 
     // ============ Internal Functions ============
@@ -502,11 +477,7 @@ contract FiatToFiatRouter is IPostIntentHookV2, ReentrancyGuard, Ownable {
     /**
      * @notice Emergency withdraw stuck tokens
      */
-    function emergencyWithdraw(
-        address token,
-        address to,
-        uint256 amount
-    ) external onlyOwner {
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(to, amount);
     }
 }

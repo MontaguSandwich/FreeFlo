@@ -9,7 +9,7 @@ import { FiatToFiatRouter } from "../src/FiatToFiatRouter.sol";
 
 /// @dev Minimal 6-decimal USDC stand-in for local/anvil deployments only.
 contract MockUSDC is ERC20 {
-    constructor() ERC20("USD Coin", "USDC") {}
+    constructor() ERC20("USD Coin", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;

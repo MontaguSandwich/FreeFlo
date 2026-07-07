@@ -6,7 +6,13 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { PaymentVerifier } from "../src/PaymentVerifier.sol";
 import { FreeFloCompactArbiter } from "../src/FreeFloCompactArbiter.sol";
 import { FreeFloAllocator } from "../src/FreeFloAllocator.sol";
-import { ITheCompact, Claim, Component, Scope, ResetPeriod } from "../src/interfaces/ITheCompact.sol";
+import {
+    ITheCompact,
+    Claim,
+    Component,
+    Scope,
+    ResetPeriod
+} from "../src/interfaces/ITheCompact.sol";
 
 interface IPermit2 {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
@@ -65,11 +71,14 @@ contract CompactPermit2ForkE2ETest is Test {
     FreeFloAllocator allocator;
     bool skipped;
 
-    uint256 constant WITNESS_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    uint256 constant ALLOCATOR_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 constant WITNESS_PK =
+        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant ALLOCATOR_PK =
+        0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     // High-entropy key whose address has no code on Base (anvil keys collide with live contracts,
     // which would route Permit2 to EIP-1271 instead of ECDSA).
-    uint256 constant SPONSOR_PK = 0x9c2d8f3a17b64e05c1f8a9d6b3e07c42f50198ad7e6b3c2d1f0a9b8c7d6e5f40;
+    uint256 constant SPONSOR_PK =
+        0x9c2d8f3a17b64e05c1f8a9d6b3e07c42f50198ad7e6b3c2d1f0a9b8c7d6e5f40;
     // The relayer/solver: it submits the deposit (the Activation `activator`) AND fills.
     address constant SOLVER = address(0x5050);
 
@@ -164,15 +173,18 @@ contract CompactPermit2ForkE2ETest is Test {
         });
         vm.prank(SOLVER); // SOLVER is the activator baked into the witness
         assertEq(
-            ICompactPermit2(THE_COMPACT).depositERC20AndRegisterViaPermit2(
-                permit, sponsor, lockTag, claimHash, 0, wts, permitSig
-            ),
+            ICompactPermit2(THE_COMPACT)
+                .depositERC20AndRegisterViaPermit2(
+                    permit, sponsor, lockTag, claimHash, 0, wts, permitSig
+                ),
             id,
             "permit2 deposit minted a different lock id"
         );
         // The user's USDC now sits in the resource lock (ERC-6909 balance for the sponsor).
         assertEq(
-            ICompactPermit2(THE_COMPACT).balanceOf(sponsor, id), AMOUNT, "lock not funded for sponsor"
+            ICompactPermit2(THE_COMPACT).balanceOf(sponsor, id),
+            AMOUNT,
+            "lock not funded for sponsor"
         );
     }
 
